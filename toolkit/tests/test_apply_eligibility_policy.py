@@ -1,0 +1,194 @@
+import csv
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+SCRIPT = (
+    Path(__file__).parents[1]
+    / "scripts"
+    / "claims"
+    / "apply-eligibility-policy.py"
+)
+VERIFY_SCRIPT = (
+    Path(__file__).parents[1]
+    / "scripts"
+    / "claims"
+    / "verify-eligibility-policy.py"
+)
+EMPTY_CODE_HASH = (
+    "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+)
+
+
+class ApplyEligibilityPolicyTest(unittest.TestCase):
+    def test_splits_automatic_validator_contract_and_excluded_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "claims.csv"
+            automatic = root / "automatic.csv"
+            contracts = root / "contracts.csv"
+            excluded = root / "excluded.csv"
+            validators = root / "validators.csv"
+            summary = root / "summary.json"
+            verification = root / "verification.json"
+            fields = (
+                "secure_key",
+                "address",
+                "liquid_shard0_atto",
+                "liquid_shard1_atto",
+                "liquid_total_atto",
+                "active_staked_or_delegated_atto",
+                "pending_undelegation_atto",
+                "unclaimed_staking_reward_atto",
+                "pending_cross_shard_atto",
+                "wallet_airdrop_atto",
+                "staked_to_vault_atto",
+                "total_claim_atto",
+                "code_hash_shard0",
+                "code_hash_shard1",
+            )
+
+            def row(
+                key,
+                address,
+                value,
+                code=EMPTY_CODE_HASH,
+                wallet=None,
+            ):
+                wallet = value if wallet is None else wallet
+                vault = value - wallet
+                return {
+                    "secure_key": key,
+                    "address": address,
+                    "liquid_shard0_atto": str(wallet),
+                    "liquid_shard1_atto": "0",
+                    "liquid_total_atto": str(wallet),
+                    "active_staked_or_delegated_atto": str(vault),
+                    "pending_undelegation_atto": "0",
+                    "unclaimed_staking_reward_atto": "0",
+                    "pending_cross_shard_atto": "0",
+                    "wallet_airdrop_atto": str(wallet),
+                    "staked_to_vault_atto": str(vault),
+                    "total_claim_atto": str(value),
+                    "code_hash_shard0": code,
+                    "code_hash_shard1": "",
+                }
+
+            validator = "0x0000000000000000000000000000000000000003"
+            blocked = "0x000000000000000000000000000000000000dead"
+            with source.open("w", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle, fieldnames=fields, lineterminator="\n"
+                )
+                writer.writeheader()
+                writer.writerows(
+                    (
+                        row("0x01", "0x0000000000000000000000000000000000000001", 999 * 10**18),
+                        row(
+                            "0x02",
+                            "0x0000000000000000000000000000000000000002",
+                            1000 * 10**18,
+                            wallet=100 * 10**18,
+                        ),
+                        row(
+                            "0x03",
+                            validator,
+                            1001 * 10**18,
+                            "0x01",
+                        ),
+                        row(
+                            "0x04",
+                            "0x0000000000000000000000000000000000000004",
+                            1002 * 10**18,
+                            "0x02",
+                        ),
+                        row("0x05", blocked, 1003 * 10**18),
+                    )
+                )
+            with validators.open("w", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle, fieldnames=("address",), lineterminator="\n"
+                )
+                writer.writeheader()
+                writer.writerow({"address": validator})
+            subprocess.run(
+                (
+                    sys.executable,
+                    str(SCRIPT),
+                    "--input",
+                    str(source),
+                    "--automatic-output",
+                    str(automatic),
+                    "--contract-review-output",
+                    str(contracts),
+                    "--excluded-address-output",
+                    str(excluded),
+                    "--automatic-code-addresses",
+                    str(validators),
+                    "--summary",
+                    str(summary),
+                    "--minimum-one",
+                    "1000",
+                    "--comparison",
+                    "ge",
+                    "--exclude-address",
+                    blocked,
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            metadata = json.loads(summary.read_text())
+            self.assertEqual(metadata["categories"]["automatic"]["rows"], 2)
+            self.assertEqual(metadata["categories"]["contract_review"]["rows"], 1)
+            self.assertEqual(metadata["categories"]["excluded_address"]["rows"], 1)
+            self.assertEqual(metadata["exact_threshold_rows"], 1)
+            self.assertEqual(
+                metadata["automatic_code_addresses_found"], [validator]
+            )
+            self.assertEqual(
+                metadata["categories"]["automatic"]["components_atto"][
+                    "wallet_airdrop"
+                ],
+                str(1101 * 10**18),
+            )
+            self.assertEqual(
+                metadata["categories"]["automatic"]["components_atto"][
+                    "staked_to_vault"
+                ],
+                str(900 * 10**18),
+            )
+            subprocess.run(
+                (
+                    sys.executable,
+                    str(VERIFY_SCRIPT),
+                    "--input",
+                    str(source),
+                    "--automatic",
+                    str(automatic),
+                    "--contract-review",
+                    str(contracts),
+                    "--excluded-address",
+                    str(excluded),
+                    "--automatic-code-addresses",
+                    str(validators),
+                    "--policy-summary",
+                    str(summary),
+                    "--output",
+                    str(verification),
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                json.loads(verification.read_text())["status"], "passed"
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
