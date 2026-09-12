@@ -1,0 +1,1458 @@
+{
+  "_comment": "Registry of well-known Harmony applications used by classify-contracts.py. Addresses are lowercase. 'addresses' are exact-match labels; 'rules' are on-chain relationship rules (factory/pool/comptroller parents) applied to probe results; 'name_patterns' are last-resort name()/symbol() regexes.",
+  "apps": {
+    "aave-v3": {
+      "name": "Aave V3 (Harmony market)",
+      "docs": "https://docs.aave.com/developers/deployed-contracts/v3-mainnet/harmony",
+      "source": "https://github.com/aave/aave-v3-core",
+      "address_book": "https://github.com/bgd-labs/aave-address-book/blob/main/src/AaveV3Harmony.sol"
+    },
+    "defi-kingdoms": {
+      "name": "DeFi Kingdoms (Serendale on Harmony)",
+      "docs": "https://docs.defikingdoms.com/",
+      "source": "https://github.com/DefiKingdoms/contracts",
+      "address_book": "https://docs.defikingdoms.com/ (Harmony/Serendale v1 addresses were listed under Developers > Contracts before the Klaytn migration)"
+    },
+    "tranquil-finance": {
+      "name": "Tranquil Finance (Compound-style lending, stONE liquid staking)",
+      "docs": "https://docs.tranquil.finance/",
+      "source": "https://github.com/tranquil-finance/core-contracts",
+      "address_book": "https://docs.tranquil.finance/contracts/mainnet"
+    },
+    "sushiswap": {
+      "name": "SushiSwap (Harmony deployment)",
+      "docs": "https://docs.sushi.com/docs/Developers/Deployment%20Addresses",
+      "source": "https://github.com/sushiswap/sushiswap",
+      "address_book": "https://github.com/sushiswap/list/tree/master/lists/deployments"
+    },
+    "viperswap": {
+      "name": "ViperSwap / Venom DAO (Uniswap V2 fork)",
+      "docs": "https://docs.viper.exchange/",
+      "source": "https://github.com/VenomProtocol/venomswap-core",
+      "address_book": "https://docs.viper.exchange/contracts"
+    },
+    "curve": {
+      "name": "Curve Finance (Harmony 3pool)",
+      "docs": "https://docs.curve.finance/references/deployed-contracts/",
+      "source": "https://github.com/curvefi/curve-contract",
+      "address_book": "https://docs.curve.finance/references/deployed-contracts/"
+    },
+    "synapse": {
+      "name": "Synapse Protocol (bridge + stableswap)",
+      "docs": "https://docs.synapseprotocol.com/",
+      "source": "https://github.com/synapsecns/synapse-contracts",
+      "address_book": "https://docs.synapseprotocol.com/reference/contract-addresses"
+    },
+    "horizon-bridge": {
+      "name": "Harmony Horizon Bridge (bridged 1-assets)",
+      "docs": "https://docs.harmony.one/home/general/horizon-bridge",
+      "source": "https://github.com/harmony-one/ethhmy-bridge",
+      "address_book": "https://github.com/harmony-one/ethhmy-bridge.frontend/blob/main/src/config"
+    },
+    "wone": {
+      "name": "Wrapped ONE (WONE, WETH9-style)",
+      "docs": "https://docs.harmony.one/home/developers/wallets/rpc-commands",
+      "source": "https://github.com/harmony-one/wrapped-one",
+      "address_book": "https://docs.harmony.one/"
+    },
+    "beefy": {
+      "name": "Beefy Finance (yield vaults)",
+      "docs": "https://docs.beefy.finance/",
+      "source": "https://github.com/beefyfinance/beefy-contracts",
+      "address_book": "https://github.com/beefyfinance/beefy-v2/tree/main/src/config/vault"
+    },
+    "euphoria": {
+      "name": "Euphoria / WAGMI (Olympus DAO fork on Harmony)",
+      "docs": "https://docs.euphoria.money/",
+      "source": "https://github.com/OlympusDAO/olympus-contracts",
+      "address_book": "https://docs.euphoria.money/"
+    },
+    "hundred-finance": {
+      "name": "Hundred Finance (Compound fork)",
+      "docs": "https://docs.hundred.finance/",
+      "source": "https://github.com/hundred-finance/hundred-protocol",
+      "address_book": "https://docs.hundred.finance/developers/protocol-contracts/chain-harmony"
+    },
+    "davinci": {
+      "name": "DaVinci NFT marketplace",
+      "docs": "https://davinci.gallery/",
+      "source": "https://github.com/harmony-one/davinci_nft_marketplace",
+      "address_book": "https://github.com/davinci-gallery/davinci-sdk/blob/master/sdk-cli/davinci-sdk.js (mainnet config)"
+    },
+    "safe": {
+      "name": "Gnosis Safe / Safe multisig",
+      "docs": "https://docs.safe.global/",
+      "source": "https://github.com/safe-global/safe-smart-account",
+      "address_book": "https://github.com/safe-global/safe-deployments (chain 1666600000)"
+    },
+    "harmony-multisig": {
+      "name": "Harmony multisig.harmony.one (Gnosis Safe v1.2.0 fork)",
+      "docs": "https://docs.harmony.one/home/general/ecosystem/wallets/browser-extensions-wallets/multisig-wallet",
+      "source": "https://github.com/gnosis/safe-contracts/tree/v1.2.0 (Harmony deployment is a non-canonical build); frontend fork https://github.com/harmony-one/safe-react",
+      "address_book": "https://multisig.harmony.one/"
+    },
+    "onewallet": {
+      "name": "1wallet / Modulo OTP Wallet",
+      "docs": "https://github.com/polymorpher/one-wallet/wiki",
+      "source": "https://github.com/polymorpher/one-wallet",
+      "address_book": "https://github.com/polymorpher/one-wallet/blob/master/code/lib/constants.js"
+    },
+    "layerzero": {
+      "name": "LayerZero (omnichain messaging / OFT)",
+      "docs": "https://docs.layerzero.network/",
+      "source": "https://github.com/LayerZero-Labs/LayerZero",
+      "address_book": "https://docs.layerzero.network/v1/deployments/deployed-contracts"
+    },
+    "multichain": {
+      "name": "Multichain / Anyswap bridge",
+      "docs": "https://docs.multichain.org/",
+      "source": "https://github.com/anyswap/anyswap-v1-core",
+      "address_book": "https://docs.multichain.org/developer-guide/bridge-api-token-list"
+    },
+    "frax": {
+      "name": "Frax Finance",
+      "docs": "https://docs.frax.finance/",
+      "source": "https://github.com/FraxFinance/frax-solidity",
+      "address_book": "https://docs.frax.finance/smart-contracts/frax"
+    },
+    "harmony-staking-precompile": {
+      "name": "Harmony staking precompile users",
+      "docs": "https://docs.harmony.one/home/developers/staking-precompile",
+      "source": "https://github.com/harmony-one/harmony/tree/main/core/vm",
+      "address_book": ""
+    },
+    "one-country": {
+      "name": ".country / 1.country (Harmony domain service)",
+      "docs": "https://1.country/",
+      "source": "https://github.com/harmony-one/dot-country",
+      "address_book": ""
+    },
+    "multicall": {
+      "name": "Multicall utility",
+      "docs": "https://github.com/mds1/multicall",
+      "source": "https://github.com/mds1/multicall",
+      "address_book": "https://www.multicall3.com/deployments"
+    },
+    "smartvault": {
+      "name": "SmartVault (harmony-totp) OTP smart wallet",
+      "docs": "https://github.com/hashmesan/harmony-totp/wiki",
+      "source": "https://github.com/hashmesan/harmony-totp",
+      "address_book": "https://github.com/hashmesan/harmony-totp/blob/develop/DEPLOYMENT_mainnet.md (early version); later versions upgraded via upgradeMasterCopy; walletFactory()=0x494024993160e15f3bf2be8c26cbcd02bc10baa1"
+    },
+    "unifi-protocol": {
+      "name": "Unifi Protocol DAO (UP token, uTrade, Darbi)",
+      "docs": "https://docs.unifiprotocol.com/",
+      "source": "https://github.com/UnifiProtocol",
+      "address_book": "https://docs.unifiprotocol.com/ (UP_TOKEN()=0x3227adf1c9fb03bb7f83b686f44f10cff498a84c derived on-chain from UP controller)"
+    },
+    "onebtc": {
+      "name": "OneBTC / Harmony Bitcoin bridge (1BTC)",
+      "docs": "https://docs.harmony.one/home/general/horizon-bridge/bitcoin-bridge",
+      "source": "https://github.com/harmony-one/onebtc",
+      "address_book": "https://github.com/harmony-one/onebtc (1BTC token = 0xdc54046c0451f9269FEe1840aeC808D36015697d)"
+    },
+    "harmony-layerzero-bridge": {
+      "name": "Harmony LayerZero bridge (native ONE lock for bridged ONE)",
+      "docs": "https://docs.harmony.one/home/general/horizon-bridge/layerzero-bridge",
+      "source": "https://github.com/LayerZero-Labs/solidity-examples (NativeOFT.sol)",
+      "address_book": "https://docs.harmony.one/home/general/horizon-bridge/layerzero-bridge"
+    },
+    "harmony-swap-v3": {
+      "name": "Harmony Swap (Uniswap V3 fork, swap.harmony.one)",
+      "docs": "https://docs.harmony.one/home/general/ecosystem/dapps/defi",
+      "source": "https://github.com/Uniswap/v3-core , https://github.com/Uniswap/universal-router",
+      "address_book": "https://github.com/harmony-one/pump.fun.contracts/blob/main/.env.example (UNISWAP_V3_FACTORY=0x12d21f5d0Ab768c312E19653Bf3f89917866B8e8, NPM=0xE4E259BE9c84260FDC7C9a3629A0410b1Fb3C114)"
+    },
+    "harmony-pump-fun": {
+      "name": "Harmony pump.fun token launcher (bonding-curve TokenFactory on Harmony Swap V3)",
+      "docs": "https://github.com/harmony-one/pump.fun.contracts",
+      "source": "https://github.com/harmony-one/pump.fun.contracts",
+      "address_book": "https://github.com/harmony-one/pump.fun.contracts/blob/main/.env.example"
+    },
+    "tofunft": {
+      "name": "tofuNFT marketplace (SCV)",
+      "docs": "https://docs.tofunft.com/",
+      "source": "https://github.com/tofunft",
+      "address_book": "https://docs.tofunft.com/"
+    },
+    "nervenetwork": {
+      "name": "NerveNetwork / NULS cross-chain bridge (multi-sign)",
+      "docs": "https://docs.nerve.network/",
+      "source": "https://github.com/nerve-network/nerve-heterogeneous-chain-contract",
+      "address_book": "https://docs.nerve.network/"
+    },
+    "chainbridge": {
+      "name": "ChainSafe ChainBridge (relayer-voted bridge; operator unattributed)",
+      "docs": "https://chainbridge.chainsafe.io/",
+      "source": "https://github.com/ChainSafe/chainbridge-solidity",
+      "address_book": ""
+    },
+    "gas-zip": {
+      "name": "Gas.zip LayerZero refuel (fingerprint match)",
+      "docs": "https://docs.gas.zip/",
+      "source": "https://github.com/gas-zip",
+      "address_book": "https://docs.gas.zip/gas/chain-support"
+    },
+    "multisender": {
+      "name": "Multisender.app token multisender",
+      "docs": "https://multisender.app/",
+      "source": "https://github.com/rstormsf/multisender",
+      "address_book": ""
+    },
+    "cosmic-universe": {
+      "name": "Cosmic Universe (game; COSMIC token)",
+      "docs": "https://cosmicuniverse.one/",
+      "source": "https://github.com/CosmicUniverse",
+      "address_book": ""
+    },
+    "dfk-hero-lending": {
+      "name": "DeFi Kingdoms ecosystem: third-party Hero lending/collateral service (operator 0x0B1f506d4A\u2026)",
+      "docs": "",
+      "source": "",
+      "address_book": ""
+    },
+    "pixel-pirates": {
+      "name": "Pixel Pirates (NFT game + marketplace; deployer 0xbb3b058069\u2026)",
+      "docs": "",
+      "source": "",
+      "address_book": ""
+    },
+    "farmersonly-vaultchef": {
+      "name": "VaultChef-lineage yield optimizer strategy on Tranquil (FarmersOnly/PolyCat style; operator unattributed)",
+      "docs": "https://docs.farmersonly.fi/",
+      "source": "https://github.com/FarmersOnlyFi",
+      "address_book": ""
+    },
+    "vinfirst": {
+      "name": "VinFirst vehicle ID NFTs (VFID)",
+      "docs": "",
+      "source": "",
+      "address_book": ""
+    },
+    "harmony-whales": {
+      "name": "Harmony Whales NFT collections",
+      "docs": "",
+      "source": "",
+      "address_book": ""
+    },
+    "dorahacks-qf": {
+      "name": "DoraHacks quadratic-funding grant round (Harmony hackathon grants)",
+      "docs": "https://dorahacks.io/",
+      "source": "https://github.com/dorahacksglobal/qf-grant-contract",
+      "address_book": "beacon factory 0xc29c66186ab061110d2e54859852f0442d9b455a -> implementation 0xbc4171f45ef0ef66e76f979df021a34b46dcc81d (selector 0x3d14ff5e)"
+    }
+  },
+  "addresses": {
+    "0xa97684ead0e402dc232d5a977953df7ecbab3cdb": {
+      "app": "aave-v3",
+      "role": "PoolAddressesProvider"
+    },
+    "0x794a61358d6845594f94dc1db02a252b5b4814ad": {
+      "app": "aave-v3",
+      "role": "Pool (proxy)"
+    },
+    "0x8145edddf43f50276641b55bd3ad95944510021e": {
+      "app": "aave-v3",
+      "role": "PoolConfigurator (proxy)"
+    },
+    "0x3c90887ede8d65ccb2777a5d577beab2548280ad": {
+      "app": "aave-v3",
+      "role": "AaveOracle"
+    },
+    "0xb2f0c5f37f4bed2cb51c44653cd5d84866bdcd2d": {
+      "app": "aave-v3",
+      "role": "ACL admin (Safe)"
+    },
+    "0xa72636cbcaa8f5ff95b2cc47f3cdee83f3294a0b": {
+      "app": "aave-v3",
+      "role": "ACLManager"
+    },
+    "0x69fa688f1dc47d4b5d8029d5a35fb7a548310654": {
+      "app": "aave-v3",
+      "role": "AaveProtocolDataProvider"
+    },
+    "0xdf9e4abdbd94107932265319479643d3b05809dc": {
+      "app": "aave-v3",
+      "role": "Pool implementation"
+    },
+    "0xd6fa681e22306b0f4e605b979b7c9a1dfa865ade": {
+      "app": "aave-v3",
+      "role": "PoolConfigurator implementation"
+    },
+    "0x929ec64c34a17401f460460d4b9390518e5b473e": {
+      "app": "aave-v3",
+      "role": "RewardsController (incentives)"
+    },
+    "0x048f2228d7bf6776f99ab50cb1b1eab4d1d4ca73": {
+      "app": "aave-v3",
+      "role": "EmissionManager"
+    },
+    "0x8a020d92d6b119978582be4d3edfdc9f7b28bf31": {
+      "app": "aave-v3",
+      "role": "Collector (treasury)"
+    },
+    "0xa5ba6e5ec19a1bf23c857991c857db62b2aa187b": {
+      "app": "aave-v3",
+      "role": "AToken implementation"
+    },
+    "0x81387c40eb75acb02757c1ae55d5936e78c9ded3": {
+      "app": "aave-v3",
+      "role": "VariableDebtToken implementation"
+    },
+    "0x770ef9f4fe897e59dacc474ef11238303f9552b6": {
+      "app": "aave-v3",
+      "role": "StableDebtToken implementation"
+    },
+    "0xf7a60467abb8a3240a0382b22e1b03c7d4f59da5": {
+      "app": "aave-v3",
+      "role": "UiIncentiveDataProvider"
+    },
+    "0xec6118c69af50660231108059ab98cd0cf9a6ea1": {
+      "app": "aave-v3",
+      "role": "UiPoolDataProvider"
+    },
+    "0xbc790382b3686abffe4be14a030a96ac6154023a": {
+      "app": "aave-v3",
+      "role": "WalletBalanceProvider"
+    },
+    "0xe387c6053ce8ec9f8c3fa5ce085af73114a695d3": {
+      "app": "aave-v3",
+      "role": "WrappedTokenGateway (WETH gateway)"
+    },
+    "0x72cb10c6bfa5624dd07ef608027e366bd690048f": {
+      "app": "defi-kingdoms",
+      "role": "JEWEL token (ERC-20 with locked balance)"
+    },
+    "0xa9ce83507d872c5e1273e745abcfda849daa654f": {
+      "app": "defi-kingdoms",
+      "role": "Bank (xJEWEL)"
+    },
+    "0xdb30643c71ac9e2122ca0341ed77d09d5f99f924": {
+      "app": "defi-kingdoms",
+      "role": "MasterGardener (LP staking)"
+    },
+    "0x9014b937069918bd319f80e8b3bb4a2cf6faa5f7": {
+      "app": "defi-kingdoms",
+      "role": "UniswapV2Factory (DFK DEX)"
+    },
+    "0x24ad62502d1c652cc7684081169d04896ac20f30": {
+      "app": "defi-kingdoms",
+      "role": "UniswapV2Router02 (DFK DEX)"
+    },
+    "0x5f753dcdf9b1ad9aabc1346614d1f4746fd6ce5c": {
+      "app": "defi-kingdoms",
+      "role": "Heroes (ERC-721)"
+    },
+    "0xabd4741948374b1f5dd5dd7599ac1f85a34cacdd": {
+      "app": "defi-kingdoms",
+      "role": "Profiles"
+    },
+    "0x13a65b9f8039e2c032bc022171dc05b30c3f2892": {
+      "app": "defi-kingdoms",
+      "role": "Hero Auction House"
+    },
+    "0x65dea93f7b886c33a78c10343267dd39727778c2": {
+      "app": "defi-kingdoms",
+      "role": "Hero Summoning Portal"
+    },
+    "0x0594d86b2923076a2316eaea4e1ca286daa142c1": {
+      "app": "defi-kingdoms",
+      "role": "Meditation Circle"
+    },
+    "0x5100bd31b822371108a0f63dcfb6594b9919eaf4": {
+      "app": "defi-kingdoms",
+      "role": "Quest Core v1"
+    },
+    "0xaa9a289ce0565e4d6548e63a441e7c084e6b52f6": {
+      "app": "defi-kingdoms",
+      "role": "Quest Core v2"
+    },
+    "0x3a4edcf3312f44ef027acfd8c21382a5259936e7": {
+      "app": "defi-kingdoms",
+      "role": "DFK Gold (ERC-20)"
+    },
+    "0x24ea0d436d3c2602fbfefbe6a16bbc304c963d04": {
+      "app": "defi-kingdoms",
+      "role": "Gaia's Tears (ERC-20)"
+    },
+    "0x66f5bfd910cd83d3766c4b39d13730c911b2d286": {
+      "app": "defi-kingdoms",
+      "role": "Shvas Rune (ERC-20)"
+    },
+    "0x5ca5bcd91929c7152ca577e8c001c9b5a185f568": {
+      "app": "defi-kingdoms",
+      "role": "Quest Fund"
+    },
+    "0x2b12d9a2480d6dd9f71dabaa366c87134195b679": {
+      "app": "defi-kingdoms",
+      "role": "Pay Portal vesting"
+    },
+    "0xa4b9a93013a5590db92062cf58d4b0ab4f35dbfb": {
+      "app": "defi-kingdoms",
+      "role": "Development Fund multisig (Safe)"
+    },
+    "0x3875e5398766a29c1b28cc2068a0396cba36ef99": {
+      "app": "defi-kingdoms",
+      "role": "Marketing Fund multisig (Safe)"
+    },
+    "0x79f0d0670d17a89f509ad1c16bb6021187964a29": {
+      "app": "defi-kingdoms",
+      "role": "Founders Fund multisig (Safe)"
+    },
+    "0xcf664087a5bb0237a0bad6742852ec6c8d69a27a": {
+      "app": "wone",
+      "role": "WONE (wrapped ONE, WETH9)"
+    },
+    "0x985458e523db3d53125813ed68c274899e9dfab4": {
+      "app": "horizon-bridge",
+      "role": "1USDC bridged token"
+    },
+    "0x3c2b8be99c50593081eaa2a724f0b8285f5aba8f": {
+      "app": "horizon-bridge",
+      "role": "1USDT bridged token"
+    },
+    "0x6983d1e6def3690c4d616b13597a09e6193ea013": {
+      "app": "horizon-bridge",
+      "role": "1ETH bridged token"
+    },
+    "0xef977d2f931c1978db5f6747666fa1eacb0d0339": {
+      "app": "horizon-bridge",
+      "role": "1DAI bridged token"
+    },
+    "0x3095c7557bcb296ccc6e363de01b760ba031f2d9": {
+      "app": "horizon-bridge",
+      "role": "1WBTC bridged token"
+    },
+    "0xe176ebe47d621b984a73036b9da5d834411ef734": {
+      "app": "horizon-bridge",
+      "role": "BUSD bridged token"
+    },
+    "0xb1f6e61e1e113625593a22fa6aa94f8052bc39e0": {
+      "app": "horizon-bridge",
+      "role": "bscBNB bridged token"
+    },
+    "0x218532a12a389a4a92fc0c5fb22901d1c19198aa": {
+      "app": "horizon-bridge",
+      "role": "1LINK bridged token"
+    },
+    "0xcf1709ad76a79d5a60210f23e81ce2460542a836": {
+      "app": "tranquil-finance",
+      "role": "TRANQ token"
+    },
+    "0x34b9aa82d89ae04f0f546ca5ec9c93efe1288940": {
+      "app": "tranquil-finance",
+      "role": "tqONE market (cToken)"
+    },
+    "0x22d62b19b7039333ad773b7185bb61294f3adc19": {
+      "app": "tranquil-finance",
+      "role": "stONE liquid staking token"
+    },
+    "0xc35dadb65012ec5796536bd9864ed8773abc74c4": {
+      "app": "sushiswap",
+      "role": "UniswapV2Factory (Sushi)"
+    },
+    "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506": {
+      "app": "sushiswap",
+      "role": "UniswapV2Router02 (Sushi)"
+    },
+    "0x67da5f2ffaddff067ab9d5f025f8810634d84287": {
+      "app": "sushiswap",
+      "role": "MiniChefV2 (LP farming)"
+    },
+    "0x7d02c116b98d0965ba7b642ace0183ad8b8d2196": {
+      "app": "viperswap",
+      "role": "UniswapV2Factory (Viper)"
+    },
+    "0xf012702a5f0e54015362cbca26a26fc90aa832a3": {
+      "app": "viperswap",
+      "role": "UniswapV2Router02 (Viper)"
+    },
+    "0xea589e93ff18b1a1f1e9bac7ef3e86ab62addc79": {
+      "app": "viperswap",
+      "role": "VIPER token"
+    },
+    "0xc5cfada84e902ad92dd40194f0883ad49639b023": {
+      "app": "curve",
+      "role": "3pool StableSwap (1DAI/1USDC/1USDT) + LP token"
+    },
+    "0xaf41a65f786339e7911f4acdad6bd49426f2dc6b": {
+      "app": "synapse",
+      "role": "SynapseBridge"
+    },
+    "0x3ea9b0ab55f34fb188824ee288ceaefc63cf908e": {
+      "app": "synapse",
+      "role": "nUSD stableswap pool"
+    },
+    "0x9740ff91f1985d8d2b71494ae1a2f723bb3ed9e4": {
+      "app": "layerzero",
+      "role": "Endpoint (v1)"
+    },
+    "0xca11bde05977b3631167028862be2a173976ca11": {
+      "app": "multicall",
+      "role": "Multicall3"
+    },
+    "0x34b415f4d3b332515e66f70595ace1dcf36254c5": {
+      "app": "multicall",
+      "role": "Multicall2 (Sushi deployment)"
+    },
+    "0x69f4d1788e39c87893c980c06edf4b7f686e2938": {
+      "app": "safe",
+      "role": "GnosisSafe 1.3.0 singleton (eip155 deployment)"
+    },
+    "0xfb1bffc9d739b8d520daf37df666da4c687191ea": {
+      "app": "safe",
+      "role": "GnosisSafeL2 1.3.0 singleton (eip155 deployment)"
+    },
+    "0xc22834581ebc8527d974f8a1c97e1bea4ef910bc": {
+      "app": "safe",
+      "role": "GnosisSafeProxyFactory 1.3.0 (eip155 deployment)"
+    },
+    "0x41675c099f32341bf84bfc5382af534df5c7461a": {
+      "app": "safe",
+      "role": "Safe 1.4.1 singleton"
+    },
+    "0x29fcb43b46531bca003ddc8fcb67ffe91900c762": {
+      "app": "safe",
+      "role": "SafeL2 1.4.1 singleton"
+    },
+    "0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67": {
+      "app": "safe",
+      "role": "SafeProxyFactory 1.4.1"
+    },
+    "0x7534978f9fa903150ed429c486d1f42b7fdb7a61": {
+      "app": "onewallet",
+      "role": "1wallet treasury (default recovery address)"
+    },
+    "0x02f2cf45dd4bacba091d78502dba3b2f431a54d3": {
+      "app": "onewallet",
+      "role": "1wallet old treasury"
+    },
+    "0x6a82a17b48ef6be278bbc56138f35d04594587e3": {
+      "app": "tranquil-finance",
+      "role": "Unitroller / Comptroller (derived from tqONE.comptroller())"
+    },
+    "0xbec775cb42abfa4288de81f387a9b1a3c4bc552a": {
+      "app": "sushiswap",
+      "role": "SUSHI token (derived from MiniChefV2.SUSHI())"
+    },
+    "0x494024993160e15f3bf2be8c26cbcd02bc10baa1": {
+      "app": "smartvault",
+      "role": "WalletFactory"
+    },
+    "0x87f36e030a50705f73ab74de8b4a678b34670c6f": {
+      "app": "smartvault",
+      "role": "TOTPWallet masterCopy (implementation)"
+    },
+    "0xc8ee1a542fd051cd7edc73c7d771384a681c83fa": {
+      "app": "smartvault",
+      "role": "TOTPWallet masterCopy (implementation)"
+    },
+    "0x7de96a96c3c2e3d69c2c50a611a1595435404d49": {
+      "app": "smartvault",
+      "role": "TOTPWallet masterCopy (implementation)"
+    },
+    "0x8c690e079f74497b52aaec491cfe6a333fb991e8": {
+      "app": "smartvault",
+      "role": "TOTPWallet masterCopy (early implementation)"
+    },
+    "0x3227adf1c9fb03bb7f83b686f44f10cff498a84c": {
+      "app": "unifi-protocol",
+      "role": "UP token (v2, referenced by UP controller)"
+    },
+    "0xc28a5f528603943f7fd9b594ca77442f42d395f6": {
+      "app": "unifi-protocol",
+      "role": "UP Controller (synthetic UP minting, native ONE backing/borrowing)"
+    },
+    "0x1ee9d7cb8f5023067e13b754df6d7c86d8c60e3d": {
+      "app": "unifi-protocol",
+      "role": "Darbi arbitrage/rebalancer bot (Sushi factory, WONE)"
+    },
+    "0xe3c46e5f7a2ad3f7e69c92feb1c8a5d846fa9b6f": {
+      "app": "unifi-protocol",
+      "role": "UP token (ERC-20; name/symbol 'UP', earlier version)"
+    },
+    "0x2fde00e74a286925597e6067753ea28faa6f595f": {
+      "app": "unifi-protocol",
+      "role": "uTrade uBUSD liquidity token (ERC-20)"
+    },
+    "0x05d3ad2ae8d12de7f764c5da9d40f9e56a47773b": {
+      "app": "unifi-protocol",
+      "role": "uTrade uUP liquidity token (ERC-20)"
+    },
+    "0xcf40477655a7486f89dd0abc37152048c84f47de": {
+      "app": "unifi-protocol",
+      "role": "uTrade uSEED liquidity token (ERC-20)"
+    },
+    "0xdc54046c0451f9269fee1840aec808d36015697d": {
+      "app": "onebtc",
+      "role": "Harmony Bitcoin (1BTC) token + OneBTC issue/redeem core (EIP-1967 proxy)"
+    },
+    "0x2a9a5f736ef1e8a71196b67c772fa960b1fb929c": {
+      "app": "onebtc",
+      "role": "OneBTC vault reward reserve (EIP-1967 proxy; same deployer as 1BTC)"
+    },
+    "0x5b18a4e73f9a4fe337a072516b317863ad3046aa": {
+      "app": "harmony-layerzero-bridge",
+      "role": "NativeOFT 'ONE for BSC': native ONE locked for LayerZero-bridged ONE on BNB Chain"
+    },
+    "0x905582f21fb9855c809d5b8933272a292dfbb138": {
+      "app": "harmony-layerzero-bridge",
+      "role": "NativeOFT 'ONE for Ethereum': native ONE locked for LayerZero-bridged ONE on Ethereum"
+    },
+    "0x12d21f5d0ab768c312e19653bf3f89917866b8e8": {
+      "app": "harmony-swap-v3",
+      "role": "UniswapV3Factory"
+    },
+    "0xe4e259be9c84260fdc7c9a3629a0410b1fb3c114": {
+      "app": "harmony-swap-v3",
+      "role": "NonfungiblePositionManager"
+    },
+    "0xdaa5bf7004e33789ce13a2bbe620953b55608b8b": {
+      "app": "harmony-swap-v3",
+      "role": "UniversalRouter (execute(bytes,bytes[],uint256), collectRewards) \u2014 Uniswap V3 fork router"
+    },
+    "0x7400be22b1f3ff409e58738e4cf32290f60b7504": {
+      "app": "harmony-pump-fun",
+      "role": "TokenFactory (bonding-curve launcher; UUPS proxy) v20241221"
+    },
+    "0xc115ada811c5c81f1eafcbe5526d5fcb73b6b40d": {
+      "app": "harmony-pump-fun",
+      "role": "TokenFactory (bonding-curve launcher; UUPS proxy) v20241221 with competitions"
+    },
+    "0x5f18a2f6710304cdf95904e50fae2a9408ebefc5": {
+      "app": "harmony-pump-fun",
+      "role": "TokenFactory (bonding-curve launcher; non-proxy, competitions)"
+    },
+    "0x7bc8b1b5aba4df3be9f9a32dae501214dc0e4f3f": {
+      "app": "tofunft",
+      "role": "tofuNFT marketplace core (run/swap/inventories)"
+    },
+    "0xa7fe71bc92d3a48ac59403b9be86f73e49bfcd46": {
+      "app": "tranquil-finance",
+      "role": "TranquilStaking (TRANQ staking; delegator proxy, admin == tqONE admin)"
+    },
+    "0x73045de4dfd38b5e588ac91fbb2944b45fd90b05": {
+      "app": "tranquil-finance",
+      "role": "Tranquility City - Chara (TCC) ERC-721"
+    },
+    "0x4f437be4a3448fcf394e513fc1a8ef92e190d1ba": {
+      "app": "synapse",
+      "role": "MessageBus (cross-chain messaging)"
+    },
+    "0xdb28ce12729d20a8eee9c2fe873d3ff3cba69b29": {
+      "app": "sushiswap",
+      "role": "MISO BatchAuction market clone (EIP-1167)"
+    },
+    "0xe3d6a6cbe22f8b7fa101ea0cdf2aba9447757062": {
+      "app": "sushiswap",
+      "role": "MISO Crowdsale market clone (EIP-1167)"
+    },
+    "0x32fae32961474e6d19b7a6346524b8a6a6fd1d9c": {
+      "app": "nervenetwork",
+      "role": "Nerve heterogeneous-chain multi-sign bridge contract"
+    },
+    "0xfd39422e1e4bbf544089d4e23bea80bc2f6153bb": {
+      "app": "chainbridge",
+      "role": "ChainBridge Bridge.sol (relayer voting)"
+    },
+    "0x4d73adb72bc3dd368966edd0f0b2148401a178e2": {
+      "app": "layerzero",
+      "role": "UltraLightNodeV2 (endpoint v1 message library; owner = LZ deployer)"
+    },
+    "0x91aa2547728307e0e3b35254d526acef202d131a": {
+      "app": "layerzero",
+      "role": "SendUln301 (endpoint v1 default send library, derived from Endpoint.defaultSendLibrary())"
+    },
+    "0x795f8325af292ff6e58249361d1954893be15aff": {
+      "app": "layerzero",
+      "role": "SendUln302 (endpoint v2 message library)"
+    },
+    "0x1a44076050125825900e736c501f859c50fe728c": {
+      "app": "layerzero",
+      "role": "EndpointV2 (eid 30116)"
+    },
+    "0x26da582889f59eaae9da1f063be0140cd93e6a4f": {
+      "app": "gas-zip",
+      "role": "LayerZero v2 OApp with sendDeposits/createNativeDropOption (Gas.zip refuel; fingerprint)"
+    },
+    "0xad5317b0d00d9a70e0ba76f220dc87937d4a67f8": {
+      "app": "layerzero",
+      "role": "OFT v1 omnichain token (owner 0x924c2c6063\u2026; 9 txs)"
+    },
+    "0x88f690ed4fe6c3ed269888ea929951ae7645ebb4": {
+      "app": "multisender",
+      "role": "Multisender proxy (multisendToken/multisendEther, VIP fees)"
+    },
+    "0x6008c8769bfacd92251ba838382e7e5637c7e74d": {
+      "app": "cosmic-universe",
+      "role": "Cosmic Coin (COSMIC) ERC-20"
+    },
+    "0x621e352c8e8e4854971e88cbced978ab97176eb3": {
+      "app": "dfk-hero-lending",
+      "role": "Hero lending/collateral vault (getHeroesOfOwner, repayHeroes; 825k txs)"
+    },
+    "0x372d64d9a6501f09f5721d24e2d2138d8543adb6": {
+      "app": "dfk-hero-lending",
+      "role": "Hero lending vault v1 (MIN_COLLATERAL, BORROW_LIMIT)"
+    },
+    "0xdf7e8d868ef96ed7700e7d50db8259c1f47f5eeb": {
+      "app": "dfk-hero-lending",
+      "role": "Hero lending compensation/claim (getClaimableJewel)"
+    },
+    "0x2ae38daf793fcdba9fe704a17b38c7b1981e5df3": {
+      "app": "pixel-pirates",
+      "role": "Pixel Pirates (PIRATE) ERC-721"
+    },
+    "0x3f487460f4f13625fb0b0a69eac85152d633189e": {
+      "app": "pixel-pirates",
+      "role": "NFT marketplace with offers (same deployer as PIRATE)"
+    },
+    "0x6f737b66fb2119c4b467f14c7f4fcab8a2c2c3ca": {
+      "app": "pixel-pirates",
+      "role": "Game reward/creation-fee contract (same deployer as PIRATE)"
+    },
+    "0xc35e604b315bd38ba6c3c890db90ab2c2a3db6f3": {
+      "app": "farmersonly-vaultchef",
+      "role": "Leveraged Tranquil lending strategy (StrategyTranquil-style; paused)"
+    },
+    "0x08b3f83557c4ab8c42fc3c87b04a79f1e4665912": {
+      "app": "one-country",
+      "role": ".1.country D1DC (ERC-721 domain records)"
+    },
+    "0x3cc3c5f98ac3ff544279919dfcebfb7afe03a2ca": {
+      "app": "one-country",
+      "role": ".1.country D1DCV2 (EIP-1967 proxy)"
+    },
+    "0x727cbca22a153f0ea8eb077290694fce4296490d": {
+      "app": "one-country",
+      "role": ".1.country domain renting/registrar controller (register(string,string,bytes32), getENSPrice)"
+    },
+    "0x3c84f4690de96a0428bc6777f5aa5f5a92150ef2": {
+      "app": "one-country",
+      "role": ".1.country domain renting/registrar controller v2 (URLs, resolver, gracePeriod)"
+    },
+    "0x32ae45799fe380c5cd76144720e11af990477c3c": {
+      "app": "one-country",
+      "role": "ENS-fork ETHRegistrarController (.country TLD; commit/register/renew)"
+    },
+    "0xae4a0880cd682cdc138688c056929ad23718a94a": {
+      "app": "one-country",
+      "role": "ENS-fork ETHRegistrarController (.country TLD; setPrices)"
+    },
+    "0x76c6fe3aee636f88d01de64931514e8cd64d94fb": {
+      "app": "one-country",
+      "role": "ENS-fork ETHRegistrarController (.country TLD; deployer 0x9086e509c6)"
+    },
+    "0x572133a7c48bb02e3a4c482b18058e078dcba9ef": {
+      "app": "vinfirst",
+      "role": "VinFirst IDs (VFID) ERC-721"
+    },
+    "0x2c971acd1039cce1a756766fddefdb9e778f890f": {
+      "app": "vinfirst",
+      "role": "EU VinFirst IDs (EU-VFID) ERC-721"
+    },
+    "0xd69382ae81204150d1eaa8c509eaf899eaac24e9": {
+      "app": "vinfirst",
+      "role": "CA VinFirst IDs (CA-VFID) ERC-721"
+    },
+    "0x2c6d5830dc0deb213ed8e8df666229d43a0dfc32": {
+      "app": "harmony-whales",
+      "role": "Harmony Whales (WHALES) ERC-721"
+    },
+    "0x5debec7acae404d508ea52e2ba108f3302838c12": {
+      "app": "harmony-whales",
+      "role": "Harmony Whales (hWHALE) ERC-721"
+    },
+    "0x21e709c0a1235e4f805779c880d641004eaec732": {
+      "app": "harmony-whales",
+      "role": "Harmony Whales (WHALE) ERC-721"
+    },
+    "0xeda939305ffead73a1aa285a545b56a719b94990": {
+      "app": "davinci",
+      "role": "TransferProxy (mainnet, from davinci-sdk config)"
+    },
+    "0x1d89bc60cd482ddfae8208e6a14d6c185c2095a1": {
+      "app": "davinci",
+      "role": "Market (mainnet, from davinci-sdk config)"
+    },
+    "0x762f89c3847658e8ff2c55281aa64fccad87b7cb": {
+      "app": "davinci",
+      "role": "Auction (mainnet, from davinci-sdk config)"
+    },
+    "0x1548c6227cbd78e51eb0a679c1f329b9a5a99beb": {
+      "app": "davinci",
+      "role": "Image collection ERC-1155 (mainnet, from davinci-sdk config)"
+    },
+    "0x4f1e81f6736b04a75e6a552a30aa32787566c84d": {
+      "app": "davinci",
+      "role": "Model collection (mainnet, from davinci-sdk config)"
+    },
+    "0xbde650853b535d738ce67f1bdeb335e38834a9e9": {
+      "app": "davinci",
+      "role": "Music collection (mainnet, from davinci-sdk config)"
+    },
+    "0x474d8fd12780fbe2b7b7bd74eb326bb75ded91d8": {
+      "app": "davinci",
+      "role": "Video collection (mainnet, from davinci-sdk config)"
+    },
+    "0x51f6290510be3c802471e27f0843a3a54a8226df": {
+      "app": "davinci",
+      "role": "Book collection (mainnet, from davinci-sdk config)"
+    },
+    "0x4b38197123f181b722841778e7e24cab809c1c82": {
+      "app": "dorahacks-qf",
+      "role": "Quadratic-funding grant round (beacon proxy -> 0xbc4171f4\u2026; uploadProject/donate/vote/takeOutGrants)"
+    },
+    "0x76714c949342512a3ba3b231ac7727068db2990c": {
+      "app": "dorahacks-qf",
+      "role": "Quadratic-funding grant round (beacon proxy -> 0xbc4171f4\u2026; uploadProject/donate/vote/takeOutGrants)"
+    },
+    "0xc29c66186ab061110d2e54859852f0442d9b455a": {
+      "app": "dorahacks-qf",
+      "role": "Grant-round beacon factory"
+    },
+    "0xbc4171f45ef0ef66e76f979df021a34b46dcc81d": {
+      "app": "dorahacks-qf",
+      "role": "Grant-round implementation"
+    },
+    "0x3736ac8400751bf07c6a2e4db3f4f3d9d422abb2": {
+      "app": "harmony-multisig",
+      "role": "GnosisSafe 1.2.0 fork singleton (multisig.harmony.one)"
+    },
+    "0x4f9b1def3a0f6747bf8c870a27d3decdf029100e": {
+      "app": "harmony-multisig",
+      "role": "GnosisSafeProxyFactory (multisig.harmony.one)"
+    }
+  },
+  "univ2_factories": {
+    "0x9014b937069918bd319f80e8b3bb4a2cf6faa5f7": "defi-kingdoms",
+    "0xc35dadb65012ec5796536bd9864ed8773abc74c4": "sushiswap",
+    "0x7d02c116b98d0965ba7b642ace0183ad8b8d2196": "viperswap"
+  },
+  "aave_pools": {
+    "0x794a61358d6845594f94dc1db02a252b5b4814ad": "aave-v3"
+  },
+  "comptrollers": {
+    "0x6a82a17b48ef6be278bbc56138f35d04594587e3": "tranquil-finance"
+  },
+  "safe_singletons": {
+    "0x69f4d1788e39c87893c980c06edf4b7f686e2938": "GnosisSafe 1.3.0 (Safe canonical eip155 deployment)",
+    "0xfb1bffc9d739b8d520daf37df666da4c687191ea": "GnosisSafeL2 1.3.0 (Safe canonical eip155 deployment)",
+    "0x41675c099f32341bf84bfc5382af534df5c7461a": "Safe 1.4.1 (canonical)",
+    "0x29fcb43b46531bca003ddc8fcb67ffe91900c762": "SafeL2 1.4.1 (canonical)",
+    "0x3736ac8400751bf07c6a2e4db3f4f3d9d422abb2": "GnosisSafe 1.2.0 fork singleton (Harmony multisig.harmony.one deployment; non-canonical 16,040-byte build; proxies created by factory 0x4f9b1dEf3a0f6747bF8C870a27D3DeCdf029100e)"
+  },
+  "name_patterns": [
+    {
+      "pattern": "^Aave Harmony",
+      "app": "aave-v3",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^Tranquil|^tq[A-Z]|^stONE",
+      "app": "tranquil-finance",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^SushiSwap LP Token|^Sushi",
+      "app": "sushiswap",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^Venom|Viper",
+      "app": "viperswap",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^Moo ",
+      "app": "beefy",
+      "role_from": "name"
+    },
+    {
+      "pattern": "Curve\\.fi",
+      "app": "curve",
+      "role_from": "name"
+    },
+    {
+      "pattern": "^Synapse|^nUSD|^nETH",
+      "app": "synapse",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^Euphoria|WAGMI|^sWAGMI|^wsWAGMI",
+      "app": "euphoria",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^Hundred|^h[A-Z]{2,}$",
+      "app": "hundred-finance",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^Frax|^FRAX|^FXS",
+      "app": "frax",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^DFK|Jewel|JEWEL|Gaia|Shvas|Hero",
+      "app": "defi-kingdoms",
+      "role_from": "name"
+    },
+    {
+      "pattern": "^Wrapped ONE$|^WONE$",
+      "app": "wone",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^Anyswap|^any[A-Z]",
+      "app": "multichain",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "^LayerZero|OFT",
+      "app": "layerzero",
+      "role_from": "symbol"
+    },
+    {
+      "pattern": "DaVinci|davinci",
+      "app": "davinci",
+      "role_from": "name"
+    }
+  ],
+  "_verification": "All 'addresses' entries were checked on 2026-09-11 against https://a.api.s0.t.hmny.io: each has non-empty code; token names/symbols matched; parents derived on-chain: tqONE.comptroller(), MiniChefV2.SUSHI(), MasterGardener.govToken()==JEWEL, PoolAddressesProvider.getPool()==Pool, Safe singletons VERSION().",
+  "smartvault_factories": [
+    "0x494024993160e15f3bf2be8c26cbcd02bc10baa1"
+  ],
+  "signature_rules": [
+    {
+      "all_of": [
+        "setupHOTP2FA(string,bytes32,uint8,uint256)"
+      ],
+      "app": "smartvault",
+      "role": "SmartVault OTP smart wallet (proxy -> TOTPWallet masterCopy)",
+      "category": "smart-wallet"
+    },
+    {
+      "all_of": [
+        "getRootHashes()",
+        "startRecoverCommit(bytes32,bytes32)"
+      ],
+      "app": "smartvault",
+      "role": "SmartVault OTP smart wallet (early masterCopy)",
+      "category": "smart-wallet"
+    },
+    {
+      "all_of": [
+        "mintSyntheticUP(uint256,address)"
+      ],
+      "app": "unifi-protocol",
+      "role": "UP Controller"
+    },
+    {
+      "all_of": [
+        "DARBI_MINTER()"
+      ],
+      "app": "unifi-protocol",
+      "role": "Darbi arbitrage bot"
+    },
+    {
+      "all_of": [
+        "requestIssue(uint256,address)",
+        "requestRedeem(uint256,address,address)"
+      ],
+      "app": "onebtc",
+      "role": "OneBTC bridge core (1BTC)"
+    },
+    {
+      "all_of": [
+        "setVaultReward(address)",
+        "depositReward()"
+      ],
+      "app": "onebtc",
+      "role": "OneBTC vault reward reserve"
+    },
+    {
+      "all_of": [
+        "sendFrom(address,uint16,bytes,uint256,address,address,bytes)",
+        "deposit()",
+        "withdraw(uint256)",
+        "circulatingSupply()"
+      ],
+      "app": "harmony-layerzero-bridge",
+      "role": "LayerZero NativeOFT (native ONE lock)"
+    },
+    {
+      "all_of": [
+        "sendFrom(address,uint16,bytes,uint256,address,address,bytes)",
+        "lzEndpoint()"
+      ],
+      "app": "layerzero",
+      "role": "LayerZero OFT v1 token"
+    },
+    {
+      "all_of": [
+        "ulnLookup(uint16)",
+        "validateTransactionProof(uint16,address,uint256,bytes32,bytes32,bytes)"
+      ],
+      "app": "layerzero",
+      "role": "UltraLightNodeV2"
+    },
+    {
+      "all_of": [
+        "setLzToken(address)",
+        "treasuryFeeHandler()"
+      ],
+      "app": "layerzero",
+      "role": "SendUln301"
+    },
+    {
+      "all_of": [
+        "messageLibType()",
+        "withdrawLzTokenFee(address,address,uint256)"
+      ],
+      "app": "layerzero",
+      "role": "SendUln302"
+    },
+    {
+      "all_of": [
+        "sendDeposits(uint256[],address)",
+        "createNativeDropOption(uint32,uint128,address)"
+      ],
+      "app": "gas-zip",
+      "role": "Gas.zip LayerZero v2 refuel OApp (fingerprint)"
+    },
+    {
+      "all_of": [
+        "stakedTokenAddress()",
+        "supplierRewardIndex(address,uint256)"
+      ],
+      "app": "tranquil-finance",
+      "role": "TranquilStaking"
+    },
+    {
+      "all_of": [
+        "tqTokenTotal()",
+        "vaultChefAddress()"
+      ],
+      "app": "farmersonly-vaultchef",
+      "role": "Leveraged Tranquil strategy (VaultChef lineage)"
+    },
+    {
+      "all_of": [
+        "sendMessage(bytes32,uint256,bytes,bytes)",
+        "gasFeePricing()"
+      ],
+      "app": "synapse",
+      "role": "MessageBus"
+    },
+    {
+      "all_of": [
+        "OP_COMPLETE_BUY()",
+        "inventories(uint256)"
+      ],
+      "app": "tofunft",
+      "role": "tofuNFT marketplace"
+    },
+    {
+      "all_of": [
+        "getBatchAuctionInitData(address,address,uint256,uint256,uint256,address,uint256,address,address,address)"
+      ],
+      "app": "sushiswap",
+      "role": "MISO BatchAuction clone"
+    },
+    {
+      "all_of": [
+        "initCrowdsale(address,address,address,uint256,uint256,uint256,uint256,uint256,address,address,address)"
+      ],
+      "app": "sushiswap",
+      "role": "MISO Crowdsale clone"
+    },
+    {
+      "all_of": [
+        "crossOut(string,uint256,address)",
+        "createOrSignWithdraw(string,address,uint256,bool,address,bytes)"
+      ],
+      "app": "nervenetwork",
+      "role": "Nerve multi-sign bridge"
+    },
+    {
+      "all_of": [
+        "_relayerThreshold()",
+        "voteProposal(uint8,uint64,bytes32,bytes)"
+      ],
+      "app": "chainbridge",
+      "role": "ChainBridge Bridge"
+    },
+    {
+      "all_of": [
+        "multisendToken(address,address[],uint256[])",
+        "registerVIP()"
+      ],
+      "app": "multisender",
+      "role": "Multisender"
+    },
+    {
+      "all_of": [
+        "bondingCurve()",
+        "uniswapV3Factory()",
+        "createToken(string,string,string)"
+      ],
+      "app": "harmony-pump-fun",
+      "role": "pump.fun TokenFactory"
+    },
+    {
+      "all_of": [
+        "execute(bytes,bytes[],uint256)",
+        "collectRewards(bytes)"
+      ],
+      "app": "harmony-swap-v3",
+      "role": "UniversalRouter"
+    },
+    {
+      "all_of": [
+        "getHeroesOfOwner(address)",
+        "repayHeroes()"
+      ],
+      "app": "dfk-hero-lending",
+      "role": "Hero lending vault"
+    },
+    {
+      "all_of": [
+        "getClaimableJewel(address)",
+        "repayHeroes()"
+      ],
+      "app": "dfk-hero-lending",
+      "role": "Hero lending compensation"
+    },
+    {
+      "all_of": [
+        "makeCommitment(string,address,uint256,bytes32,address,bytes[],bool,uint32,uint64)"
+      ],
+      "app": "one-country",
+      "role": "ENS-fork ETHRegistrarController (.country)"
+    },
+    {
+      "all_of": [
+        "register(string,string,bytes32)",
+        "getENSPrice(string)"
+      ],
+      "app": "one-country",
+      "role": ".1.country domain renting/registrar"
+    },
+    {
+      "all_of": [
+        "uploadProject(uint256)",
+        "takeOutGrants(uint256,uint256)"
+      ],
+      "app": "dorahacks-qf",
+      "role": "Quadratic-funding grant round"
+    }
+  ],
+  "pattern_rules": [
+    {
+      "all_of": [
+        "sharesOf(address)",
+        "pricePerShare()",
+        "getValidatorList()"
+      ],
+      "label": "Liquid-staking vault (shares) delegating via Harmony staking precompile",
+      "category": "staking-precompile-user"
+    },
+    {
+      "all_of": [
+        "autoCompound(uint256)",
+        "setValidators(address[])",
+        "epoch()"
+      ],
+      "label": "Delegation pool with auto-compound via staking precompile",
+      "category": "staking-precompile-user"
+    },
+    {
+      "all_of": [
+        "insurancePoolBalance()",
+        "validatorStates(address)",
+        "epoch()"
+      ],
+      "label": "Delegation pool (miner/insurance model) via staking precompile",
+      "category": "staking-precompile-user"
+    },
+    {
+      "all_of": [
+        "rewardPerToken()",
+        "stakeFor(address,uint128)",
+        "setRewardParams(uint128,uint64)"
+      ],
+      "label": "StakingRewards pool (Synthetix-style; balanceOf/totalSupply are staked balances)",
+      "category": "staking-pool"
+    },
+    {
+      "all_of": [
+        "release(address)",
+        "totalShares()",
+        "payee(uint256)"
+      ],
+      "label": "OpenZeppelin PaymentSplitter",
+      "category": "payment-splitter"
+    },
+    {
+      "all_of": [
+        "newContract(uint256,uint256,bytes32,address,string,string)",
+        "refund(bytes32)"
+      ],
+      "label": "Hashed timelock contract (HTLC) atomic-swap escrow",
+      "category": "escrow"
+    },
+    {
+      "all_of": [
+        "punksOfferedForSale(uint256)",
+        "getPunk(uint256)"
+      ],
+      "label": "CryptoPunks-market clone (pre-ERC-721 NFT with built-in market)",
+      "category": "nft-other"
+    },
+    {
+      "all_of": [
+        "gem()",
+        "rely(address)",
+        "wards(address)"
+      ],
+      "label": "MakerDAO-style GemJoin adapter (Maker fork)",
+      "category": "defi-other"
+    },
+    {
+      "all_of": [
+        "enableRefunds()",
+        "deposit(address)",
+        "refund(address)"
+      ],
+      "label": "OpenZeppelin RefundEscrow (crowdsale escrow)",
+      "category": "escrow"
+    },
+    {
+      "all_of": [
+        "contribute()",
+        "amountGoal()",
+        "raiseBy()"
+      ],
+      "label": "Crowdfunding tutorial-style contract",
+      "category": "misc"
+    },
+    {
+      "all_of": [
+        "addMoney()",
+        "playersCount()"
+      ],
+      "label": "Lottery tutorial-style contract",
+      "category": "game"
+    },
+    {
+      "all_of": [
+        "buyTokens()",
+        "SOFT_CAP()",
+        "uniswapV2Pair()"
+      ],
+      "label": "Token presale / launchpad (PinkSale-style)",
+      "category": "launchpad"
+    },
+    {
+      "all_of": [
+        "buy()",
+        "claimFunding()",
+        "whitelist(address[])"
+      ],
+      "label": "Token presale (whitelist/claim)",
+      "category": "launchpad"
+    },
+    {
+      "all_of": [
+        "createAuction(address,uint256,address,uint256,uint256)",
+        "acceptsCurrency(address)"
+      ],
+      "label": "NFT marketplace with auctions and multi-currency payments (operator unattributed)",
+      "category": "nft-marketplace"
+    },
+    {
+      "all_of": [
+        "isRegistered(uint256)",
+        "collectFees(uint256[])",
+        "register(uint256,address)"
+      ],
+      "label": "NFT marketplace collection registry / fee collector (same deployer as multi-currency marketplace)",
+      "category": "nft-marketplace"
+    },
+    {
+      "all_of": [
+        "createPrivateListing(uint256,uint256,address)",
+        "setMasterAddress(address)"
+      ],
+      "label": "NFT marketplace with holder reflections",
+      "category": "nft-marketplace"
+    },
+    {
+      "all_of": [
+        "createSale(uint256,uint256)",
+        "currentFloor()",
+        "reflectFee()"
+      ],
+      "label": "Single-collection NFT marketplace with reflection fee",
+      "category": "nft-marketplace"
+    },
+    {
+      "all_of": [
+        "toERC721(address,uint256)",
+        "toERC20(address,uint256)"
+      ],
+      "label": "ERC-20<->ERC-721 conversion marketplace (ERC-404-style)",
+      "category": "nft-marketplace"
+    },
+    {
+      "all_of": [
+        "wager(uint256)",
+        "userWagers(address,uint256)"
+      ],
+      "label": "Wagering/betting game",
+      "category": "game"
+    },
+    {
+      "all_of": [
+        "goFishing()"
+      ],
+      "label": "Fishing game (same deployer as BreedPoolFish NFT)",
+      "category": "game"
+    },
+    {
+      "all_of": [
+        "getPrizeStructure()",
+        "getContractValue()"
+      ],
+      "label": "Lottery / prize pool",
+      "category": "game"
+    },
+    {
+      "all_of": [
+        "buyTickets()",
+        "seasonConfig(uint32)",
+        "claimPrize(uint32,uint256)"
+      ],
+      "label": "Seasonal ticket game",
+      "category": "game"
+    },
+    {
+      "all_of": [
+        "buyShares(uint256)",
+        "dailyDistributed(uint256)",
+        "isShareholder(address)"
+      ],
+      "label": "Shareholder dividend scheme",
+      "category": "misc"
+    },
+    {
+      "all_of": [
+        "distributeTo(address)",
+        "numberOfDonationsRemaining()"
+      ],
+      "label": "Donation faucet / distributor",
+      "category": "misc"
+    },
+    {
+      "all_of": [
+        "trafMint()",
+        "wlMint()"
+      ],
+      "label": "NFT mint sale contract (whitelist)",
+      "category": "nft-mint"
+    },
+    {
+      "all_of": [
+        "initialPortfolioFunding(address,(address,uint256)[],uint256)"
+      ],
+      "label": "Portfolio funding helper (SmartVault relayer 0x8c8a30ae31\u2026)",
+      "category": "misc"
+    },
+    {
+      "all_of": [
+        "lockCollateral(address,bytes32,bytes32,address,uint256,address)",
+        "seizeCollateral(uint256,bytes32)"
+      ],
+      "label": "Collateralized loan vault (hash-locked; 2021)",
+      "category": "defi-other"
+    },
+    {
+      "all_of": [
+        "swapToNative(address,uint256,address,address)",
+        "zapAcross(address,uint256,address,address)"
+      ],
+      "label": "DEX zap / bridge helper",
+      "category": "defi-other"
+    },
+    {
+      "all_of": [
+        "multiSendWithRevert(address,bytes[])",
+        "setBuyTaxFeePercent(uint256)"
+      ],
+      "label": "Batch-call helper for tax token",
+      "category": "misc"
+    },
+    {
+      "all_of": [
+        "verifySignature(uint256,uint8,uint256,uint256,address)",
+        "nftWhitelist(address)"
+      ],
+      "label": "NFT-backed contract with Schnorr/VRF-style signature verification",
+      "category": "misc"
+    },
+    {
+      "all_of": [
+        "deposit(address,uint256,uint8,bool,bytes)",
+        "isOwnedToken(address)"
+      ],
+      "label": "Game/asset bridge (signer-verified withdrawals)",
+      "category": "bridge-other"
+    },
+    {
+      "all_of": [
+        "chainIdFees(uint256)",
+        "filledSwaps(bytes)"
+      ],
+      "label": "Cross-chain swap bridge (operator unattributed)",
+      "category": "bridge-other"
+    },
+    {
+      "all_of": [
+        "deposit(uint256)",
+        "payout()",
+        "wallet()"
+      ],
+      "label": "Payment forwarder / payout contract",
+      "category": "misc"
+    },
+    {
+      "all_of": [
+        "withdrawKlay(uint256)",
+        "NativeAddress()"
+      ],
+      "label": "Token distribution/vault contract (Klaytn-origin codebase)",
+      "category": "misc"
+    },
+    {
+      "all_of": [
+        "tokenToBnbSwapInput(uint256,uint256)",
+        "bnbToTokenSwapInput(uint256)"
+      ],
+      "label": "Single-pool AMM LP token (Uniswap-v1 style; native ONE reserve)",
+      "category": "defi-other"
+    },
+    {
+      "all_of": [
+        "wrap()",
+        "unwrap(uint256)",
+        "getWrapFee()"
+      ],
+      "label": "Fee-charging wrapper token for native ONE",
+      "category": "defi-other"
+    }
+  ],
+  "infrastructure_apps": [
+    "layerzero"
+  ]
+}
