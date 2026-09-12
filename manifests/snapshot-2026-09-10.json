@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "cutoff": {
+    "requested_time_utc": "2026-09-10T14:00:00Z",
+    "shard0": {
+      "block": 93623067,
+      "timestamp_utc": "2026-09-10T14:00:00Z",
+      "hash": "0x23572e11f6ef9afe4c27ab3102f15b99fd7277ae5f685ccaef0ae571fe7ee0b6",
+      "state_root": "0x5e1927beb00c17c341d02483fbe81a884cc45af1ecfb673366e685aca4632ec3"
+    },
+    "shard1": {
+      "block": 95882100,
+      "timestamp_utc": "2026-09-10T13:59:59Z",
+      "selection": "last block at or before requested cutoff",
+      "hash": "0xf801577a5480175c05a63c8e4e5cf3d2623e1a01bdf176e16b46967405ae02ee",
+      "state_root": "0x312a34c0254608c59013bc967c486fe036b784e0d2012b266d5fa4ecc2531760"
+    }
+  },
+  "valuation": {
+    "usd_per_one": "0.00074801",
+    "reference_shard0_block": 93448483,
+    "note": "Used for historical reporting only; public eligibility is ONE-denominated."
+  },
+  "publication_hold": {
+    "status": "withheld_pending_independent_reproduction_and_first_public_results_article",
+    "withheld_fields": [
+      "result row and population counts",
+      "total-claim, wallet-airdrop, and staked-to-vault amounts",
+      "eligibility and treasury-routing breakdowns",
+      "generated-output hashes",
+      "observed verification counts"
+    ]
+  },
+  "eligibility_1000_one": {
+    "threshold_atto": "1000000000000000000000",
+    "field": "total_claim_atto",
+    "equality_policy": "include",
+    "selected_comparison": "greater-than-or-equal"
+  },
+  "selected_policy": {
+    "threshold": "total_claim_atto >= 1000 ONE",
+    "code_bearing_accounts": "preliminary review; verified validator-wrapper accounts are key-controlled automatic claims with wallet and vault delivery separated, genuine contracts require class-specific recovery",
+    "excluded_addresses": [
+      "0x000000000000000000000000000000000000dEaD",
+      "0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD"
+    ]
+  },
+  "excluded_uncertainty": {
+    "category": "retired-shard receipts",
+    "count_and_amount": "withheld",
+    "reason": "Destination spent status on retired shards 2 and 3 is not provable from the active shard databases; excluded to avoid double counting."
+  },
+  "verification": {
+    "methods": [
+      "independent state traversal",
+      "canonical interval audit",
+      "historical RPC comparison",
+      "creation-transition tracing",
+      "strict claim verification",
+      "cross-component reconciliation"
+    ],
+    "observed_results": "withheld"
+  },
+  "source_dependencies": {
+    "harmony_repository": "https://github.com/polymorpher/harmony.git",
+    "harmony_revision": "8292e786db513186faff5b397fdf864c0c189ac1",
+    "mcl_revision": "ac6b73317f5321b33fc877a4dd7218e1815693d8",
+    "bls_revision": "2b7e49894c0f15f5c40cf74046505b7f74946e52",
+    "go": "1.24.2",
+    "go_ethereum_effective_version": "v1.11.2"
+  }
+}
