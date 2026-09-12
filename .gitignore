@@ -1,0 +1,34 @@
+.DS_Store
+.cursor/
+.env
+.env.*
+__pycache__/
+*.py[cod]
+*.log
+*.partial
+*.so
+*.dylib
+
+# Local dependencies and generated data are intentionally not committed.
+third_party/
+artifacts/*
+!artifacts/README.md
+data/
+dist/
+bin/
+repro/as-run/
+
+# Large result bundles belong in immutable release assets.
+results/**/*.csv.gz
+results/**/*.tar
+results/**/*.tar.gz
+
+# Pre-publication numerical embargo. These paths contain claim totals,
+# allocation breakdowns, address-level findings, and expected output hashes.
+docs/findings/
+results/2026-09-11/
+results/*.json
+manifests/results.sha256
+manifests/releases/2026-09-11.json
+embargoed/
+toolkit/cmd/cutoff-final-verifier/

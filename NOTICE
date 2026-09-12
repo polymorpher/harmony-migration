@@ -1,0 +1,12 @@
+Harmony migration accounting toolkit
+
+This toolkit links to and reuses data structures from:
+
+- Harmony: https://github.com/harmony-one/harmony
+- go-ethereum: https://github.com/ethereum/go-ethereum
+
+Harmony and the copied/derived Harmony-compatible portions retain their
+applicable copyright and GNU Lesser General Public License terms.
+
+The repository pins exact dependency revisions in its setup script and snapshot
+manifest so reviewers can rebuild the same software environment.
