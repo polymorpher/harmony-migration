@@ -4,7 +4,7 @@ We will take a snapshot of the blockchain, find out how much ONE is in your wall
 
 The cutoff time (asset migration snapshot time) is Thursday, September 10, 2026, at 7 a.m. Pacific Time (14:00 UTC).
 
-Wallets with at least 1,000 ONE will be prioritized. Your liquid ONE, pending undelegation, unclaimed staking rewards, and pending cross-shard transfers will summed together for this calculation. 
+Wallets with at least 1,000 ONE in total claim will be prioritized. Your liquid ONE, active delegation or validator stake, pending undelegation, unclaimed staking rewards, and pending cross-shard transfers will be summed for this calculation.
 
 Wallets with below 1,000 ONE may claim from a claim portal at a later time, or wait for another batch of airdrop when it makes economic sense to do so - there is no scheduled time for that at this time.
 
