@@ -4,6 +4,12 @@ We will take a snapshot of the blockchain, find out how much ONE is in your wall
 
 The cutoff time (asset migration snapshot time) is Thursday, September 10, 2026, at 7 a.m. Pacific Time (14:00 UTC).
 
+Wallets with at least 1,000 ONE will be prioritized. Your liquid ONE, pending undelegation, unclaimed staking rewards, and pending cross-shard transfers will summed together for this calculation. 
+
+Wallets with below 1,000 ONE may claim from a claim portal at a later time, or wait for another batch of airdrop when it makes economic sense to do so - there is no scheduled time for that at this time.
+
+If you own some ONE at an exchange, there is nothing you need to do. Your exchange will receive the airdrop automatically. Some exchanges also work with us directly to ensure the process go smoothly.
+
 There are more complex scenarios, such as:
 1. you delegated some ONE to a validator
 2. you own bridged assets on Harmony (originated from another chain)
@@ -40,6 +46,12 @@ We urge you to withdraw your assets to a simple EOA wallet (Ledger, MetaMask, co
 2. move the assets from your Harmony multisig to a simple EOA wallet before the cutoff time
 3. wait for the ERC-20 ONE airdrop. If you own other bridged assets, use that EOA wallet to complete the claim process
 4. after migration, move the airdropped ERC-20 ONE and other assets to the Gnosis Safe you created
+
+For those who were unable to do that before cutoff time, please:
+
+1. Create a Safe on Ethereum with exactly the same owners
+2. If your Safe has at least 1,000,000 ONE: you may contact us with your new Safe address so we can verify the ownership and transfer the allocation to your new Safe address; or,
+3. Wait for an automated claim portal to do that. It might take a while
 
 ### I deployed ONE or bridged assets in dApps, such as liquidity pools or lending pools
 
