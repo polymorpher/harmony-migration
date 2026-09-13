@@ -1,0 +1,2 @@
+validator_address,destination_id,destination_address,status,reason,evidence,notes
+0x1111111111111111111111111111111111111111,,0x2222222222222222222222222222222222222222,ready,example only,example://governance,
