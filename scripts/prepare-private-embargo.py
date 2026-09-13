@@ -116,7 +116,37 @@ RESULT_MAPPINGS = (
         / "artifacts"
         / "cutoff-20260910"
         / "claims"
-        / "migration-claims-preliminary-summary.json",
+        / "all-address-migration-claims-cutoff-metadata-summary.json",
+        CLAIM_RESULTS / "all-address-claim-metadata-summary.json",
+        "claim-accounting",
+        "RPC-derived",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "cutoff-20260910"
+        / "claims"
+        / "migration-claims-at-least-1000-one-metadata-summary.json",
+        CLAIM_RESULTS / "priority-claim-metadata-summary.json",
+        "claim-accounting",
+        "RPC-derived",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "cutoff-20260910"
+        / "claims"
+        / "migration-claims-at-least-1000-one-metadata-filter-summary.json",
+        CLAIM_RESULTS / "priority-claim-metadata-filter-summary.json",
+        "claim-accounting",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "cutoff-20260910"
+        / "claims"
+        / "migration-claims-preliminary-complete-summary.json",
         DESTINATION_RESULTS / "pre-contract-review-eligibility-summary.json",
         "destination-mapping",
         "policy-scenario",
@@ -137,6 +167,117 @@ RESULT_MAPPINGS = (
         / "supply-reconciliation-20260911"
         / "treasury-reclaim-inventory-summary.json",
         DESTINATION_RESULTS / "treasury-routing-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "treasury.csv",
+        DESTINATION_RESULTS / "routes" / "treasury.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "contracts-to-treasury.csv",
+        DESTINATION_RESULTS / "routes" / "contracts-to-treasury.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "manual.csv",
+        DESTINATION_RESULTS / "routes" / "manual.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "multisigs.csv",
+        DESTINATION_RESULTS / "routes" / "multisigs.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "lost-wallets.csv",
+        DESTINATION_RESULTS / "routes" / "lost-wallets.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "frozen-wallets.csv",
+        DESTINATION_RESULTS / "routes" / "frozen-wallets.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "destinations.csv",
+        DESTINATION_RESULTS / "routes" / "destinations.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "validator-governors.csv",
+        DESTINATION_RESULTS / "routes" / "validator-governors.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "policy-decisions.csv",
+        DESTINATION_RESULTS / "routes" / "policy-decisions.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "treasury-summary.json",
+        DESTINATION_RESULTS / "routes" / "treasury-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "routing"
+        / "local"
+        / "contracts-to-treasury-summary.json",
+        DESTINATION_RESULTS
+        / "routes"
+        / "contracts-to-treasury-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "routing"
+        / "local"
+        / "generated"
+        / "routing-exceptions.csv",
+        DESTINATION_RESULTS / "routing-exceptions.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "routing"
+        / "local"
+        / "generated"
+        / "validator-governor-exceptions.csv",
+        DESTINATION_RESULTS / "validator-governor-exceptions.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "routing"
+        / "local"
+        / "generated"
+        / "unresolved-routing.csv",
+        DESTINATION_RESULTS / "unresolved-routing.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "routing"
+        / "local"
+        / "generated"
+        / "routing-summary.json",
+        DESTINATION_RESULTS / "routing-summary.json",
         "destination-mapping",
         "policy-scenario",
     ),
@@ -168,8 +309,8 @@ OPTIONAL_RESULT_MAPPINGS = (
         / "artifacts"
         / "contract-review-20260911"
         / "out"
-        / "vault-share-allocation-summary.json",
-        DESTINATION_RESULTS / "vault-share-allocation-summary.json",
+        / "base-delivery-summary.json",
+        DESTINATION_RESULTS / "base-delivery-summary.json",
         "destination-mapping",
         "policy-scenario",
     ),
@@ -209,8 +350,8 @@ an independent reproduction with the original migration calculation.
 - `claim-accounting/` contains total-claim, wallet-airdrop,
   staked-to-vault, threshold, and independent RPC summaries;
 - `destination-mapping/` contains the preliminary and corrected eligibility
-  splits, contract-review summary, vault-share allocation, and
-  treasury-routing scenario.
+  splits, contract-review summary, vault-share allocation, sparse routing and
+  governor exceptions, unresolved work queue, and treasury-routing scenario.
 
 `index.json` records each result's domain, evidence classification, source
 identity, packaged identity, byte size, and optional row count.

@@ -18,7 +18,17 @@ RELEASE_FILES = (
     / "artifacts"
     / "cutoff-20260910"
     / "claims"
+    / "all-address-migration-claims-cutoff-metadata.csv",
+    ROOT
+    / "artifacts"
+    / "cutoff-20260910"
+    / "claims"
     / "migration-claims-at-least-1000-one.csv",
+    ROOT
+    / "artifacts"
+    / "cutoff-20260910"
+    / "claims"
+    / "migration-claims-at-least-1000-one-metadata.csv",
     ROOT
     / "artifacts"
     / "contract-review-20260911"
@@ -48,32 +58,37 @@ RELEASE_FILES = (
     / "artifacts"
     / "contract-review-20260911"
     / "out"
-    / "validator-vault-deposits.csv",
+    / "base-validator-vault-deposits.csv",
     ROOT
     / "artifacts"
     / "contract-review-20260911"
     / "out"
-    / "priority-vault-shares.csv",
+    / "base-priority-vault-shares.csv",
     ROOT
     / "artifacts"
     / "contract-review-20260911"
     / "out"
-    / "deferred-vault-shares.csv",
+    / "base-deferred-vault-shares.csv",
     ROOT
-    / "artifacts"
-    / "contract-review-20260911"
-    / "out"
-    / "automatic-wallet-airdrop.csv",
+    / "routing"
+    / "local"
+    / "generated"
+    / "routing-exceptions.csv",
     ROOT
-    / "artifacts"
-    / "contract-review-20260911"
-    / "out"
-    / "contract-wallet-recovery.csv",
+    / "routing"
+    / "local"
+    / "generated"
+    / "validator-governor-exceptions.csv",
     ROOT
-    / "artifacts"
-    / "contract-review-20260911"
-    / "out"
-    / "excluded-wallet-routing.csv",
+    / "routing"
+    / "local"
+    / "generated"
+    / "unresolved-routing.csv",
+    ROOT
+    / "routing"
+    / "local"
+    / "generated"
+    / "routing-summary.json",
     ROOT
     / "artifacts"
     / "supply-reconciliation-20260911"
@@ -101,6 +116,12 @@ def inspect(path):
             else "policy-scenario"
         )
     elif name == "staked-to-vault-by-delegation-rpc.csv":
+        domain = "claim-accounting"
+        classification = "RPC-derived"
+    elif name in {
+        "all-address-migration-claims-cutoff-metadata.csv",
+        "migration-claims-at-least-1000-one-metadata.csv",
+    }:
         domain = "claim-accounting"
         classification = "RPC-derived"
     elif name == "contract-review-all.csv":
