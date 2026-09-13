@@ -16,6 +16,7 @@ test-python:
 		toolkit/scripts/claims/*.py \
 		toolkit/scripts/cutoff/*.py \
 		toolkit/scripts/contract-review/*.py \
+		toolkit/scripts/routing/*.py \
 		toolkit/scripts/forensics/*.py \
 		scripts/*.py
 
