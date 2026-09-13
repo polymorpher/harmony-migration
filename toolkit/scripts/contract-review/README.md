@@ -1,14 +1,19 @@
 # Contract-account review pipeline
 
-Classifies every preliminary code-bearing row of the `>= 1,000 ONE` cutoff
-ledger (`migration-claims-code-bearing-preliminary.csv`) using only a
+Classifies every metadata-complete code-bearing row of the `>= 1,000 ONE`
+cutoff ledger (`migration-claims-code-bearing-complete.csv`) using only a
 Harmony shard-0 archival node RPC. Standard library Python only.
+
+Do not classify directly from the liquid-export `code_hash` columns: they are
+blank for staking-only accounts. First run
+`toolkit/scripts/claims/enrich-claim-metadata-rpc.py` on the complete claim set
+at the cutoff block, then apply the threshold to that metadata-complete file.
 
 Stages (run in order; every stage is resumable and caches its output):
 
 ```sh
 RPC=https://a.api.s0.t.hmny.io            # any Harmony shard-0 archival node with trace + tx-history APIs
-IN=artifacts/cutoff-20260910/claims/migration-claims-code-bearing-preliminary.csv
+IN=artifacts/cutoff-20260910/claims/migration-claims-code-bearing-complete.csv
 OUT=artifacts/contract-review-20260911
 
 python3 toolkit/scripts/contract-review/fetch-contract-facts.py   --input $IN --rpc $RPC --output $OUT/facts.json

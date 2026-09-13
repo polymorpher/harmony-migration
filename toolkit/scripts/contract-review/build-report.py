@@ -413,9 +413,21 @@ def main():
 
     # methodology
     L.append("## Methodology and caveats\n")
+    resolved_creations = sum(
+        bool(r["creation_tx_hash"]) for r in contracts
+    )
+    creation_note = (
+        "All reviewed contract creation transactions are resolved. "
+        if resolved_creations == len(contracts)
+        else (
+            f"{resolved_creations} of {len(contracts)} contract creation "
+            "transactions are resolved; unresolved contracts remain held. "
+        )
+    )
     L.append(
         "- **Creation block/tx**: binary search on `eth_getCode(address, block)` over `[0, cutoff]` (27 rounds), then `trace_block` at that block to find the `create` trace whose `result.address` is the account; "
-        f"`creation_tx_sender` is the top-level sender, `creation_direct_creator` the contract/EOA executing CREATE/CREATE2 (factory for Safes, 1wallet v15+ and SmartVault). All {len(contracts)} contracts resolved. "
+        f"`creation_tx_sender` is the top-level sender, `creation_direct_creator` the contract/EOA executing CREATE/CREATE2 (factory for Safes, 1wallet v15+ and SmartVault). "
+        f"{creation_note}"
         "For validator accounts the creation is the first staking transaction (CreateValidator height from `hmyv2_getValidatorInformation`).\n"
         "- **First funding**: if the balance is already positive in the creation block, the creation block is traced; otherwise a binary search on `eth_getBalance` between creation and the earlier of the cutoff and the earliest direct value transfer, "
         "then `trace_block` to find the first inbound value-bearing `call`/`create`/`suicide` trace (`first_funder` is the address that sent value, possibly a contract; `first_funding_tx_sender` is the EOA). "
@@ -440,7 +452,7 @@ def main():
         "- `out/contract-review-all.csv` — one row per address, primary category, all facts\n"
         "- `out/validator-accounts.csv`, `out/multisig-wallets.csv`, `out/onewallets.csv`, `out/smartvault-wallets.csv`, `out/erc20-tokens.csv`, `out/nft-contracts.csv`, `out/known-app-contracts.csv`, `out/pattern-identified-contracts.csv`, `out/unidentified-contracts.csv`\n"
         "- `out/summary.json` — machine-readable statistics\n"
-        "- `facts.json` — raw RPC facts (code, balances, traces, probes); `selectors.json` — dispatcher signatures; `extra.json` — pair symbols, singleton metadata, NFT owner census, SmartVault owners/guardians\n\n"
+        "- `facts.json` — raw archival-RPC facts for the complete code-bearing set; `selectors.json` — dispatcher signatures; `extra.json` — pair symbols, singleton metadata, NFT owner census, SmartVault owners/guardians\n\n"
         "Reproduce with `toolkit/scripts/contract-review/` (see its README): `fetch-contract-facts.py` -> `selector-census.py` -> `enrich-contract-facts.py` -> `classify-contracts.py` -> `build-report.py`.\n"
     )
     with open(args.report, "w") as handle:

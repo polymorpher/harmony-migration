@@ -13,9 +13,11 @@ ATTO_PER_ONE = 10**18
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--claims-summary", required=True)
+    parser.add_argument("--all-metadata-summary", required=True)
     parser.add_argument("--vault-rpc-summary", required=True)
     parser.add_argument("--vault-allocation-summary", required=True)
     parser.add_argument("--policy-summary", required=True)
+    parser.add_argument("--routing-summary", required=True)
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -50,9 +52,11 @@ def main():
     if parent:
         os.makedirs(parent, exist_ok=True)
     claims = load(args.claims_summary)
+    all_metadata = load(args.all_metadata_summary)
     vault_rpc = load(args.vault_rpc_summary)
     vault_allocation = load(args.vault_allocation_summary)
     policy = load(args.policy_summary)
+    routing = load(args.routing_summary)
     components = claims["component_totals_atto"]
 
     rows = [
@@ -129,28 +133,77 @@ shares.
 The archival-RPC detail total equals the independently database-derived active
 stake/delegation total exactly.
 
+## Claim-account metadata evidence
+
+- source: `{all_metadata["source_kind"]}`
+- block: `{all_metadata["block"]}`
+- block hash: `{all_metadata["block_hash"]}`
+- state root: `{all_metadata["state_root"]}`
+- claim rows checked: `{all_metadata["rows"]}`
+- previously blank shard-0 code fields resolved:
+  `{all_metadata["updated_rows"]}`
+- code-bearing accounts among those rows:
+  `{all_metadata["code_bearing_among_queried"]}`
+
+This metadata pass covers the current prioritized batch and all deferred
+below-threshold claims.
+
+## Explicit routing status
+
+- status: `{routing["status"]}`
+- prioritized claims checked: `{routing["priority_claims"]}`
+- explicitly routed deferred claims:
+  `{routing["explicitly_routed_deferred_claims"]}`
+- active explicit routes: `{routing["active_routes"]}`
+- sparse wallet/vault exception rows:
+  `{routing["routing_exception_rows"]}`
+- verified validator-account exceptions:
+  `{routing["validator_account_exceptions"]}`
+- validator-governor exception rows:
+  `{routing["governor_exception_rows"]}`
+- unresolved wallet amount:
+  `{one(routing["unresolved_wallet_airdrop_atto"])} ONE`
+- unresolved staked-to-vault amount:
+  `{one(routing["unresolved_staked_to_vault_atto"])} ONE`
+- unresolved validator governors: `{routing["unresolved_governors"]}`
+- pending policy decisions:
+  `{", ".join(routing["pending_policy_decisions"]) or "none"}`
+
+Ordinary code-less EOAs use the implicit same-address rule and are deliberately
+absent from the sparse exception output. The routing result remains on hold
+until every required exception destination and validator governor is supplied
+and every policy gate is resolved.
+
 ## Outputs
 
 - all-address claim ledger:
   `{claims["output"]}`
+- metadata-complete all-address companion:
+  `{all_metadata["output"]}`
 - per-validator/delegator source ledger:
   `{vault_rpc["output"]}`
-- validator vault deposits:
+- intermediate validator vault deposits:
   `{vault_allocation["outputs"]["vault_deposits"]["path"]}`
-- prioritized vault-share entitlements:
+- intermediate prioritized vault shares:
   `{vault_allocation["outputs"]["priority_shares"]["path"]}`
-- deferred vault-share entitlements:
+- intermediate deferred vault shares:
   `{vault_allocation["outputs"]["deferred_shares"]["path"]}`
-- automatic direct wallet airdrop:
+- intermediate automatic wallet amount:
   `{vault_allocation["outputs"]["automatic_wallet_airdrop"]["path"]}`
-- genuine-contract direct wallet recovery:
+- intermediate contract wallet amount:
   `{vault_allocation["outputs"]["contract_wallet_recovery"]["path"]}`
-- excluded/policy-routed direct wallet allocation:
+- intermediate excluded wallet amount:
   `{vault_allocation["outputs"]["excluded_wallet_routing"]["path"]}`
-- final destination policy:
+- base destination categories:
   `{policy["categories"]["automatic"]["output"]}`,
   `{policy["categories"]["contract_review"]["output"]}`, and
   `{policy["categories"]["excluded_address"]["output"]}`
+- sparse wallet and vault-share exceptions:
+  `{routing["outputs"]["routing_exceptions"]["path"]}`
+- sparse validator-governor exceptions:
+  `{routing["outputs"]["governor_exceptions"]["path"]}`
+- unresolved route list:
+  `{routing["outputs"]["unresolved"]["path"]}`
 
 All values use integer atto-ONE arithmetic. `total_claim` is the complete
 economic claim. Only `wallet_airdrop` is transferred directly to the
