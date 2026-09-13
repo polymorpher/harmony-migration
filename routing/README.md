@@ -150,6 +150,11 @@ numerically correct route unsafe. Each row has:
 A resolved row must state the decision. Any pending row keeps the generated
 routing summary on hold.
 
+The file must include both `rollback-exploit-proceeds` and
+`wone-layerzero-double-issue`, as created by `init-local-routing.py`. Missing
+required decisions reject the input, including an empty or header-only file.
+Additional decisions are allowed and also keep routing on hold while pending.
+
 ## Safety
 
 - Treasury, burn, inaccessible, and perpetrator routes take precedence over

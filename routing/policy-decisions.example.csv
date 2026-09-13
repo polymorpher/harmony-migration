@@ -1,2 +1,4 @@
 decision_id,status,decision,evidence,notes
+rollback-exploit-proceeds,pending,,,Decide how identified exploit proceeds are treated
+wone-layerzero-double-issue,pending,,,Reconcile locked ONE with external-chain claims
 example-policy,resolved,document the selected policy,example://governance,
