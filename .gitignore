@@ -17,6 +17,7 @@ data/
 dist/
 bin/
 repro/as-run/
+routing/local/
 
 # Large result bundles belong in immutable release assets.
 results/**/*.csv.gz

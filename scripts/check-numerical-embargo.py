@@ -11,6 +11,7 @@ SENSITIVE_PATHS = (
     "embargoed/",
     "repro/as-run/",
     "results/2026-09-11/",
+    "routing/local/",
     "toolkit/cmd/cutoff-final-verifier/",
 )
 SENSITIVE_FILES = {

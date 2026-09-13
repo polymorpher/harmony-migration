@@ -41,6 +41,8 @@ recovery, contract classification, or routing analysis were not completed.
   outputs;
 - `repro/as-run/` — exact machine-specific operator scripts retained as local
   evidence;
+- `routing/local/` — real treasury, frozen-wallet, lost-wallet, multisig, and
+  validator-governor destinations;
 - `embargoed/` — restoration and provenance notes;
 - `manifests/results.sha256` and the dated release manifest — identities of
   ignored private results;
