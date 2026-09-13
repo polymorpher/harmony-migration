@@ -14,6 +14,8 @@
 - `toolkit/scripts/claims/format-all-claims.py` — total-claim, wallet-airdrop,
   and staked-to-vault formatting
 - `toolkit/scripts/claims/filter-claims-by-one.py` — generic ONE threshold
+- `toolkit/scripts/claims/enrich-claim-metadata-rpc.py` — complete missing
+  cutoff code metadata before contract classification
 - `toolkit/scripts/claims/vault-share-ledger-rpc.py` — independent historical
   RPC export of per-validator active delegation
 - `toolkit/scripts/claims/verify-vault-delegations.py` — byte-for-byte database
@@ -101,6 +103,19 @@ wallets, ERC-20, NFT, well-known applications) from archival RPC facts only:
 - `known-apps.json` — verified application registry and fingerprint rules
 
 See `docs/contract-account-review.md`.
+
+## Explicit destination routing
+
+- `toolkit/scripts/routing/init-local-routing.py` — create held-by-default local
+  route and policy files without overwriting operator decisions
+- `toolkit/scripts/routing/build-treasury-routes.py` — convert the audited
+  treasury inventory to explicit route rows
+- `toolkit/scripts/routing/build-contract-treasury-routes.py` — route every
+  reviewed non-multisig contract to treasury
+- `toolkit/scripts/routing/apply-routes.py` — merge treasury and manual routes,
+  split partial routes across wallet/vault delivery, verify implicit defaults,
+  and emit sparse routing, governor, and unresolved exceptions
+- `routing/` — public schema/examples plus ignored real routing files
 
 ## Embargo and publication tooling
 

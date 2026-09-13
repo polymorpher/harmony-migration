@@ -25,7 +25,7 @@ Apply routing decisions in this order:
    incident-recovery rules;
 3. identify Harmony validator-wrapper accounts and treat them as
    key-controlled accounts;
-4. send an ordinary EOA's `wallet_airdrop` to the same hexadecimal address and
+4. apply an implicit same-address rule only to ordinary code-less EOAs and
    assign each `staked_to_vault` entry through its validator vault;
 5. classify genuine contract accounts and route them through a class-specific
    recovery process.
@@ -48,8 +48,10 @@ checks pass:
 
 The wrapper's `creation-height` is independently checked against the
 `CreateValidator` staking transaction in that canonical block. Verified
-validator accounts are eligible for same-address routing of their direct wallet
-amount. Their self-stake and other active delegations remain validator-vault
+validator accounts are eligible for same-address delivery, but remain explicit
+routing exceptions because their account state is code-bearing. Their direct
+wallet and vault-share exception rows cite the validator classification
+evidence. Self-stake and other active delegations remain validator-vault
 principal. The validator controls the corresponding vault as governor under
 the migration design.
 
@@ -102,6 +104,48 @@ and the ordinary destination. Burn/inaccessible and report-identified
 perpetrator policies are separate. No routing overlay may reduce or inflate the
 total claim.
 
+## Explicit routing files
+
+Real routes live under the ignored `routing/local/` directory. Separate CSVs
+may be maintained for treasury, multisigs, lost wallets, frozen wallets, and
+other manual decisions. See `routing/README.md` for the schema and precedence.
+
+Routes are applied to direct wallet tokens first and then proportionally across
+the source's validator-vault positions when necessary. A missing destination
+becomes a hold; it never falls back to the original address.
+
+Generated routing is sparse:
+
+- `routing-exceptions.csv` records explicit wallet/vault routes, all verified
+  validator-wrapper same-address exceptions, and contract/policy holds;
+- `validator-governor-exceptions.csv` separately records governor overrides and
+  holds;
+- `unresolved-routing.csv` is the derived, never-edited work queue.
+
+Ordinary code-less EOA same-address delivery is implicit and absent from these
+files. A complete deployment allocation must be built later from the base
+entitlements and approved exceptions; the sparse routing outputs are not
+themselves a wallet distribution or Merkle input.
+
+The current policy routes every reviewed non-multisig contract to treasury.
+Multisig rows remain held until a replacement Ethereum Safe with the verified
+owner set and threshold is supplied.
+
+## Additional policy decisions
+
+- Historical rollback-exploit proceeds remain part of state-derived total
+  claims unless an explicit route file redirects identified addresses. The
+  treasury inventory does not implicitly cover that incident.
+- ONE locked in WONE or bridge contracts must not be issued once through
+  contract recovery and again through an external-chain holder claim. The
+  liability reconciliation must choose one backing use for each unit.
+- If a validator address is explicitly frozen or treasury-routed, its vault
+  governor defaults to hold until `validator-governors.csv` names an approved
+  Ethereum governor.
+
+These are release gates in `routing/local/policy-decisions.csv`; a pending
+decision keeps the routing summary on hold even if every address is populated.
+
 ## Reproduction and evidence
 
 The public classifier and evidence schema are documented in:
@@ -112,7 +156,10 @@ The public classifier and evidence schema are documented in:
 - `toolkit/scripts/claims/verify-eligibility-policy.py`;
 - `toolkit/scripts/claims/vault-share-ledger-rpc.py`;
 - `toolkit/scripts/claims/verify-vault-delegations.py`;
-- `toolkit/scripts/claims/build-vault-share-allocation.py`.
+- `toolkit/scripts/claims/build-vault-share-allocation.py`;
+- `toolkit/scripts/routing/build-treasury-routes.py`;
+- `toolkit/scripts/routing/build-contract-treasury-routes.py`;
+- `toolkit/scripts/routing/apply-routes.py`.
 
 Exact address mappings, category counts, balances, and destination candidates
 remain under the numerical embargo in `docs/findings/`,

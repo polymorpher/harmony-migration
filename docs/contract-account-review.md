@@ -12,6 +12,11 @@ stake/delegation. Contract recovery records `wallet_airdrop` and
 `staked_to_vault` separately; active delegation is represented through
 validator-vault shares rather than being sent as direct ERC-20 ONE.
 
+The liquid state export does not carry code metadata for staking-only accounts.
+Before classification, every claim row with a blank shard-0 code field is
+resolved with historical `eth_getCode` at the exact cutoff block. This covers
+the prioritized batch and future below-threshold claims.
+
 ## Validator-wrapper accounts are not EVM contracts
 
 Harmony stores every validator's `ValidatorWrapper` RLP-encoded in the

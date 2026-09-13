@@ -36,10 +36,15 @@ A full independent run should:
 5. assemble and strictly verify total-claim, wallet-airdrop, and
    staked-to-vault fields;
 6. apply the inclusive threshold;
-7. classify preliminary code-bearing rows and prove validator overrides;
+7. resolve blank code metadata for the complete claim population at the
+   cutoff, classify every prioritized code-bearing row, and prove validator
+   overrides;
 8. apply and verify the final destination split;
 9. build validator-vault deposits plus priority and deferred share ledgers; and
-10. record deterministic counts, totals, and hashes before receiving the
+10. apply explicit treasury and manual routes across wallet and vault delivery;
+11. verify the sparse routing and governor exception sets, requiring every
+    unresolved destination to appear in the generated hold queue; and
+12. record deterministic counts, totals, and hashes before receiving the
    original results.
 
 ## State checks
@@ -110,7 +115,15 @@ The selected inclusive eligibility split is independently checked to ensure:
 - category wallet, vault, total-claim amounts and output hashes match the
   policy summary;
 - per-validator vault deposits equal all active delegation principal;
-- priority and deferred share entitlements are disjoint and complete.
+- priority and deferred shares are disjoint and complete;
+- explicit route amounts close exactly across wallet and vault components;
+- ordinary code-less EOA same-address delivery is implicit and absent from the
+  exception output;
+- every verified validator account appears as an explicit code-bearing
+  same-address exception for each nonzero delivery component;
+- validator wallet exceptions and validator-vault governor exceptions remain
+  separate;
+- no held destination silently falls back to the original address.
 
 The later treasury-routing overlay must additionally verify:
 

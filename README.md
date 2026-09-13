@@ -40,6 +40,20 @@ hashes are intentionally withheld pending independent reproduction and the
 first public results article. See
 [`docs/numerical-embargo.md`](docs/numerical-embargo.md).
 
+## Distribution status
+
+The public source package is ready for independent review. It is **not itself a
+distribution file**. Treasury, contract recovery, lost-wallet, frozen-wallet,
+and validator-governor destinations live in ignored routing files.
+
+The ignored routing workspace under `routing/local/` contains reviewed sparse
+exceptions, a generated unresolved work queue, and a conservation summary.
+Ordinary code-less EOA same-address delivery is implicit; verified
+validator-wrapper accounts are explicit code-bearing same-address exceptions.
+These routing artifacts are not a complete distribution file. Build and verify
+the final wallet/Merkle input separately, and only after the routing summary
+says `status: ready`.
+
 The toolkit also records the strict comparison for audit. See
 [`docs/eligibility-policy.md`](docs/eligibility-policy.md).
 
@@ -82,6 +96,7 @@ reproduction.
 - `manifests/` — public source identities and ignored private result identities
 - `results/2026-09-11/` — ignored compact result package during the embargo
 - `artifacts/` — ignored claim-accounting, contract-review, and evidence files
+- `routing/` — public schema/examples and ignored real destination routes
 - `repro/as-run/` — ignored exact operator scripts retained locally
 - `repro/source-snapshots/` — source snapshots for earlier accounting phases
 - `user-faq.md` — end-user migration FAQ

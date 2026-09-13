@@ -10,6 +10,10 @@ Start with:
 6. [`contract-account-review.md`](contract-account-review.md)
 7. [`numerical-embargo.md`](numerical-embargo.md)
 
+Explicit routing CSV schema and examples:
+
+- [`../routing/README.md`](../routing/README.md)
+
 Supporting references:
 
 - [`data-dictionary.md`](data-dictionary.md)

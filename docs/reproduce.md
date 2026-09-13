@@ -196,6 +196,25 @@ python3 toolkit/scripts/claims/format-all-claims.py \
 The price fields are historical display metadata. They do not determine the
 1,000 ONE eligibility result.
 
+Resolve missing shard-0 code and nonce metadata once for the complete claim
+population. This protects both the prioritized batch and any later claim
+portal:
+
+```sh
+export SHARD0_RPC='https://your-shard0-archival-rpc.example'
+
+python3 toolkit/scripts/claims/enrich-claim-metadata-rpc.py \
+  --input "$OUT/claims/all-address-migration-claims-cutoff.csv" \
+  --rpc "$SHARD0_RPC" \
+  --block 93623067 \
+  --output "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
+  --summary "$OUT/claims/all-address-migration-claims-cutoff-metadata-summary.json"
+```
+
+Keep the original all-address file as the database-derived accounting record.
+Use its metadata-complete companion for every destination-classification
+batch.
+
 ## 10. Apply the 1,000 ONE policy
 
 The selected comparison is inclusive:
@@ -209,15 +228,26 @@ python3 toolkit/scripts/claims/filter-claims-by-one.py \
   --comparison ge
 ```
 
+Filter the metadata-complete file with the same threshold:
+
+```sh
+python3 toolkit/scripts/claims/filter-claims-by-one.py \
+  --input "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
+  --output "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  --summary "$OUT/claims/migration-claims-at-least-1000-one-metadata-filter-summary.json" \
+  --minimum-one 1000 \
+  --comparison ge
+```
+
 Create the preliminary code-bearing review set:
 
 ```sh
 python3 toolkit/scripts/claims/apply-eligibility-policy.py \
-  --input "$OUT/claims/all-address-migration-claims-cutoff.csv" \
-  --automatic-output "$OUT/claims/migration-claims-automatic-preliminary.csv" \
-  --contract-review-output "$OUT/claims/migration-claims-code-bearing-preliminary.csv" \
-  --excluded-address-output "$OUT/claims/migration-claims-excluded-preliminary.csv" \
-  --summary "$OUT/claims/migration-claims-preliminary-summary.json" \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  --automatic-output "$OUT/claims/migration-claims-automatic-preliminary-complete.csv" \
+  --contract-review-output "$OUT/claims/migration-claims-code-bearing-complete.csv" \
+  --excluded-address-output "$OUT/claims/migration-claims-excluded-preliminary-complete.csv" \
+  --summary "$OUT/claims/migration-claims-preliminary-complete-summary.json" \
   --minimum-one 1000 \
   --comparison ge \
   --exclude-address 0x000000000000000000000000000000000000dEaD \
@@ -235,7 +265,7 @@ contract review:
 
 ```sh
 python3 toolkit/scripts/claims/apply-eligibility-policy.py \
-  --input "$OUT/claims/all-address-migration-claims-cutoff.csv" \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
   --automatic-code-addresses "$OUT/contract-review/out/validator-accounts.csv" \
   --automatic-output "$OUT/claims/migration-claims-automatic.csv" \
   --contract-review-output "$OUT/claims/migration-claims-genuine-contract-review.csv" \
@@ -244,7 +274,7 @@ python3 toolkit/scripts/claims/apply-eligibility-policy.py \
   --minimum-one 1000 \
   --comparison ge \
   --exclude-address 0x000000000000000000000000000000000000dEaD \
-  --exclude-address 0x7bDeF7Bdef7BDEf7BDEf7bDef7bdef7bdeF6E7AD
+  --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD
 ```
 
 Verify that the final files are disjoint, cover the threshold set exactly, and
@@ -252,7 +282,7 @@ contain no unapproved code-bearing account in the automatic output:
 
 ```sh
 python3 toolkit/scripts/claims/verify-eligibility-policy.py \
-  --input "$OUT/claims/all-address-migration-claims-cutoff.csv" \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
   --automatic "$OUT/claims/migration-claims-automatic.csv" \
   --contract-review "$OUT/claims/migration-claims-genuine-contract-review.csv" \
   --excluded-address "$OUT/claims/migration-claims-excluded.csv" \
@@ -265,8 +295,6 @@ As an independent check of the database-derived per-validator delegation file,
 export the same records from a Harmony shard-0 archival RPC:
 
 ```sh
-export SHARD0_RPC='https://your-shard0-archival-rpc.example'
-
 python3 toolkit/scripts/claims/vault-share-ledger-rpc.py \
   --rpc "$SHARD0_RPC" \
   --block 93623067 \
@@ -293,15 +321,63 @@ python3 toolkit/scripts/claims/build-vault-share-allocation.py \
   --automatic-claims "$OUT/claims/migration-claims-automatic.csv" \
   --contract-review-claims "$OUT/claims/migration-claims-genuine-contract-review.csv" \
   --excluded-claims "$OUT/claims/migration-claims-excluded.csv" \
-  --vault-deposits-output "$OUT/claims/validator-vault-deposits.csv" \
-  --priority-shares-output "$OUT/claims/priority-vault-shares.csv" \
-  --deferred-shares-output "$OUT/claims/deferred-vault-shares.csv" \
-  --automatic-wallet-output "$OUT/claims/automatic-wallet-airdrop.csv" \
-  --contract-wallet-output "$OUT/claims/contract-wallet-recovery.csv" \
-  --excluded-wallet-output "$OUT/claims/excluded-wallet-routing.csv" \
-  --summary "$OUT/claims/vault-share-allocation-summary.json" \
+  --vault-deposits-output "$OUT/claims/base-validator-vault-deposits.csv" \
+  --priority-shares-output "$OUT/claims/base-priority-vault-shares.csv" \
+  --deferred-shares-output "$OUT/claims/base-deferred-vault-shares.csv" \
+  --automatic-wallet-output "$OUT/claims/base-automatic-wallet.csv" \
+  --contract-wallet-output "$OUT/claims/base-contract-wallet.csv" \
+  --excluded-wallet-output "$OUT/claims/base-excluded-wallet.csv" \
+  --summary "$OUT/claims/base-delivery-summary.json" \
   --minimum-one 1000
 ```
+
+Build explicit treasury routes, combine them with locally reviewed manual
+routes, and apply them to both delivery paths:
+
+```sh
+python3 toolkit/scripts/routing/init-local-routing.py  # once, in a new clone
+
+python3 toolkit/scripts/routing/build-treasury-routes.py \
+  --inventory artifacts/supply-reconciliation-20260911/treasury-reclaim-inventory.csv \
+  --output routing/local/treasury.csv \
+  --summary routing/local/treasury-summary.json
+
+python3 toolkit/scripts/routing/build-contract-treasury-routes.py \
+  --contracts artifacts/contract-review-20260911/out/contract-review-all.csv \
+  --output routing/local/contracts-to-treasury.csv \
+  --summary routing/local/contracts-to-treasury-summary.json
+
+python3 toolkit/scripts/routing/apply-routes.py \
+  --all-claims "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
+  --automatic-claims "$OUT/claims/migration-claims-automatic.csv" \
+  --contract-claims "$OUT/claims/migration-claims-genuine-contract-review.csv" \
+  --excluded-claims "$OUT/claims/migration-claims-excluded.csv" \
+  --priority-shares "$OUT/claims/base-priority-vault-shares.csv" \
+  --deferred-shares "$OUT/claims/base-deferred-vault-shares.csv" \
+  --base-vault-deposits "$OUT/claims/base-validator-vault-deposits.csv" \
+  --validator-accounts artifacts/contract-review-20260911/out/validator-accounts.csv \
+  --routes routing/local/manual.csv \
+  --routes routing/local/multisigs.csv \
+  --routes routing/local/lost-wallets.csv \
+  --routes routing/local/frozen-wallets.csv \
+  --routes routing/local/treasury.csv \
+  --routes routing/local/contracts-to-treasury.csv \
+  --destinations routing/local/destinations.csv \
+  --governors routing/local/validator-governors.csv \
+  --policy-decisions routing/local/policy-decisions.csv \
+  --exceptions-output routing/local/generated/routing-exceptions.csv \
+  --governor-exceptions-output routing/local/generated/validator-governor-exceptions.csv \
+  --unresolved-output routing/local/generated/unresolved-routing.csv \
+  --summary routing/local/generated/routing-summary.json \
+  --replace
+```
+
+The generated directory contains sparse routing exceptions, separate
+validator-governor exceptions, the unresolved work queue, and the conservation
+summary. It deliberately does not repeat ordinary code-less EOA same-address
+delivery. These files are not a deployment allocation; construct and verify
+the complete wallet/Merkle input only after `routing-summary.json` reports
+`status: ready`. See `routing/README.md` for the file contracts.
 
 See `docs/eligibility-policy.md`, `docs/claim-routing.md`, and
 `docs/contract-account-review.md` before publication.

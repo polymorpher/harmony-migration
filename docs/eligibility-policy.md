@@ -70,15 +70,18 @@ reproduction.
 
 Code-bearing is a preliminary review signal, not the final destination class.
 Harmony stores an RLP-encoded `ValidatorWrapper` in the code field of validator
-accounts. Those accounts remain ECDSA key-controlled and are routed with
-ordinary EOAs when both validator checks in `docs/claim-routing.md` pass.
+accounts. Those accounts remain ECDSA key-controlled and eligible for
+same-address delivery when both validator checks in `docs/claim-routing.md`
+pass. Routing nevertheless records them as explicit code-bearing exceptions;
+only ordinary code-less EOAs use the implicit default.
 
 The policy therefore uses two stages:
 
-1. produce a preliminary code-bearing review set;
-2. classify verified validator-wrapper accounts back into the automatic
-   key-controlled output while genuine contracts remain in class-specific
-   manual recovery.
+1. resolve missing cutoff code metadata for every staking-only or receipt-only
+   claim account, then produce the prioritized code-bearing review set;
+2. classify verified validator-wrapper accounts into the eligible
+   key-controlled category while retaining explicit validator routing evidence;
+   genuine contracts remain in class-specific manual recovery.
 
 An EVM contract does not normally control the same address on Ethereum with a
 private key. Do not simply send ERC-20 tokens to a genuine contract address
@@ -102,6 +105,10 @@ independent reproduction.
 The original whole-row category splitter cannot represent partially
 reclaimable addresses. Final allocation generation must split those rows
 between treasury and the original address.
+
+The explicit route engine performs that split across direct wallet tokens and
+validator-vault shares. The base category files are not distribution outputs.
+See `routing/README.md`.
 
 Treasury routing changes the destination of direct tokens and, where
 applicable, vault shares. It does not subtract anything from the total claim or

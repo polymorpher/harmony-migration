@@ -25,10 +25,12 @@ Additional historical investigation commands are under `cmd/forensics`.
 ## Python scripts
 
 - `scripts/census/` — sorted cross-shard liquid merge
-- `scripts/claims/` — component merge, entitlement formatting, threshold
+- `scripts/claims/` — component merge, claim-delivery formatting, threshold
   filtering, and validator-vault share allocation
 - `scripts/contract-review/` — distinguish validator wrappers from genuine
   contracts and collect recovery evidence
+- `scripts/routing/` — apply treasury and manually maintained destination
+  routes and emit sparse wallet/share and validator-governor exceptions
 - `scripts/cutoff/` — interval, difference, receipt, RPC, and reconciliation checks
 - `scripts/forensics/` — historical exploit and supply investigation
 

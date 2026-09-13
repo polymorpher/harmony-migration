@@ -10,8 +10,10 @@ Before publishing the migration allocation:
    Confirm that active stake/delegation is excluded from direct wallet airdrop
    and represented in the validator-vault share ledger.
 3. Confirm the code-bearing review:
+   - the all-address metadata companion resolves every blank shard-0 code field
+     at the cutoff, including below-threshold claims;
    - validator-wrapper accounts are independently proved key-controlled and
-     moved to the automatic output;
+     recorded as explicit code-bearing same-address exceptions;
    - genuine contracts remain in class-specific recovery;
    - every contract destination has documented evidence and no category is
      silently sent to its old Harmony contract address.
@@ -19,10 +21,19 @@ Before publishing the migration allocation:
    recipient amounts are capped by unreturned extra mint, partial rows are
    split correctly across wallet and vault delivery, and treasury routing does
    not change the total claim.
-5. State that retired-shard receipts are excluded unless additional proof is
+5. Apply every reviewed route input under `routing/local/`. Regenerate, but
+   never manually edit, the sparse exception and unresolved outputs. Require
+   the routing summary to report `status: ready`, with no inactive route,
+   unresolved wallet amount, vault-share amount, or validator governor.
+6. State explicitly whether identified rollback-exploit proceeds are honored
+   as state claims or redirected. Do not imply that the existing treasury
+   inventory covers that incident.
+7. Reconcile WONE and bridge-lock backing against external-chain holder claims
+   so no locked ONE is issued twice.
+8. State that retired-shard receipts are excluded unless additional proof is
    obtained.
-6. Run the strict claim verifier and exact cutoff verifier.
-7. Record:
+9. Run the strict claim verifier and exact cutoff verifier.
+10. Record:
    - filename;
    - byte size;
    - row count;
@@ -30,9 +41,11 @@ Before publishing the migration allocation:
    - staked-to-vault atto-ONE;
    - total claim atto-ONE;
    - SHA-256.
-8. Publish the CSV as an immutable release asset.
-9. Publish the snapshot and source-code manifests.
-10. Have a second developer reproduce the selected threshold output from the
+11. Materialize the complete deployment allocation from the base entitlements
+    and approved exceptions, verify it independently, and publish it as an
+    immutable release asset.
+12. Publish the snapshot and source-code manifests.
+13. Have a second developer reproduce the selected threshold output from the
     full verified cutoff ledger.
 
 Do not publish:

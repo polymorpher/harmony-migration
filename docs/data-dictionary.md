@@ -50,13 +50,21 @@ valuations.
 
 - `nonce_shard0`, `nonce_shard1` — account nonce when the account exists on that
   shard.
-- `code_hash_shard0`, `code_hash_shard1` — account code hash when the account
-  exists on that shard.
+- `code_hash_shard0`, `code_hash_shard1` — code hash supplied by the liquid
+  account export. In the all-address claim ledger it can be blank for a
+  staking-only or receipt-only account whose liquid balance is zero.
 
 A non-empty code hash usually identifies an EVM contract, but Harmony also
 stores an RLP-encoded `ValidatorWrapper` in a validator account's code field.
 The code hash therefore triggers classification; it is not by itself proof
 that the account is a contract or that it has a recoverable Ethereum owner.
+
+Before destination classification, the complete all-address claim set is
+enriched with historical `eth_getCode` and `eth_getTransactionCount` at the
+cutoff block. The resulting
+`all-address-migration-claims-cutoff-metadata.csv` companion explicitly
+resolves every blank shard-0 code field to either the empty-code hash or its
+actual code hash, including below-threshold rows reserved for a later portal.
 
 ## Difference CSVs
 
@@ -123,3 +131,25 @@ Per-vault deposit fields:
 Direct wallet distribution files use `wallet_airdrop_atto` only. They retain
 `total_claim_atto` and `staked_to_vault_atto` for audit but must not add the
 staked amount to the ERC-20 transfer amount.
+
+## Sparse routing outputs
+
+`routing-exceptions.csv` contains only delivery that cannot use the ordinary
+code-less EOA implicit default:
+
+- `component` — `wallet_airdrop` or `vault_shares`;
+- source and optional validator address/secure-key fields;
+- `source_category` — `ordinary_eoa`, `validator_account`,
+  `contract_review`, `excluded`, or `deferred`;
+- `source_code_bearing` — whether cutoff metadata contains non-empty code;
+- `amount_atto` — the affected wallet amount or vault-share principal;
+- `exception_type` — explicit route, validator same-address approval, or
+  generated hold;
+- route, destination, status, reason, and evidence fields.
+
+`validator-governor-exceptions.csv` is separate because control of a validator
+vault is not delivery of the validator account's own claim. It contains
+explicit governor overrides and safety holds only.
+
+`unresolved-routing.csv` is the generated subset whose destination status is
+not `ready`. It is never a routing input and must not be edited.

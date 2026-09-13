@@ -45,6 +45,8 @@ The withheld set includes:
 - preliminary code-bearing review output;
 - final automatic, genuine-contract recovery, and policy-routed outputs;
 - contract-account classifications and destination evidence;
+- explicit treasury/manual routes, compiled sparse wallet/vault exceptions,
+  validator-governor exceptions, and the unresolved work queue;
 - treasury-routing outputs;
 - result summary JSON;
 - row counts, component totals, aggregate totals, and output hashes.
@@ -52,6 +54,12 @@ The withheld set includes:
 Reviewers should record their independently generated filenames, byte sizes,
 row counts, totals, and SHA-256 values before asking for the held-back
 comparison data.
+
+Pre-routing category and `base-*` files are entitlement inputs. The generated
+routing files under `routing/local/generated/` contain exceptions only and are
+usable in a later deployment build only when their summary reports
+`status: ready`. A complete wallet distribution or Merkle input must be
+materialized and verified separately.
 
 The public cutoff blocks, hashes, and state roots remain in
 `manifests/snapshot-2026-09-10.json`. The selected policy remains documented in
