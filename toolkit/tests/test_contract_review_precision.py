@@ -130,7 +130,10 @@ class ContractReviewPrecisionTest(unittest.TestCase):
             identity,
         )
         mismatched = dict(identity, block=11)
-        with self.assertRaisesRegex(ValueError, "identities disagree"):
+        with self.assertRaisesRegex(
+            ValueError,
+            "more than one cutoff block, hash, or state root",
+        ):
             classifier.policy_state_identity(
                 facts,
                 {
