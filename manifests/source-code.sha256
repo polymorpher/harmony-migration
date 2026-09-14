@@ -57,7 +57,7 @@ d008fce045aac975a6b97ca558ef82866963c45b4dacc11647b777c6a7bbdb53  7263  toolkit/
 b96cba9994dcafbf99be21deb7d00a1162b12736373df4ee6e15bb5f2a7d07d6  15341  toolkit/cmd/actual-supply/main.go
 1ac65376167b37a97f48781bccb40a5c587d2cdebda285c785e9856465c78c83  7863  toolkit/cmd/address-match-apply/main.go
 dca4617bdcf4f99931b07b82340e0d7cc9ae743b23e3423c975d1d4ee8ba648e  21766  toolkit/cmd/canonical-address-resolve/main.go
-953e18cf8e892021f25ce431f381f9ec7fa587b49dc09fff31e28bbdd5a0a32c  12320  toolkit/cmd/cross-shard-supply/main.go
+0c2f503ad3de8cc95f124de99d2f992629fd8aceeb601aa924fa76af62bcfed2  12545  toolkit/cmd/cross-shard-supply/main.go
 f9985ceea736fceecb8e03644505102422d3a8c1557a0e6fd5408053d76d0251  4427  toolkit/cmd/cx-lookup-snapshot/main.go
 fc62ea391c684514386527283946c96d975e90d66e3b58572009d08379ba3824  1252  toolkit/cmd/forensics/block-reward-accumulator/main.go
 b988b23da72484e54fe3ff587f803cd24d784693c1746249c2355e0ff4ef847f  2445  toolkit/cmd/forensics/cx-lookup/main.go
@@ -65,14 +65,14 @@ b988b23da72484e54fe3ff587f803cd24d784693c1746249c2355e0ff4ef847f  2445  toolkit/
 9f9d6917f6ecf1ecd86ad04ce93084a402c0405e3742c41ead052468d6fbcaee  7075  toolkit/cmd/forensics/outgoing-cx-scan/main.go
 3d1849e47025c87e04e6dae0c516dfc868ff65236307eb27c2627a4b5315f5cf  8246  toolkit/cmd/historical-state-diff/main.go
 8f6bbf0af8d7a7f7895079a7de09f2ecd415dd96d5b81ab856dc16bd80b0d76f  11369  toolkit/cmd/migration-claims-verify/main.go
-499ace1f9a9e21f8677d6b31eafe9928779ce4710278ab7f1fe6f9fce595d44a  15323  toolkit/cmd/staking-claims/main.go
+ee6f842e54bbfebcb54541913fcad24cb397846afd89d94210bab867257c170f  15361  toolkit/cmd/staking-claims/main.go
 3c5312b6f4a71c0d0ea8b43aa2769efb5a3230324b95a9b11094a3420350eab1  16549  toolkit/cmd/transition-trace-resolve/main.go
 ced9185bc5c4d682112db545302580f932ed203f80e7afd11904a404f24811c9  2464  toolkit/cmd/transition-trace-resolve/main_test.go
 e72d5b481bfbb8cda10f69164a3298e6717de3d348cd9fddceacfbdbfad542ad  3676  toolkit/go.mod
 8219a79d3bd66447d5fff1d700921f4f034c201ac6c8eddc298d7c5fef05964d  156491  toolkit/go.sum
 71850fa1c307c37383cdf3e44f4d81c55bca59935b6905f7b9b925772473f76b  8624  toolkit/scripts/census/account-balance-merge.py
 82229017d587e8cf382505354fd06cb2f0d1aa80b08f20d942e41adc7decafc4  11209  toolkit/scripts/claims/actual-supply-ledger.py
-2d585c5199fb85f39044cd662d335a956dfd1c14ea2499f0b6196b0f5461fca8  10617  toolkit/scripts/claims/apply-eligibility-policy.py
+757c10e3eb27b7b414ad6aa9d2869977f4b9730be0ef064aa8a80113ea84c081  10919  toolkit/scripts/claims/apply-eligibility-policy.py
 261ffd2a63ebbfc8349b2f28e66f999296a555595bdb274b3b7b2f9e332b4acd  7644  toolkit/scripts/claims/build-entitlement-report.py
 0e22914ab37f696f48f13787e01a3b484e2c88c0a33bc2858061f56e60ccf782  15423  toolkit/scripts/claims/build-vault-share-allocation.py
 9af813101994b5c09f725950da7c9d82ab254d3b5cd56015547b960e20becab2  8049  toolkit/scripts/claims/enrich-claim-metadata-rpc.py
@@ -84,7 +84,7 @@ ee42fcbade554bb80b8a82d9773ce9db414acaa4515d54c44a819c9c9fdcb5a0  4699  toolkit/
 904f47fbe140ba656efab3772c63b966c6f97272ce52ac80e451cf9b4125426a  2636  toolkit/scripts/claims/verify-vault-delegations.py
 4e9cebc1592e00f8850ff1526637af4ed66211026772fdb1497a9b1beaf7bd3a  4967  toolkit/scripts/contract-review/README.md
 9aa8e0ac6c123406ea6d6a3383ce3f8a884c29c4c646026572a6c78a00ceb517  35380  toolkit/scripts/contract-review/build-report.py
-3ff4d2a51a8a739c9d48d616d2735c2be7f3005f421d6ef5721b4a5b1053e307  38947  toolkit/scripts/contract-review/classify-contracts.py
+edfdd77a57c72b3f23a9785a89c03af82a2dd630b9c21b5428bd13bdedaecbe0  38988  toolkit/scripts/contract-review/classify-contracts.py
 383084534bcb3c3e9c54d9d939d294fdb190104750350cc4e26265f7ebe1c7d3  15753  toolkit/scripts/contract-review/contract_review_lib.py
 086049a5dc388f0ab6e742166a1285f39235d9aec125e300048ee5bf7ee8bc35  15674  toolkit/scripts/contract-review/enrich-contract-facts.py
 bfcd57676c8db74d02a02c83a45c7aab9025b52f4a149e934affc1bfbd259498  43722  toolkit/scripts/contract-review/fetch-contract-facts.py

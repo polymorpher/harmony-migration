@@ -231,10 +231,18 @@ func sumReceipts(
 		spent := true
 		var destinationBlock uint64
 		for _, receipt := range receipts {
-			encoded, err := destinationDB.Get(cxLookupKey(receipt.TxHash))
-			if err != nil || len(encoded) == 0 {
+			lookupKey := cxLookupKey(receipt.TxHash)
+			applied, err := destinationDB.Has(lookupKey)
+			if err != nil {
+				fatalf("read CX lookup %s: %v", receipt.TxHash.Hex(), err)
+			}
+			if !applied {
 				spent = false
 				break
+			}
+			encoded, err := destinationDB.Get(lookupKey)
+			if err != nil {
+				fatalf("read CX lookup %s: %v", receipt.TxHash.Hex(), err)
 			}
 			var entry txLookupEntry
 			if err := rlp.DecodeBytes(encoded, &entry); err != nil {

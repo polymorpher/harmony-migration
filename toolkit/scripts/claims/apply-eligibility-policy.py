@@ -120,11 +120,14 @@ def add_totals(totals, row):
 
 
 def code_bearing(row):
-    return any(
-        row[field]
-        and row[field].lower() != EMPTY_CODE_HASH
+    hashes = [
+        row.get(field, "").strip().lower()
         for field in ("code_hash_shard0", "code_hash_shard1")
-    )
+        if row.get(field, "").strip()
+    ]
+    if not hashes:
+        return None
+    return any(value != EMPTY_CODE_HASH for value in hashes)
 
 
 def main():
@@ -217,18 +220,23 @@ def main():
                     below_threshold_rows += 1
                     continue
                 threshold_rows += 1
+                has_code = code_bearing(row)
+                if has_code is None:
+                    raise ValueError(
+                        f"unresolved code metadata at line {line}"
+                    )
                 address = row["address"].lower()
                 if address in excluded:
                     label = "excluded_address"
                     seen_excluded.add(address)
                 elif address in automatic_code:
-                    if not code_bearing(row):
+                    if not has_code:
                         raise ValueError(
                             f"automatic code-address override has empty code: {address}"
                         )
                     label = "automatic"
                     seen_automatic_code.add(address)
-                elif code_bearing(row):
+                elif has_code:
                     label = "contract_review"
                 else:
                     label = "automatic"
