@@ -37,7 +37,7 @@ A claim contract will be made available on the chain where the asset originated,
 
 ### I own WONE on other chains
 
-A claim contract on Ethereum will be made available for you to claim the new ERC-20 ONE at a 1:1 ratio. We will most likely use the pre-hack snapshot on those chains to determine your WONE balance, since there are still 2.412 billion forged WONE remaining on BSC and 12.9 million forged WONE on Ethereum following the 8/11/2026 forge-mint incident. We are still looking into whether we can use a more up-to-date snapshot and surgically remove the hacker's balances and transfers. If we can, we will use that instead.
+A claim contract on Ethereum will be made available for you to claim the new ERC-20 ONE at a 1:1 ratio. It will be funded from the ONE migrated once from the Harmony WONE contract into a dedicated reserve multisig; claims transfer that existing reserve and do not create additional ONE. We will most likely use the pre-hack snapshot on those chains to determine your WONE balance, since there are still 2.412 billion forged WONE remaining on BSC and 12.9 million forged WONE on Ethereum following the 8/11/2026 forge-mint incident. We are still looking into whether we can use a more up-to-date snapshot and surgically remove the hacker's balances and transfers. If we can, we will use that instead.
 
 ### My assets are in a smart-contract wallet
 

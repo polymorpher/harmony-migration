@@ -31,6 +31,7 @@ Place manual additions in separate files under `routing/local/`, for example:
 - `multisigs.csv`
 - `lost-wallets.csv`
 - `frozen-wallets.csv`
+- `bridge-reserves.csv`
 - `validator-governors.csv`
 - `destinations.csv`
 - `policy-decisions.csv`
@@ -51,7 +52,9 @@ The initializer refuses to overwrite existing routing decisions.
 `build-contract-treasury-routes.py` populates every reviewed non-multisig
 contract as an `ALL` route to treasury. Reviewed multisigs are deliberately
 omitted: add a row to `multisigs.csv` only after the replacement Ethereum Safe
-address has been supplied and verified.
+address has been supplied and verified. Higher-priority entries in
+`bridge-reserves.csv` consume reserve-backed contract claims before the generic
+contract-treasury rows are considered.
 
 The routing command accepts `--routes` repeatedly. Files are merged by
 `priority`, then `route_id`; file order is irrelevant. Use `--replace` when
@@ -150,10 +153,21 @@ numerically correct route unsafe. Each row has:
 A resolved row must state the decision. Any pending row keeps the generated
 routing summary on hold.
 
-The file must include both `rollback-exploit-proceeds` and
-`wone-layerzero-double-issue`, as created by `init-local-routing.py`. Missing
-required decisions reject the input, including an empty or header-only file.
-Additional decisions are allowed and also keep routing on hold while pending.
+The file must include `rollback-exploit-proceeds`, `wone-reserve-custody`, and
+`layerzero-nativeoft-reconciliation`, as created by
+`init-local-routing.py`. Missing required decisions reject the input, including
+an empty or header-only file. Additional decisions are allowed and also keep
+routing on hold while pending.
+
+The WONE policy is resolved: migrate its native reserve once to a dedicated
+custody multisig and pay eligible WONE or bridged-WONE claims only by transfers
+from that finite reserve. No additional ONE is issued for those claims. The
+custody destination remains held until its approved multisig address is
+supplied.
+
+LayerZero NativeOFT contracts are separate because they directly hold native
+ONE. Their decision remains pending until remote supply and messages in flight
+are reconciled and a custody destination is approved.
 
 ## Safety
 
@@ -164,7 +178,8 @@ Additional decisions are allowed and also keep routing on hold while pending.
   exception with the validator classification file as evidence.
 - Genuine contracts default to hold unless an explicit recovery route exists.
 - The current canonical policy explicitly routes non-multisig contracts to
-  treasury after any higher-priority incident-specific treasury amount.
+  treasury after any higher-priority incident-specific or reserve-custody
+  route.
 - Any unconsumed remainder for an ordinary EOA is implicit; any unconsumed
   validator remainder remains an explicit validator exception.
 - Routing requests may not exceed the source's remaining total claim.

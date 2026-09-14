@@ -107,8 +107,9 @@ total claim.
 ## Explicit routing files
 
 Real routes live under the ignored `routing/local/` directory. Separate CSVs
-may be maintained for treasury, multisigs, lost wallets, frozen wallets, and
-other manual decisions. See `routing/README.md` for the schema and precedence.
+may be maintained for treasury, bridge reserves, multisigs, lost wallets,
+frozen wallets, and other manual decisions. See `routing/README.md` for the
+schema and precedence.
 
 Routes are applied to direct wallet tokens first and then proportionally across
 the source's validator-vault positions when necessary. A missing destination
@@ -127,24 +128,47 @@ files. A complete deployment allocation must be built later from the base
 entitlements and approved exceptions; the sparse routing outputs are not
 themselves a wallet distribution or Merkle input.
 
-The current policy routes every reviewed non-multisig contract to treasury.
-Multisig rows remain held until a replacement Ethereum Safe with the verified
-owner set and threshold is supplied.
+The current policy routes reviewed non-multisig contracts to treasury unless a
+higher-priority incident or reserve-custody route applies. Multisig rows remain
+held until a replacement Ethereum Safe with the verified owner set and
+threshold is supplied.
 
 ## Additional policy decisions
 
 - Historical rollback-exploit proceeds remain part of state-derived total
   claims unless an explicit route file redirects identified addresses. The
   treasury inventory does not implicitly cover that incident.
-- ONE locked in WONE or bridge contracts must not be issued once through
-  contract recovery and again through an external-chain holder claim. The
-  liability reconciliation must choose one backing use for each unit.
 - If a validator address is explicitly frozen or treasury-routed, its vault
   governor defaults to hold until `validator-governors.csv` names an approved
   Ethereum governor.
 
 These are release gates in `routing/local/policy-decisions.csv`; a pending
 decision keeps the routing summary on hold even if every address is populated.
+
+### WONE reserve custody
+
+The native ONE held by the WONE contract is backing, not unrestricted treasury
+property. It is migrated exactly once to a dedicated reserve multisig, separate
+from the general treasury. A later claim portal pays eligible WONE and
+bridged-WONE claimants by transferring ONE from that finite reserve. It does not
+mint or allocate additional ONE for those claims.
+
+The WONE contract therefore receives a higher-priority
+`wone-reserve-custody` route instead of the generic contract-treasury route.
+The destination remains held until the approved multisig address is supplied.
+Aggregate portal payments may not exceed the amount transferred to that
+reserve, and each entitlement must be claimable only once.
+
+### LayerZero NativeOFT reconciliation
+
+The LayerZero NativeOFT contracts do not use the WONE reserve; they directly
+hold native ONE backing their cross-chain token system. Their reserves must be
+routed separately and may not become unrestricted treasury property.
+
+Before approving their custody destination, reconcile each Harmony reserve
+against the corresponding remote-chain supply and messages in flight at pinned
+blocks. The `layerzero-nativeoft-reconciliation` decision remains pending until
+that evidence and settlement method are recorded.
 
 ## Reproduction and evidence
 

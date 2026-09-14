@@ -7,7 +7,7 @@ private network. You must provide your own Harmony databases.
 
 - Linux x86-64 or ARM64
 - Go `1.24.2`
-- Python `3.10` or newer
+- Python `3.12` or newer
 - Git, GNU Make, a C/C++ compiler
 - GMP and OpenSSL development packages
 - enough local storage for the Harmony databases and generated CSVs
@@ -17,6 +17,13 @@ On Debian or Ubuntu:
 ```sh
 sudo apt-get update
 sudo apt-get install -y build-essential git libgmp-dev libssl-dev python3
+```
+
+Use a distribution release whose `python3` package is Python 3.12 or newer,
+then verify the interpreter before running the pipeline:
+
+```sh
+python3 scripts/check-python-version.py
 ```
 
 ## 2. Obtain the source dependencies
@@ -360,6 +367,7 @@ python3 toolkit/scripts/routing/apply-routes.py \
   --routes routing/local/multisigs.csv \
   --routes routing/local/lost-wallets.csv \
   --routes routing/local/frozen-wallets.csv \
+  --routes routing/local/bridge-reserves.csv \
   --routes routing/local/treasury.csv \
   --routes routing/local/contracts-to-treasury.csv \
   --destinations routing/local/destinations.csv \

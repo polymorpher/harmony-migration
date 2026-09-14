@@ -28,12 +28,15 @@ Before publishing the migration allocation:
 6. State explicitly whether identified rollback-exploit proceeds are honored
    as state claims or redirected. Do not imply that the existing treasury
    inventory covers that incident.
-7. Reconcile WONE and bridge-lock backing against external-chain holder claims
-   so no locked ONE is issued twice.
-8. State that retired-shard receipts are excluded unless additional proof is
+7. Route the WONE native reserve once to its dedicated custody multisig.
+   Confirm that WONE and bridged-WONE portal payments are transfers from that
+   finite reserve, not additional issuance, and cannot be claimed twice.
+8. Separately reconcile each LayerZero NativeOFT reserve against remote supply
+   and messages in flight at pinned blocks before approving its custody route.
+9. State that retired-shard receipts are excluded unless additional proof is
    obtained.
-9. Run the strict claim verifier and exact cutoff verifier.
-10. Record:
+10. Run the strict claim verifier and exact cutoff verifier.
+11. Record:
    - filename;
    - byte size;
    - row count;
@@ -41,11 +44,11 @@ Before publishing the migration allocation:
    - staked-to-vault atto-ONE;
    - total claim atto-ONE;
    - SHA-256.
-11. Materialize the complete deployment allocation from the base entitlements
+12. Materialize the complete deployment allocation from the base entitlements
     and approved exceptions, verify it independently, and publish it as an
     immutable release asset.
-12. Publish the snapshot and source-code manifests.
-13. Have a second developer reproduce the selected threshold output from the
+13. Publish the snapshot and source-code manifests.
+14. Have a second developer reproduce the selected threshold output from the
     full verified cutoff ledger.
 
 Do not publish:
