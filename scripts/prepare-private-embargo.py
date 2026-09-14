@@ -207,6 +207,12 @@ RESULT_MAPPINGS = (
         "policy-scenario",
     ),
     (
+        ROOT / "routing" / "local" / "bridge-reserves.csv",
+        DESTINATION_RESULTS / "routes" / "bridge-reserves.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
         ROOT / "routing" / "local" / "destinations.csv",
         DESTINATION_RESULTS / "routes" / "destinations.csv",
         "destination-mapping",
