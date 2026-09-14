@@ -1,5 +1,6 @@
 decision_id,status,decision,evidence,notes
 rollback-exploit-proceeds,pending,,,Decide how identified exploit proceeds are treated
+contract-recovery-custody,resolved,Send generic non-multisig contract funds to a specific Safe or multisig holding address that is separate from general treasury,docs/claim-routing.md#explicit-routing-files,Verified claimants are paid from that existing balance; no additional ONE is created
 wone-reserve-custody,resolved,Migrate the WONE native reserve once to a dedicated custody multisig and pay claims only by transfer from that reserve,docs/claim-routing.md#wone-reserve-custody,Supply the approved multisig address before distribution
 layerzero-nativeoft-reconciliation,pending,,,Reconcile direct native reserves with remote supply and messages in flight
 example-policy,resolved,document the selected policy,example://governance,

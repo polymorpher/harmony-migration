@@ -48,7 +48,7 @@ RELEASE_FILES = (
     / "artifacts"
     / "contract-review-20260911"
     / "out"
-    / "contract-review-all.csv",
+    / "contract-review-policy.csv",
     ROOT
     / "artifacts"
     / "cutoff-20260910"
@@ -124,7 +124,7 @@ def inspect(path):
     }:
         domain = "claim-accounting"
         classification = "RPC-derived"
-    elif name == "contract-review-all.csv":
+    elif name == "contract-review-policy.csv":
         domain = "destination-mapping"
         classification = "RPC-derived"
     else:

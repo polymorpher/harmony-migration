@@ -119,6 +119,9 @@ def main():
     patterns = read(os.path.join(od, "pattern-identified-contracts.csv"))
     unidentified = read(os.path.join(od, "unidentified-contracts.csv"))
     summary = json.load(open(os.path.join(od, "summary.json")))
+    policy_state = summary["policy_state"]
+    if int(policy_state["block"]) != args.cutoff_block:
+        raise ValueError("classification policy-state block is not the cutoff")
 
     total_claim = sum(D(r["total_claim_one"]) for r in all_rows)
     contracts = [r for r in all_rows if r["primary_category"] != "validator-account"]
@@ -133,8 +136,10 @@ def main():
         f"- Input: `{os.path.basename(args.claims)}` ({len(all_rows)} rows, SHA-256 `{file_sha256(args.claims)}`), "
         f"the code-bearing rows of the inclusive >= 1,000 ONE cutoff ledger (shard 0 block {args.cutoff_block:,}, shard 1 block 95,882,100).\n"
         f"- Classification and enrichment facts were read from the Harmony shard-0 archival node RPC `{args.rpc}` "
-        f"(consensus state, canonical transactions, `trace_block`). Cutoff claim and delivery components came from the two-shard input CSV. Explorer/indexer balances were not used. "
-        f"Latest-state values were read at block {latest_block:,} or later.\n"
+        f"(consensus state, canonical transactions, `trace_block`). Ownership, recovery, proxy, and classification state was pinned to "
+        f"block {policy_state['block']:,} (`{policy_state['block_hash']}`, state root `{policy_state['state_root']}`). "
+        f"Cutoff claim and delivery components came from the two-shard input CSV. Explorer/indexer balances were not used. "
+        f"Latest-state balances and activity context were read at block {latest_block:,} or later and do not select destinations.\n"
         f"- Total claim of the reviewed rows: **{one(total_claim, 18)} ONE** (matches the eligibility summary exactly).\n"
     )
     L.append(
@@ -226,7 +231,7 @@ def main():
         f"3. **{len(onewallets)} 1wallet contracts have {one(sum(D(r['total_claim_one']) for r in onewallets))} ONE of total claim.** "
         f"{sum(1 for r in onewallets if r['recovery_address'])} have a user-set recovery address; "
         f"{sum(1 for r in onewallets if r['recovery_is_treasury'] == 'True')} still point at the 1wallet treasury (`0x7534978F…`, itself a 2-of-4 Safe in this list). "
-        f"{sum(1 for r in onewallets if r['forward_address'])} have a forward address set. All {len(onewallets)} current OTP cores have passed their expiry time.\n"
+        f"{sum(1 for r in onewallets if r['forward_address'])} have a forward address set. All {len(onewallets)} cutoff-state OTP cores have passed their expiry time.\n"
     )
     ka = [r for r in all_rows if r["known_app"]]
     L.append(
@@ -325,7 +330,7 @@ def main():
         f"still carry the default 1wallet treasury `0x7534978F9fa903150eD429C486D1f42B7fDB7a61`, which the contract treats as \"not set\". "
         f"The treasury is itself a Safe in this ledger: v{tinfo.get('safe_version')} {tinfo.get('threshold')}-of-{tinfo.get('owner_count')}, owners `{tinfo.get('owners')}`. "
         f"{sum(1 for r in onewallets if r['forward_address'])} wallets have `getForwardAddress()` set (upgraded/forwarded to a newer wallet). "
-        f"All {len(onewallets)} current OTP cores are past `(t0 + lifespan) * interval`; the CSV carries both times.\n"
+        f"All {len(onewallets)} cutoff-state OTP cores are past `(t0 + lifespan) * interval`; the CSV carries both times.\n"
     )
     L.append("Detection (works for every version from v2 to v16): `getInfo()` returns exactly 8 words `(root, height, interval, t0, lifespan, maxOperationsPerInterval, lastResortAddress, dailyLimit)` "
              "with a non-zero root, `1 <= height <= 64`, `1 <= interval <= 86400`, a plausible `t0 * interval` (2017-2033) and a valid address; `getVersion()` (v2+) supplies major/minor. "
@@ -361,11 +366,11 @@ def main():
     standards = ", ".join(f"{n} {k}" for k, n in Counter(r["token_standard"] for r in nfts).most_common())
     L.append(f"{len(nfts)} contracts ({standards}). Total claim {one(sum(D(r['total_claim_one']) for r in nfts))} ONE. "
              "Standard detection uses ERC-165 (`0x80ac58cd`, `0xd9b67a26`) when the contract implements ERC-165 consistently, otherwise the dispatcher must contain "
-             "`ownerOf`, `safeTransferFrom`, `setApprovalForAll` and `transferFrom`. Owner counts enumerate current `ownerOf` through Multicall3 `aggregate3` "
+             "`ownerOf`, `safeTransferFrom`, `setApprovalForAll` and `transferFrom`. Owner counts enumerate policy-state `ownerOf` through Multicall3 `aggregate3` "
              "(ERC721Enumerable `tokenByIndex` when available, otherwise sequential ids; CryptoPunks-style via `punkIndexToAddress`). Contracts with non-sequential ids (name-hash domains) are marked not enumerable.\n")
     rows = [[r["token_name"][:26], r["token_symbol"][:10], f"`{r['address']}`", r["token_standard"][:14], r["owner_count"], r["total_supply_raw"], r["tokens_enumerated"], r["direct_tx_count_all"], one(r["total_claim_one"]), r["creation_time_utc"][:10], f"`{r['creation_tx_hash'][:14]}…`", r["known_app"][:28]]
             for r in sorted(nfts, key=lambda r: -D(r["total_claim_one"]))]
-    L.append(table(["name", "symbol", "address", "standard", "current owners", "totalSupply", "ids enumerated", "direct txs", "total claim ONE", "created", "creation tx", "app"], rows))
+    L.append(table(["name", "symbol", "address", "standard", "policy-state owners", "totalSupply", "ids enumerated", "direct txs", "total claim ONE", "created", "creation tx", "app"], rows))
 
     # known apps
     L.append("\n## 5. Well-known application contracts\n")
@@ -445,19 +450,21 @@ def main():
         "- **Per-address transaction index**: the node's `hmyv2_getTransactionsHistory` index orders by `(block, index, hash)`, but legacy entries migrated with an unknown block sort first by hash. "
         "First-transaction queries therefore fetch the full hash list, resolve the hash-sorted legacy prefix, and take the true minimum block; `DESC` page 0 is reliable for the most recent direct transaction. "
         "Counts (`direct_tx_count_*`) include only direct transactions, not internal calls.\n"
-        "- **ABI probing**: 133 `eth_call` probes per contract at the latest block (Safe, 1wallet, ERC-20/721/1155/165, AMM, lending, farming, LayerZero, ENS, misc). Proxies (EIP-1967, EIP-1167 clones, Safe `masterCopy`, "
+        f"- **Policy state**: ownership, recovery settings, proxy storage and implementations, token/interface probes, SmartVault guardians, and NFT owner enumeration are pinned to block {policy_state['block']:,}; they never use `latest`.\n"
+        "- **ABI probing**: 133 `eth_call` probes per contract at the policy-state block (Safe, 1wallet, ERC-20/721/1155/165, AMM, lending, farming, LayerZero, ENS, misc). Proxies (EIP-1967, EIP-1167 clones, Safe `masterCopy`, "
         "`implementation()`, custom beacons) were followed to their implementation for function-signature analysis; probes already execute through the proxy.\n"
         "- **Function signatures**: 4-byte selectors were extracted from the runtime dispatcher and resolved against a built-in dictionary of standard interfaces plus the public openchain.xyz signature database. "
-        "The signature database only supplies human-readable names for labeling; no balance, ownership or state fact comes from it.\n"
-        "- **Owner counts (NFT)**: current holders enumerated from state through Multicall3; ERC-1155 and non-sequential-id collections are not enumerable without a full event scan (`eth_getLogs` is limited to 1,024 blocks per query on the public node).\n"
-        "- **Current balances** are `eth_getBalance` at the latest block at fetch time; cutoff components come from the claims CSV.\n"
+        "Policy signatures are computed locally from the built-in dictionary and registry. The mutable signature database only supplies human-readable display labels and never affects classification.\n"
+        "- **Owner counts (NFT)**: policy-state holders enumerated through Multicall3; ERC-1155 and non-sequential-id collections are not enumerable without a full event scan (`eth_getLogs` is limited to 1,024 blocks per query on the public node).\n"
+        "- **Latest context**: current balances, nonce, delegations, and transaction activity are retained for investigation only; cutoff components and destinations do not depend on them.\n"
         "- **Not used**: explorer APIs, third-party indexers, or price data.\n"
     )
     L.append("## Files\n")
     L.append(
         "All outputs are in `artifacts/contract-review-20260911/` (git-ignored):\n\n"
-        "- `out/contract-review-all.csv` — one row per address, primary category, all facts\n"
-        "- `out/validator-accounts.csv`, `out/multisig-wallets.csv`, `out/onewallets.csv`, `out/smartvault-wallets.csv`, `out/erc20-tokens.csv`, `out/nft-contracts.csv`, `out/known-app-contracts.csv`, `out/pattern-identified-contracts.csv`, `out/unidentified-contracts.csv`\n"
+        "- `out/contract-review-policy.csv` and `out/validator-policy-accounts.csv` — deterministic cutoff-pinned routing inputs\n"
+        "- `out/contract-review-all.csv` — one row per address, including non-authoritative activity context\n"
+        "- `out/validator-accounts.csv`, `out/multisig-wallets.csv`, `out/onewallets.csv`, `out/smartvault-wallets.csv`, `out/erc20-tokens.csv`, `out/nft-contracts.csv`, `out/known-app-contracts.csv`, `out/pattern-identified-contracts.csv`, `out/unidentified-contracts.csv` — detailed contextual review outputs\n"
         "- `out/summary.json` — machine-readable statistics\n"
         "- `facts.json` — raw archival-RPC facts for the complete code-bearing set; `selectors.json` — dispatcher signatures; `extra.json` — pair symbols, singleton metadata, NFT owner census, SmartVault owners/guardians\n\n"
         "Reproduce with `toolkit/scripts/contract-review/` (see its README): `fetch-contract-facts.py` -> `selector-census.py` -> `enrich-contract-facts.py` -> `classify-contracts.py` -> `build-report.py`.\n"

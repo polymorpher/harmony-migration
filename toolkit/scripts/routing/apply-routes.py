@@ -21,6 +21,7 @@ EMPTY_CODE_HASH = (
     "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
 )
 REQUIRED_POLICY_DECISIONS = {
+    "contract-recovery-custody",
     "layerzero-nativeoft-reconciliation",
     "rollback-exploit-proceeds",
     "wone-reserve-custody",
@@ -124,6 +125,8 @@ def write_csv(path, fields, rows, replace=False):
 
 
 def code_bearing(row):
+    if not row.get("code_hash_shard0", "").strip():
+        return None
     hashes = [
         row.get(field, "").strip().lower()
         for field in ("code_hash_shard0", "code_hash_shard1")
@@ -154,7 +157,9 @@ def load_claims(paths):
                 raise ValueError(f"{path}: missing fields {sorted(missing)}")
             for line, row in enumerate(reader, start=2):
                 key = row["secure_key"].lower()
-                address = lib.any_to_hex(row["address"])
+                address = lib.require_address_secure_key(
+                    row["address"], key, f"{path}:{line}"
+                )
                 wallet = int(row["wallet_airdrop_atto"])
                 staked = int(row["staked_to_vault_atto"])
                 total = int(row["total_claim_atto"])
@@ -173,6 +178,11 @@ def load_claims(paths):
                     "wallet": wallet,
                     "staked": staked,
                     "total": total,
+                    "liquid_shard0": (
+                        int(row["liquid_shard0_atto"])
+                        if row.get("liquid_shard0_atto", "") != ""
+                        else None
+                    ),
                     "category": category,
                     "code_bearing": has_code,
                 }
@@ -191,6 +201,9 @@ def load_routed_deferred_claims(path, route_sources, claims, by_address):
             if address not in wanted:
                 continue
             key = row["secure_key"].lower()
+            address = lib.require_address_secure_key(
+                row["address"], key, f"{path}:{line}"
+            )
             wallet = int(row["wallet_airdrop_atto"])
             staked = int(row["staked_to_vault_atto"])
             total = int(row["total_claim_atto"])
@@ -207,6 +220,11 @@ def load_routed_deferred_claims(path, route_sources, claims, by_address):
                 "wallet": wallet,
                 "staked": staked,
                 "total": total,
+                "liquid_shard0": (
+                    int(row["liquid_shard0_atto"])
+                    if row.get("liquid_shard0_atto", "") != ""
+                    else None
+                ),
                 "category": "deferred",
                 "code_bearing": has_code,
             }
@@ -309,6 +327,41 @@ def load_policy_decisions(path):
     return pending
 
 
+def csv_policy_state(path):
+    states = set()
+    with open(path, newline="") as source:
+        reader = csv.DictReader(source)
+        fields = {
+            "policy_state_block",
+            "policy_state_block_hash",
+            "policy_state_root",
+        }
+        if not fields <= set(reader.fieldnames or ()):
+            return None
+        for line, row in enumerate(reader, start=2):
+            try:
+                state = (
+                    int(row["policy_state_block"]),
+                    row["policy_state_block_hash"],
+                    row["policy_state_root"],
+                )
+            except ValueError as error:
+                raise ValueError(
+                    f"{path}:{line}: invalid policy state"
+                ) from error
+            if not state[1] or not state[2]:
+                raise ValueError(f"{path}:{line}: incomplete policy state")
+            states.add(state)
+    if len(states) != 1:
+        raise ValueError(f"{path}: policy state is not unique")
+    block, block_hash, state_root = states.pop()
+    return {
+        "block": block,
+        "block_hash": block_hash,
+        "state_root": state_root,
+    }
+
+
 def resolve_destination(row, destinations):
     direct = row.get("destination_address", "").strip()
     destination_id = row.get("destination_id", "").strip()
@@ -361,8 +414,11 @@ def load_routes(paths, destinations):
                         f"{path}:{line}: invalid allocation method"
                     )
                 amount_text = row["amount_atto"].strip().upper()
-                amount = None if amount_text == "ALL" else int(amount_text)
-                if amount is not None and amount <= 0:
+                if amount_text in {"ALL", "SHARD0_LIQUID"}:
+                    amount = amount_text
+                else:
+                    amount = int(amount_text)
+                if isinstance(amount, int) and amount <= 0:
                     raise ValueError(f"{path}:{line}: invalid route amount")
                 destination_id, destination, status = resolve_destination(
                     row, destinations
@@ -382,6 +438,17 @@ def load_routes(paths, destinations):
                         "exception_type": "explicit_route",
                         "reason": row.get("reason", ""),
                         "evidence": row.get("evidence", ""),
+                        "policy_state": (
+                            {
+                                "block": int(row["policy_state_block"]),
+                                "block_hash": row[
+                                    "policy_state_block_hash"
+                                ],
+                                "state_root": row["policy_state_root"],
+                            }
+                            if row.get("policy_state_block", "").strip()
+                            else None
+                        ),
                     }
                 )
     routes.sort(key=lambda row: (row["priority"], row["route_id"]))
@@ -501,6 +568,50 @@ def main():
     destinations = load_destinations(args.destinations)
     pending_policy_decisions = load_policy_decisions(args.policy_decisions)
     routes = load_routes(args.routes, destinations)
+    custody_states = {
+        tuple(route["policy_state"].values())
+        for route in routes
+        if route["reason"]
+        == "non_multisig_contract_recovery_custody"
+        and route["policy_state"] is not None
+    }
+    custody_without_state = [
+        route["route_id"]
+        for route in routes
+        if route["reason"]
+        == "non_multisig_contract_recovery_custody"
+        and route["policy_state"] is None
+    ]
+    invalid_custody_destinations = [
+        route["route_id"]
+        for route in routes
+        if route["reason"]
+        == "non_multisig_contract_recovery_custody"
+        and route["destination_id"] != "contract-recovery-custody"
+    ]
+    if invalid_custody_destinations:
+        raise ValueError(
+            "generated contract-holding routes must use "
+            "contract-recovery-custody, not treasury"
+        )
+    if custody_without_state or len(custody_states) > 1:
+        raise ValueError(
+            "contract-holding routes must share one cutoff block, hash, "
+            "and state root"
+        )
+    contract_policy_state = None
+    if custody_states:
+        block, block_hash, state_root = custody_states.pop()
+        contract_policy_state = {
+            "block": block,
+            "block_hash": block_hash,
+            "state_root": state_root,
+        }
+        if csv_policy_state(args.validator_accounts) != contract_policy_state:
+            raise ValueError(
+                "contract-holding routes and validator accounts must use "
+                "the same cutoff block, hash, and state root"
+            )
     load_routed_deferred_claims(
         args.all_claims,
         {route["source_address"] for route in routes},
@@ -540,6 +651,11 @@ def main():
             reader = csv.DictReader(source)
             for line, row in enumerate(reader, start=2):
                 key = row["delegator_secure_key"].lower()
+                lib.require_address_secure_key(
+                    row["delegator_address"],
+                    key,
+                    f"{path}:{line} delegator",
+                )
                 if key not in claims:
                     if required:
                         raise ValueError(
@@ -547,6 +663,11 @@ def main():
                         )
                     continue
                 validator_key = row["validator_secure_key"].lower()
+                lib.require_address_secure_key(
+                    row["validator_address"],
+                    validator_key,
+                    f"{path}:{line} validator",
+                )
                 pair = (validator_key, key)
                 if pair in seen_positions:
                     raise ValueError(f"{path}:{line}: duplicate position")
@@ -587,11 +708,17 @@ def main():
                 position["remaining"] for position in positions[key]
             )
             remaining_total = wallet_remaining + vault_remaining
-            amount = (
-                remaining_total
-                if route["amount"] is None
-                else route["amount"]
-            )
+            if route["amount"] == "ALL":
+                amount = remaining_total
+            elif route["amount"] == "SHARD0_LIQUID":
+                if claim["liquid_shard0"] is None:
+                    raise ValueError(
+                        f"route {route['route_id']} requires "
+                        "liquid_shard0_atto"
+                    )
+                amount = claim["liquid_shard0"]
+            else:
+                amount = route["amount"]
             if amount > remaining_total:
                 raise ValueError(
                     f"route {route['route_id']} exceeds remaining claim"
@@ -772,7 +899,12 @@ def main():
     seen_vaults = set()
     with open(args.base_vault_deposits, newline="") as source:
         reader = csv.DictReader(source)
-        for row in reader:
+        for line, row in enumerate(reader, start=2):
+            lib.require_address_secure_key(
+                row["validator_address"],
+                row["validator_secure_key"],
+                f"{args.base_vault_deposits}:{line} validator",
+            )
             validator = lib.any_to_hex(row["validator_address"])
             seen_vaults.add(validator)
             governor = governor_overrides.get(validator)
@@ -914,6 +1046,7 @@ def main():
         ),
         "route_files": args.routes,
         "validator_accounts": args.validator_accounts,
+        "contract_review_policy_state": contract_policy_state,
         "active_routes": sum(len(rows) for rows in routes_by_key.values()),
         "inactive_routes": inactive_routes,
         "pending_policy_decisions": pending_policy_decisions,

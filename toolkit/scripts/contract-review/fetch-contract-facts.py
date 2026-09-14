@@ -4,7 +4,9 @@
 Everything is read from a Harmony shard-0 archival node over JSON-RPC:
 
 - runtime code at the cutoff block and at the latest block;
-- latest liquid balance, nonce, storage slot 0 and EIP-1967 slots;
+- latest liquid balance and nonce for context;
+- storage slot 0, EIP-1967 slots, and classification ABI probes at the
+  explicit cutoff block;
 - direct transaction counts and first/last direct transactions
   (``hmyv2_getTransactionsCount`` / ``hmyv2_getTransactionsHistory``);
 - creation block located by binary search on ``eth_getCode`` and the
@@ -16,8 +18,8 @@ Everything is read from a Harmony shard-0 archival node over JSON-RPC:
 - current delegations through ``hmyv2_getDelegationsByDelegator``.
 
 The output is a single JSON document keyed by lowercase address. The script
-is resumable: facts already present are not fetched again unless
-``--refresh`` is given.
+is resumable, but automatically refreshes policy-state facts whose recorded
+block does not match ``--cutoff-block``.
 """
 
 import argparse
@@ -35,6 +37,8 @@ DEAD = "0x000000000000000000000000000000000000dead"
 EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 EIP1967_ADMIN_SLOT = "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"
 EIP1967_BEACON_SLOT = "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50"
+BASIC_EVIDENCE_VERSION = 2
+PROBE_EVIDENCE_VERSION = 2
 
 # (label, signature, [(type, value), ...])
 PROBES = [
@@ -277,8 +281,26 @@ def log(message):
 # --------------------------------------------------------------------------
 
 
-def stage_basic(client, facts, addresses, cutoff_hex):
-    todo = [a for a in addresses if "basic" not in facts[a]]
+def stage_basic(client, facts, addresses, cutoff_hex, policy_block):
+    cutoff_number = int(cutoff_hex, 16)
+    todo = [
+        address
+        for address in addresses
+        if (
+            (facts[address].get("basic") or {}).get(
+                "basic_evidence_version"
+            )
+            != BASIC_EVIDENCE_VERSION
+            or (facts[address].get("basic") or {}).get("policy_state_block")
+            != cutoff_number
+            or (facts[address].get("basic") or {}).get(
+                "policy_state_block_hash"
+            )
+            != policy_block["hash"]
+            or (facts[address].get("basic") or {}).get("policy_state_root")
+            != policy_block["stateRoot"]
+        )
+    ]
     if not todo:
         return
     log(f"basic: {len(todo)} addresses")
@@ -290,10 +312,10 @@ def stage_basic(client, facts, addresses, cutoff_hex):
             ("eth_getBalance", [a, "latest"]),
             ("eth_getBalance", [a, cutoff_hex]),
             ("eth_getTransactionCount", [a, "latest"]),
-            ("eth_getStorageAt", [a, "0x0", "latest"]),
-            ("eth_getStorageAt", [a, EIP1967_IMPL_SLOT, "latest"]),
-            ("eth_getStorageAt", [a, EIP1967_ADMIN_SLOT, "latest"]),
-            ("eth_getStorageAt", [a, EIP1967_BEACON_SLOT, "latest"]),
+            ("eth_getStorageAt", [a, "0x0", cutoff_hex]),
+            ("eth_getStorageAt", [a, EIP1967_IMPL_SLOT, cutoff_hex]),
+            ("eth_getStorageAt", [a, EIP1967_ADMIN_SLOT, cutoff_hex]),
+            ("eth_getStorageAt", [a, EIP1967_BEACON_SLOT, cutoff_hex]),
             ("hmyv2_getTransactionsCount", [a, "ALL"]),
             ("hmyv2_getTransactionsCount", [a, "SENT"]),
             ("hmyv2_getTransactionsCount", [a, "RECEIVED"]),
@@ -315,6 +337,7 @@ def stage_basic(client, facts, addresses, cutoff_hex):
             name for sel, name in BYTECODE_SELECTOR_HEX.items() if ("63" + sel) in code_lower
         )
         facts[a]["basic"] = {
+            "basic_evidence_version": BASIC_EVIDENCE_VERSION,
             "code_cutoff_len": len(code_bytes),
             "code_cutoff_hash": code_hash,
             "code_cutoff": code_cutoff,
@@ -332,6 +355,9 @@ def stage_basic(client, facts, addresses, cutoff_hex):
             "tx_count_received": values[11],
             "staking_tx_count_all": values[12],
             "latest_block_at_fetch": lib.hex_to_int(latest_block),
+            "policy_state_block": cutoff_number,
+            "policy_state_block_hash": policy_block["hash"],
+            "policy_state_root": policy_block["stateRoot"],
             "bytecode_selectors": selectors_present,
             "errors": [e for e in errors if e],
         }
@@ -376,17 +402,55 @@ def summarize_tx(tx):
 # --------------------------------------------------------------------------
 
 
-def stage_validator(client, facts, addresses):
-    todo = [a for a in addresses if "validator" not in facts[a]]
+def stage_validator(
+    client,
+    facts,
+    addresses,
+    cutoff_block,
+    policy_block,
+):
+    todo = [
+        address
+        for address in addresses
+        if (facts[address].get("validator") or {}).get(
+            "validator_evidence_version"
+        )
+        != 2
+        or (facts[address].get("validator") or {}).get(
+            "policy_state_block"
+        )
+        != cutoff_block
+        or (facts[address].get("validator") or {}).get(
+            "policy_state_block_hash"
+        )
+        != policy_block["hash"]
+        or (facts[address].get("validator") or {}).get(
+            "policy_state_root"
+        )
+        != policy_block["stateRoot"]
+    ]
     if not todo:
         return
     log(f"validator: {len(todo)} addresses")
-    calls = [("hmyv2_getValidatorInformation", [a]) for a in todo]
+    calls = [
+        (
+            "hmyv2_getValidatorInformationByBlockNumber",
+            [address, cutoff_block],
+        )
+        for address in todo
+    ]
     results = client.batch(calls)
     validators = []
     for a, (result, error) in zip(todo, results):
         rlp_address = lib.rlp_validator_wrapper_address(facts[a]["basic"]["code_cutoff"])
-        entry = {"rlp_wrapper_address": rlp_address, "rlp_wrapper_matches": rlp_address == a}
+        entry = {
+            "validator_evidence_version": 2,
+            "rlp_wrapper_address": rlp_address,
+            "rlp_wrapper_matches": rlp_address == a,
+            "policy_state_block": cutoff_block,
+            "policy_state_block_hash": policy_block["hash"],
+            "policy_state_root": policy_block["stateRoot"],
+        }
         if error or not result:
             entry["is_validator"] = False
             entry["error"] = (error or {}).get("message", "")[:160] if isinstance(error, dict) else str(error)[:160]
@@ -420,7 +484,11 @@ def stage_validator(client, facts, addresses):
 
 
 def is_validator(facts, address):
-    return bool(facts[address].get("validator", {}).get("is_validator"))
+    validator = facts[address].get("validator", {})
+    return bool(
+        validator.get("is_validator")
+        and validator.get("rlp_wrapper_matches")
+    )
 
 
 HASH_PREFIX_CAP = 400
@@ -772,10 +840,34 @@ def find_first_value_transfer_trace(traces, address):
     return None
 
 
+def cutoff_direct_value_transfer(history, cutoff_block):
+    tx = history.get("first_direct_value_received_tx")
+    info = dict(history.get("first_direct_value_received_info") or {})
+    if tx is not None and tx.get("block", cutoff_block + 1) > cutoff_block:
+        info["post_cutoff_ignored"] = True
+        tx = None
+    return tx, info
+
+
 def stage_funding(client, facts, addresses, cutoff_block):
     todo = [
         a for a in addresses
-        if "funding" not in facts[a]
+        if (
+            (facts[a].get("funding") or {}).get(
+                "funding_evidence_version"
+            )
+            != 2
+            or (facts[a].get("funding") or {}).get("policy_state_block")
+            != cutoff_block
+            or (facts[a].get("funding") or {}).get(
+                "policy_state_block_hash"
+            )
+            != (facts[a].get("basic") or {}).get(
+                "policy_state_block_hash"
+            )
+            or (facts[a].get("funding") or {}).get("policy_state_root")
+            != (facts[a].get("basic") or {}).get("policy_state_root")
+        )
         and "creation" in facts[a]
         and facts[a]["creation"].get("block") is not None
         and not is_validator(facts, a)
@@ -794,7 +886,7 @@ def stage_funding(client, facts, addresses, cutoff_block):
     direct = {}
     for a in todo:
         history = facts[a].get("history") or {}
-        direct[a] = (history.get("first_direct_value_received_tx"), history.get("first_direct_value_received_info") or {})
+        direct[a] = cutoff_direct_value_transfer(history, cutoff_block)
 
     # 3) balance binary search for addresses not funded at creation
     items = {}
@@ -839,7 +931,19 @@ def stage_funding(client, facts, addresses, cutoff_block):
 
     for a in todo:
         tx, direct_info = direct[a]
-        entry = {"direct_first_value_tx": tx, "direct_reliable": direct_info.get("reliable")}
+        basic = facts[a].get("basic") or {}
+        entry = {
+            "funding_evidence_version": 2,
+            "direct_first_value_tx": tx,
+            "direct_reliable": direct_info.get("reliable"),
+            "policy_state_block": cutoff_block,
+            "policy_state_block_hash": basic.get(
+                "policy_state_block_hash"
+            ),
+            "policy_state_root": basic.get("policy_state_root"),
+        }
+        if direct_info.get("post_cutoff_ignored"):
+            entry["post_cutoff_direct_tx_ignored"] = True
         if direct_info.get("error"):
             entry["direct_error"] = direct_info["error"]
         if balance_at_creation[a]:
@@ -911,8 +1015,22 @@ def stage_funding(client, facts, addresses, cutoff_block):
 # --------------------------------------------------------------------------
 
 
-def stage_probes(client, facts, addresses):
-    todo = [a for a in addresses if "probes" not in facts[a] and not is_validator(facts, a)]
+def stage_probes(client, facts, addresses, state_hex, policy_block):
+    state_number = int(state_hex, 16)
+    todo = [
+        address
+        for address in addresses
+        if (
+            facts[address].get("probe_evidence_version")
+            != PROBE_EVIDENCE_VERSION
+            or facts[address].get("probes_block") != state_number
+            or facts[address].get("probes_block_hash")
+            != policy_block["hash"]
+            or facts[address].get("probes_state_root")
+            != policy_block["stateRoot"]
+        )
+        and not is_validator(facts, address)
+    ]
     if not todo:
         return
     log(f"probes: {len(todo)} addresses x {len(PROBES)} probes")
@@ -920,7 +1038,12 @@ def stage_probes(client, facts, addresses):
     labels = [label for label, _, _ in PROBES]
     for a in todo:
         for label in labels:
-            calls.append(("eth_call", [{"to": a, "data": PROBE_CALLDATA[label]}, "latest"]))
+            calls.append(
+                (
+                    "eth_call",
+                    [{"to": a, "data": PROBE_CALLDATA[label]}, state_hex],
+                )
+            )
     results = client.batch(calls)
     per = len(labels)
     for idx, a in enumerate(todo):
@@ -934,6 +1057,10 @@ def stage_probes(client, facts, addresses):
             else:
                 probes[label] = {"data": result}
         facts[a]["probes"] = probes
+        facts[a]["probe_evidence_version"] = PROBE_EVIDENCE_VERSION
+        facts[a]["probes_block"] = state_number
+        facts[a]["probes_block_hash"] = policy_block["hash"]
+        facts[a]["probes_state_root"] = policy_block["stateRoot"]
 
 
 # --------------------------------------------------------------------------
@@ -974,13 +1101,31 @@ def main():
     client = lib.RpcClient(args.rpc, batch_size=args.batch_size, workers=args.workers)
     stages = args.only.split(",") if args.only else ["basic", "validator", "history", "creation", "funding", "probes", "delegations"]
     cutoff_hex = hex(args.cutoff_block)
+    policy_block = client.call(
+        "hmyv2_getBlockByNumber",
+        [args.cutoff_block, {"fullTx": False, "inclStaking": False}],
+    )
+    if not policy_block or not policy_block.get("hash"):
+        raise ValueError("could not resolve policy-state block")
     started = time.time()
     try:
         if "basic" in stages:
-            stage_basic(client, facts, addresses, cutoff_hex)
+            stage_basic(
+                client,
+                facts,
+                addresses,
+                cutoff_hex,
+                policy_block,
+            )
             lib.dump_json(args.output, facts)
         if "validator" in stages:
-            stage_validator(client, facts, addresses)
+            stage_validator(
+                client,
+                facts,
+                addresses,
+                args.cutoff_block,
+                policy_block,
+            )
             lib.dump_json(args.output, facts)
         if "history" in stages:
             stage_history(client, facts, addresses)
@@ -992,7 +1137,13 @@ def main():
             stage_funding(client, facts, addresses, args.cutoff_block)
             lib.dump_json(args.output, facts)
         if "probes" in stages:
-            stage_probes(client, facts, addresses)
+            stage_probes(
+                client,
+                facts,
+                addresses,
+                cutoff_hex,
+                policy_block,
+            )
             lib.dump_json(args.output, facts)
         if "delegations" in stages:
             stage_delegations(client, facts, addresses)

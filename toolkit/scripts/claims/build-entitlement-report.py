@@ -174,6 +174,12 @@ absent from the sparse exception output. The routing result remains on hold
 until every required exception destination and validator governor is supplied
 and every policy gate is resolved.
 
+Ordinary non-multisig contract claims go to `contract-recovery-custody`: one
+Safe or multisig that holds those funds until a verified claimant is paid. It
+is separate from the general treasury. The builder that writes those rows
+cannot send them to `treasury`. WONE and LayerZero reserves use their own
+holding addresses.
+
 ## Outputs
 
 - all-address claim ledger:

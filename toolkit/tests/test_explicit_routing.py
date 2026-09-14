@@ -8,6 +8,13 @@ import unittest
 from pathlib import Path
 
 
+CONTRACT_REVIEW = (
+    Path(__file__).parents[1] / "scripts" / "contract-review"
+)
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
+
+
 SCRIPT = (
     Path(__file__).parents[1]
     / "scripts"
@@ -21,6 +28,14 @@ POLICY_DECISION_FIELDS = (
 )
 
 
+def address(index):
+    return f"0x{index:040x}"
+
+
+def secure_key(index):
+    return "0x" + lib.keccak256(bytes.fromhex(address(index)[2:])).hex()
+
+
 def resolved_policy_decisions():
     return [
         {
@@ -29,6 +44,7 @@ def resolved_policy_decisions():
             "decision": "fixture decision",
         }
         for decision_id in (
+            "contract-recovery-custody",
             "layerzero-nativeoft-reconciliation",
             "rollback-exploit-proceeds",
             "wone-reserve-custody",
@@ -52,6 +68,7 @@ class ExplicitRoutingTest(unittest.TestCase):
             claim_fields = (
                 "secure_key",
                 "address",
+                "liquid_shard0_atto",
                 "wallet_airdrop_atto",
                 "staked_to_vault_atto",
                 "total_claim_atto",
@@ -61,8 +78,9 @@ class ExplicitRoutingTest(unittest.TestCase):
 
             def claim(index, wallet, staked, code_bearing=False):
                 return {
-                    "secure_key": f"0x{index:064x}",
-                    "address": f"0x{index:040x}",
+                    "secure_key": secure_key(index),
+                    "address": address(index),
+                    "liquid_shard0_atto": str(wallet),
                     "wallet_airdrop_atto": str(wallet),
                     "staked_to_vault_atto": str(staked),
                     "total_claim_atto": str(wallet + staked),
@@ -107,31 +125,31 @@ class ExplicitRoutingTest(unittest.TestCase):
                 share_fields,
                 [
                     {
-                        "validator_address": f"0x{10:040x}",
-                        "validator_secure_key": f"0x{10:064x}",
-                        "delegator_address": f"0x{1:040x}",
-                        "delegator_secure_key": f"0x{1:064x}",
+                        "validator_address": address(10),
+                        "validator_secure_key": secure_key(10),
+                        "delegator_address": address(1),
+                        "delegator_secure_key": secure_key(1),
                         "staked_to_vault_atto": "60",
                     },
                     {
-                        "validator_address": f"0x{11:040x}",
-                        "validator_secure_key": f"0x{11:064x}",
-                        "delegator_address": f"0x{1:040x}",
-                        "delegator_secure_key": f"0x{1:064x}",
+                        "validator_address": address(11),
+                        "validator_secure_key": secure_key(11),
+                        "delegator_address": address(1),
+                        "delegator_secure_key": secure_key(1),
                         "staked_to_vault_atto": "40",
                     },
                     {
-                        "validator_address": f"0x{10:040x}",
-                        "validator_secure_key": f"0x{10:064x}",
-                        "delegator_address": f"0x{2:040x}",
-                        "delegator_secure_key": f"0x{2:064x}",
+                        "validator_address": address(10),
+                        "validator_secure_key": secure_key(10),
+                        "delegator_address": address(2),
+                        "delegator_secure_key": secure_key(2),
                         "staked_to_vault_atto": "50",
                     },
                     {
-                        "validator_address": f"0x{11:040x}",
-                        "validator_secure_key": f"0x{11:064x}",
-                        "delegator_address": f"0x{5:040x}",
-                        "delegator_secure_key": f"0x{5:064x}",
+                        "validator_address": address(11),
+                        "validator_secure_key": secure_key(11),
+                        "delegator_address": address(5),
+                        "delegator_secure_key": secure_key(5),
                         "staked_to_vault_atto": "20",
                     },
                 ],
@@ -141,10 +159,10 @@ class ExplicitRoutingTest(unittest.TestCase):
                 share_fields,
                 [
                     {
-                        "validator_address": f"0x{11:040x}",
-                        "validator_secure_key": f"0x{11:064x}",
-                        "delegator_address": f"0x{4:040x}",
-                        "delegator_secure_key": f"0x{4:064x}",
+                        "validator_address": address(11),
+                        "validator_secure_key": secure_key(11),
+                        "delegator_address": address(4),
+                        "delegator_secure_key": secure_key(4),
                         "staked_to_vault_atto": "20",
                     }
                 ],
@@ -159,13 +177,13 @@ class ExplicitRoutingTest(unittest.TestCase):
                 ),
                 [
                     {
-                        "validator_address": f"0x{10:040x}",
-                        "validator_secure_key": f"0x{10:064x}",
+                        "validator_address": address(10),
+                        "validator_secure_key": secure_key(10),
                         "vault_assets_atto": "110",
                     },
                     {
-                        "validator_address": f"0x{11:040x}",
-                        "validator_secure_key": f"0x{11:064x}",
+                        "validator_address": address(11),
+                        "validator_secure_key": secure_key(11),
                         "vault_assets_atto": "80",
                     },
                 ],
@@ -187,6 +205,12 @@ class ExplicitRoutingTest(unittest.TestCase):
                         "status": "ready",
                         "notes": "",
                     },
+                    {
+                        "destination_id": "contract-recovery-custody",
+                        "destination_address": f"0x{20:040x}",
+                        "status": "ready",
+                        "notes": "",
+                    },
                 ],
             )
             routes = root / "routes.csv"
@@ -201,6 +225,9 @@ class ExplicitRoutingTest(unittest.TestCase):
                 "reason",
                 "evidence",
                 "notes",
+                "policy_state_block",
+                "policy_state_block_hash",
+                "policy_state_root",
             )
             write_csv(
                 routes,
@@ -222,13 +249,18 @@ class ExplicitRoutingTest(unittest.TestCase):
                         "route_id": "contract-recovery",
                         "priority": "10",
                         "source_address": f"0x{2:040x}",
-                        "destination_id": "recovery",
+                        "destination_id": "contract-recovery-custody",
                         "destination_address": "",
                         "amount_atto": "ALL",
                         "allocation_method": "wallet_first_pro_rata_vault",
-                        "reason": "test",
+                        "reason": (
+                            "non_multisig_contract_recovery_custody"
+                        ),
                         "evidence": "",
                         "notes": "",
+                        "policy_state_block": "10",
+                        "policy_state_block_hash": "0xabc",
+                        "policy_state_root": "0xdef",
                     },
                     {
                         "route_id": "excluded-treasury",
@@ -236,7 +268,7 @@ class ExplicitRoutingTest(unittest.TestCase):
                         "source_address": f"0x{3:040x}",
                         "destination_id": "treasury",
                         "destination_address": "",
-                        "amount_atto": "ALL",
+                        "amount_atto": "SHARD0_LIQUID",
                         "allocation_method": "wallet_first_pro_rata_vault",
                         "reason": "test",
                         "evidence": "",
@@ -283,8 +315,20 @@ class ExplicitRoutingTest(unittest.TestCase):
             validator_accounts = root / "validator-accounts.csv"
             write_csv(
                 validator_accounts,
-                ("address",),
-                [{"address": f"0x{5:040x}"}],
+                (
+                    "address",
+                    "policy_state_block",
+                    "policy_state_block_hash",
+                    "policy_state_root",
+                ),
+                [
+                    {
+                        "address": f"0x{5:040x}",
+                        "policy_state_block": "10",
+                        "policy_state_block_hash": "0xabc",
+                        "policy_state_root": "0xdef",
+                    }
+                ],
             )
             policy_decisions = root / "policy-decisions.csv"
             write_csv(
@@ -442,7 +486,7 @@ class PolicyDecisionGateTest(unittest.TestCase):
         rows.append({"decision_id": "additional-review", "status": "pending"})
         self.assertEqual(
             self.load_decisions(rows),
-            ["layerzero-nativeoft-reconciliation", "additional-review"],
+            [rows[0]["decision_id"], "additional-review"],
         )
 
     def test_invalid_schema_is_rejected(self):
@@ -484,13 +528,25 @@ class PolicyDecisionGateTest(unittest.TestCase):
                     "layerzero-nativeoft-reconciliation",
                 ],
             )
-            self.assertTrue((root / "bridge-reserves.csv").is_file())
+            with (root / "bridge-reserves.csv").open(newline="") as source:
+                reserve_route_ids = {
+                    row["route_id"] for row in csv.DictReader(source)
+                }
+            self.assertEqual(
+                reserve_route_ids,
+                {
+                    "wone-reserve-custody",
+                    "layerzero-nativeoft-bsc-custody",
+                    "layerzero-nativeoft-ethereum-custody",
+                },
+            )
             with (root / "destinations.csv").open(newline="") as source:
                 destination_ids = {
                     row["destination_id"] for row in csv.DictReader(source)
                 }
             self.assertIn("wone-reserve-custody", destination_ids)
             self.assertIn("layerzero-nativeoft-custody", destination_ids)
+            self.assertIn("contract-recovery-custody", destination_ids)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@
 - Safe proxies: resolve singleton (masterCopy) VERSION() and code hash so
   every Safe can be grouped by singleton even when it is not a canonical
   Safe deployment (e.g. the Harmony multisig.harmony.one fork).
-- NFT contracts: count distinct current owners by enumerating token ids
+- NFT contracts: count distinct policy-state owners by enumerating token ids
   through Multicall3 ``aggregate3`` (ERC721Enumerable ``tokenByIndex`` when
   available, otherwise sequential ids 0..N and 1..N probed with
   ``ownerOf``). ERC-1155 balances cannot be enumerated from state without
@@ -26,6 +26,15 @@ from contract_review_lib import decode_address, decode_bool, decode_string, deco
 
 MULTICALL3 = "0xca11bde05977b3631167028862be2a173976ca11"
 ZERO = "0x0000000000000000000000000000000000000000"
+ENRICHMENT_EVIDENCE_VERSION = 2
+
+
+def is_verified_validator(facts):
+    validator = facts.get("validator") or {}
+    return bool(
+        validator.get("is_validator")
+        and validator.get("rlp_wrapper_matches")
+    )
 
 
 def parse_args():
@@ -34,6 +43,7 @@ def parse_args():
     parser.add_argument("--selectors", help="selectors.json from selector-census.py (enables SmartVault enrichment)")
     parser.add_argument("--output", required=True)
     parser.add_argument("--rpc", default="https://a.api.s0.t.hmny.io")
+    parser.add_argument("--state-block", required=True, type=int)
     parser.add_argument("--max-tokens", type=int, default=20000, help="max token ids enumerated per NFT contract")
     parser.add_argument("--chunk", type=int, default=400, help="ownerOf calls per Multicall3 aggregate3")
     parser.add_argument("--workers", type=int, default=4)
@@ -107,9 +117,12 @@ def decode_aggregate3(hexdata):
     return out
 
 
-def multicall(client, calls):
+def multicall(client, calls, state_tag):
     data = encode_aggregate3(calls)
-    result, error = client.call_soft("eth_call", [{"to": MULTICALL3, "data": data}, "latest"])
+    result, error = client.call_soft(
+        "eth_call",
+        [{"to": MULTICALL3, "data": data}, state_tag],
+    )
     if error or not result or result == "0x":
         return None
     return decode_aggregate3(result)
@@ -118,22 +131,34 @@ def multicall(client, calls):
 # ---- enrichment tasks ----------------------------------------------------------
 
 
-def resolve_symbols(client, addresses):
+def resolve_symbols(client, addresses, state_tag):
     out = {}
     addresses = sorted(set(a for a in addresses if a))
     if not addresses:
         return out
     calls = []
     for a in addresses:
-        calls.append(("eth_call", [{"to": a, "data": lib.selector("symbol()")}, "latest"]))
+        calls.append(
+            (
+                "eth_call",
+                [{"to": a, "data": lib.selector("symbol()")}, state_tag],
+            )
+        )
     results = client.batch(calls)
     for a, (r, e) in zip(addresses, results):
         out[a] = (decode_string(r) or "").replace("\x00", "").strip() if r and r != "0x" else ""
     return out
 
 
-def nft_owner_census(client, address, facts, max_tokens, chunk):
-    """Count distinct current owners for an ERC-721 contract."""
+def nft_owner_census(
+    client,
+    address,
+    facts,
+    max_tokens,
+    chunk,
+    state_tag,
+):
+    """Count distinct policy-state owners for an ERC-721 contract."""
     total_data = probe_data(facts, "erc20_totalSupply")
     total = decode_uint(total_data) if total_data and lib.word_count(total_data) == 1 else None
     enumerable = probe_bool(facts, "erc165_721enum") is True or bool(probe_data(facts, "nft_tokenByIndex_0"))
@@ -150,7 +175,7 @@ def nft_owner_census(client, address, facts, max_tokens, chunk):
         ids = []
         for start in range(0, n, chunk):
             calls = [(address, lib.encode_call("tokenByIndex(uint256)", ("uint256", i))) for i in range(start, min(n, start + chunk))]
-            res = multicall(client, calls)
+            res = multicall(client, calls, state_tag)
             if res is None:
                 method += " (multicall failed)"
                 break
@@ -166,7 +191,7 @@ def nft_owner_census(client, address, facts, max_tokens, chunk):
     for start in range(0, len(token_ids), chunk):
         batch_ids = token_ids[start:start + chunk]
         calls = [(address, lib.encode_call("ownerOf(uint256)", ("uint256", i))) for i in batch_ids]
-        res = multicall(client, calls)
+        res = multicall(client, calls, state_tag)
         if res is None:
             method += " (multicall failed)"
             break
@@ -200,12 +225,33 @@ def main():
     facts_all = lib.load_json(args.facts, {})
     extra = lib.load_json(args.output, {}) or {}
     client = lib.RpcClient(args.rpc, batch_size=40, workers=args.workers)
+    state_tag = hex(args.state_block)
+    policy_block = client.call(
+        "hmyv2_getBlockByNumber",
+        [args.state_block, {"fullTx": False, "inclStaking": False}],
+    )
+    if not policy_block or not policy_block.get("hash"):
+        raise ValueError("could not resolve policy-state block")
+    metadata = extra.get("_policy_state") or {}
+    if (
+        metadata.get("schema_version") != ENRICHMENT_EVIDENCE_VERSION
+        or metadata.get("block") != args.state_block
+        or metadata.get("block_hash") != policy_block["hash"]
+        or metadata.get("state_root") != policy_block["stateRoot"]
+    ):
+        extra = {}
+    extra["_policy_state"] = {
+        "schema_version": ENRICHMENT_EVIDENCE_VERSION,
+        "block": args.state_block,
+        "block_hash": policy_block["hash"],
+        "state_root": policy_block["stateRoot"],
+    }
 
     # 1) AMM pair token symbols
     pair_tokens = set()
     pairs = {}
     for address, facts in facts_all.items():
-        if (facts.get("validator") or {}).get("is_validator"):
+        if is_verified_validator(facts):
             continue
         t0 = probe_address(facts, "amm_token0")
         t1 = probe_address(facts, "amm_token1")
@@ -213,7 +259,7 @@ def main():
             pairs[address] = (t0, t1)
             pair_tokens.update([t0, t1])
     log(f"resolving symbols for {len(pair_tokens)} pair tokens")
-    symbols = resolve_symbols(client, pair_tokens)
+    symbols = resolve_symbols(client, pair_tokens, state_tag)
     for address, (t0, t1) in pairs.items():
         extra.setdefault(address, {})["pair_symbols"] = f"{symbols.get(t0) or t0}/{symbols.get(t1) or t1}"
         extra[address]["pair_token0"] = t0
@@ -233,8 +279,13 @@ def main():
         singletons = sorted(singletons)
         calls = []
         for s in singletons:
-            calls.append(("eth_call", [{"to": s, "data": lib.selector("VERSION()")}, "latest"]))
-            calls.append(("eth_getCode", [s, "latest"]))
+            calls.append(
+                (
+                    "eth_call",
+                    [{"to": s, "data": lib.selector("VERSION()")}, state_tag],
+                )
+            )
+            calls.append(("eth_getCode", [s, state_tag]))
         results = client.batch(calls)
         for i, s in enumerate(singletons):
             version, _ = results[2 * i]
@@ -252,7 +303,9 @@ def main():
     vaults = []
     for address, facts in facts_all.items():
         entry = selectors.get(address) or {}
-        sigs = set(entry.get("implementation_signatures") or []) | set(entry.get("own_signatures") or [])
+        sigs = set(
+            entry.get("implementation_policy_signatures") or []
+        ) | set(entry.get("own_policy_signatures") or [])
         if "setupHOTP2FA(string,bytes32,uint8,uint256)" in sigs or "getRootHashes()" in sigs:
             vaults.append(address)
     log(f"resolving {len(vaults)} SmartVault wallets")
@@ -260,7 +313,12 @@ def main():
         calls = []
         for a in vaults:
             for sig in ("owner()", "getOwner()", "getGuardians()", "walletFactory()", "wallet()", "isRecovering()", "locked()", "recoveryDelay()"):
-                calls.append(("eth_call", [{"to": a, "data": lib.selector(sig)}, "latest"]))
+                calls.append(
+                    (
+                        "eth_call",
+                        [{"to": a, "data": lib.selector(sig)}, state_tag],
+                    )
+                )
         results = client.batch(calls)
         per = 8
         for i, a in enumerate(vaults):
@@ -281,7 +339,7 @@ def main():
     # 3) NFT owner census
     nfts = []
     for address, facts in facts_all.items():
-        if (facts.get("validator") or {}).get("is_validator"):
+        if is_verified_validator(facts):
             continue
         s = set((facts.get("basic") or {}).get("bytecode_selectors") or [])
         is721 = probe_bool(facts, "erc165_721") is True or ("sel_ownerOf" in s and "sel_setApprovalForAll" in s and ("sel_safeTransferFrom721" in s or "sel_safeTransferFrom721data" in s))
@@ -292,7 +350,9 @@ def main():
         if probe_data(facts, "safe_getOwners"):
             continue
         entry = selectors.get(address) or {}
-        sigs = set(entry.get("implementation_signatures") or []) | set(entry.get("own_signatures") or [])
+        sigs = set(
+            entry.get("implementation_policy_signatures") or []
+        ) | set(entry.get("own_policy_signatures") or [])
         if "punkIndexToAddress(uint256)" in sigs and "nft_owner_count" not in (extra.get(address) or {}):
             # CryptoPunks-style market: owners live in punkIndexToAddress(0..totalSupply-1)
             total_data = probe_data(facts, "erc20_totalSupply")
@@ -301,7 +361,7 @@ def main():
             enumerated = 0
             for start in range(0, min(total, args.max_tokens), args.chunk):
                 calls = [(address, lib.encode_call("punkIndexToAddress(uint256)", ("uint256", i))) for i in range(start, min(total, start + args.chunk))]
-                res = multicall(client, calls)
+                res = multicall(client, calls, state_tag)
                 if res is None:
                     break
                 for ok, data in res:
@@ -327,7 +387,14 @@ def main():
     log(f"NFT owner census for {len(nfts)} ERC-721 contracts")
     for i, address in enumerate(nfts):
         try:
-            result = nft_owner_census(client, address, facts_all[address], args.max_tokens, args.chunk)
+            result = nft_owner_census(
+                client,
+                address,
+                facts_all[address],
+                args.max_tokens,
+                args.chunk,
+                state_tag,
+            )
         except lib.RpcError as error:
             result = {"nft_owner_count": "", "nft_owner_method": f"error: {error}", "nft_tokens_enumerated": ""}
         extra.setdefault(address, {}).update(result)

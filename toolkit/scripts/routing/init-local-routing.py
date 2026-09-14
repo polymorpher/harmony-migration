@@ -74,9 +74,62 @@ def main():
         "multisigs.csv",
         "lost-wallets.csv",
         "frozen-wallets.csv",
-        "bridge-reserves.csv",
     ):
         write_csv(directory / name, ROUTE_FIELDS, ())
+    write_csv(
+        directory / "bridge-reserves.csv",
+        ROUTE_FIELDS,
+        (
+            {
+                "route_id": "wone-reserve-custody",
+                "priority": "400",
+                "source_address": (
+                    "0xcf664087a5bb0237a0bad6742852ec6c8d69a27a"
+                ),
+                "destination_id": "wone-reserve-custody",
+                "destination_address": "",
+                "amount_atto": "SHARD0_LIQUID",
+                "allocation_method": "wallet_first_pro_rata_vault",
+                "reason": "wone_reserve_custody",
+                "evidence": (
+                    "docs/claim-routing.md#wone-reserve-custody"
+                ),
+                "notes": "dedicated reserve multisig address pending",
+            },
+            {
+                "route_id": "layerzero-nativeoft-bsc-custody",
+                "priority": "400",
+                "source_address": (
+                    "0x5b18a4e73f9a4fe337a072516b317863ad3046aa"
+                ),
+                "destination_id": "layerzero-nativeoft-custody",
+                "destination_address": "",
+                "amount_atto": "SHARD0_LIQUID",
+                "allocation_method": "wallet_first_pro_rata_vault",
+                "reason": "layerzero_nativeoft_reconciliation_hold",
+                "evidence": (
+                    "docs/claim-routing.md#layerzero-nativeoft-reconciliation"
+                ),
+                "notes": "remote supply and message reconciliation pending",
+            },
+            {
+                "route_id": "layerzero-nativeoft-ethereum-custody",
+                "priority": "400",
+                "source_address": (
+                    "0x905582f21fb9855c809d5b8933272a292dfbb138"
+                ),
+                "destination_id": "layerzero-nativeoft-custody",
+                "destination_address": "",
+                "amount_atto": "SHARD0_LIQUID",
+                "allocation_method": "wallet_first_pro_rata_vault",
+                "reason": "layerzero_nativeoft_reconciliation_hold",
+                "evidence": (
+                    "docs/claim-routing.md#layerzero-nativeoft-reconciliation"
+                ),
+                "notes": "remote supply and message reconciliation pending",
+            },
+        ),
+    )
     write_csv(
         directory / "destinations.csv",
         ("destination_id", "destination_address", "status", "notes"),
@@ -88,6 +141,16 @@ def main():
                 "notes": (
                     "fill the approved Ethereum treasury address before "
                     "distribution"
+                ),
+            },
+            {
+                "destination_id": "contract-recovery-custody",
+                "destination_address": "",
+                "status": "hold",
+                "notes": (
+                    "specific Safe or multisig address that holds contract "
+                    "funds for verified claimants; separate from general "
+                    "treasury"
                 ),
             },
             {
@@ -127,6 +190,22 @@ def main():
                 "notes": (
                     "decide whether identified proceeds remain ordinary "
                     "state claims or are frozen/routed"
+                ),
+            },
+            {
+                "decision_id": "contract-recovery-custody",
+                "status": "resolved",
+                "decision": (
+                    "send generic non-multisig contract funds to a specific "
+                    "Safe or multisig holding address that is separate from "
+                    "general treasury"
+                ),
+                "evidence": (
+                    "docs/claim-routing.md#explicit-routing-files"
+                ),
+                "notes": (
+                    "verified claimants are paid from that existing balance; "
+                    "no additional ONE is created"
                 ),
             },
             {
