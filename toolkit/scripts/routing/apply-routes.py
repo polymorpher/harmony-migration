@@ -20,6 +20,10 @@ import contract_review_lib as lib  # noqa: E402
 EMPTY_CODE_HASH = (
     "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
 )
+REQUIRED_POLICY_DECISIONS = {
+    "rollback-exploit-proceeds",
+    "wone-layerzero-double-issue",
+}
 ROUTING_EXCEPTION_FIELDS = (
     "component",
     "source_secure_key",
@@ -278,6 +282,10 @@ def load_policy_decisions(path):
     seen = set()
     with open(path, newline="") as source:
         reader = csv.DictReader(source)
+        required = {"decision_id", "status", "decision"}
+        missing = required - set(reader.fieldnames or ())
+        if missing:
+            raise ValueError(f"{path}: missing fields {sorted(missing)}")
         for line, row in enumerate(reader, start=2):
             decision_id = row["decision_id"].strip()
             status = row["status"].strip()
@@ -292,6 +300,11 @@ def load_policy_decisions(path):
                 )
             if status == "pending":
                 pending.append(decision_id)
+    missing = REQUIRED_POLICY_DECISIONS - seen
+    if missing:
+        raise ValueError(
+            f"{path}: missing required policy decisions {sorted(missing)}"
+        )
     return pending
 
 

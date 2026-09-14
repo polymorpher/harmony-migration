@@ -1,4 +1,5 @@
 import csv
+import importlib.util
 import json
 import subprocess
 import sys
@@ -13,6 +14,23 @@ SCRIPT = (
     / "routing"
     / "apply-routes.py"
 )
+
+POLICY_DECISION_FIELDS = (
+    "decision_id", "status", "decision", "evidence", "notes"
+)
+
+
+def resolved_policy_decisions():
+    return [
+        {
+            "decision_id": decision_id,
+            "status": "resolved",
+            "decision": "fixture decision",
+        }
+        for decision_id in (
+            "rollback-exploit-proceeds", "wone-layerzero-double-issue"
+        )
+    ]
 
 
 def write_csv(path, fields, rows):
@@ -268,22 +286,8 @@ class ExplicitRoutingTest(unittest.TestCase):
             policy_decisions = root / "policy-decisions.csv"
             write_csv(
                 policy_decisions,
-                (
-                    "decision_id",
-                    "status",
-                    "decision",
-                    "evidence",
-                    "notes",
-                ),
-                [
-                    {
-                        "decision_id": "test-policy",
-                        "status": "resolved",
-                        "decision": "fixture",
-                        "evidence": "",
-                        "notes": "",
-                    }
-                ],
+                POLICY_DECISION_FIELDS,
+                resolved_policy_decisions(),
             )
             exceptions = root / "routing-exceptions.csv"
             governor_exceptions = root / "governor-exceptions.csv"
@@ -386,6 +390,70 @@ class ExplicitRoutingTest(unittest.TestCase):
                 governor_rows[0]["exception_type"],
                 "explicit_governor_route",
             )
+
+
+class PolicyDecisionGateTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("apply_routes", SCRIPT)
+        cls.routing = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.routing)
+
+    def load_decisions(self, rows, fields=POLICY_DECISION_FIELDS):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "policy-decisions.csv"
+            write_csv(path, fields, rows)
+            return self.routing.load_policy_decisions(path)
+
+    def test_header_only_file_rejects_missing_decisions(self):
+        with self.assertRaisesRegex(
+            ValueError, "missing required policy decisions"
+        ):
+            self.load_decisions([])
+
+    def test_each_required_decision_must_be_present(self):
+        rows = resolved_policy_decisions()
+        for missing in rows:
+            with self.subTest(decision_id=missing["decision_id"]):
+                with self.assertRaisesRegex(ValueError, missing["decision_id"]):
+                    self.load_decisions([row for row in rows if row != missing])
+
+    def test_unrelated_resolved_decision_cannot_replace_required_decisions(self):
+        with self.assertRaisesRegex(
+            ValueError, "missing required policy decisions"
+        ):
+            self.load_decisions(
+                [{
+                    "decision_id": "unrelated",
+                    "status": "resolved",
+                    "decision": "fixture",
+                }]
+            )
+
+    def test_complete_resolved_decisions_have_no_pending_gates(self):
+        self.assertEqual(self.load_decisions(resolved_policy_decisions()), [])
+
+    def test_required_and_additional_pending_decisions_remain_gates(self):
+        rows = resolved_policy_decisions()
+        rows[0].update(status="pending", decision="")
+        rows.append({"decision_id": "additional-review", "status": "pending"})
+        self.assertEqual(
+            self.load_decisions(rows),
+            ["rollback-exploit-proceeds", "additional-review"],
+        )
+
+    def test_invalid_schema_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "missing fields"):
+            self.load_decisions([], fields=("decision_id",))
+
+    def test_public_example_retains_required_pending_decisions(self):
+        example = (
+            SCRIPT.parents[3] / "routing" / "policy-decisions.example.csv"
+        )
+        self.assertEqual(
+            self.routing.load_policy_decisions(example),
+            ["rollback-exploit-proceeds", "wone-layerzero-double-issue"],
+        )
 
 
 if __name__ == "__main__":

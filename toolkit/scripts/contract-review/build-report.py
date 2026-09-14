@@ -290,7 +290,14 @@ def main():
         dates = sorted(r["creation_time_utc"] for r in rs)
         rows.append([ver, f"`{mc}`", label[:90], len(rs), one(sum(D(r["total_claim_one"]) for r in rs)), f"{dates[0][:10]} .. {dates[-1][:10]}"])
     L.append(table(["Safe VERSION()", "singleton (storage slot 0)", "singleton identification", "wallets", "total claim ONE", "creation range"], rows))
-    L.append(f"\nThreshold/owner configurations: {', '.join(f'{k} x{v}' for k, v in Counter(f'{r['threshold']}-of-{r['owner_count']}' for r in multisig).most_common())}.\n")
+    configurations = Counter(
+        f"{r['threshold']}-of-{r['owner_count']}" for r in multisig
+    )
+    configuration_summary = ", ".join(
+        f"{configuration} x{count}"
+        for configuration, count in configurations.most_common()
+    )
+    L.append(f"\nThreshold/owner configurations: {configuration_summary}.\n")
     L.append("Detection: `getOwners()` returns a non-empty address array, `getThreshold()` is within `[1, owners]`, `VERSION()` returns a string, and storage slot 0 holds the singleton "
              "(Gnosis Safe proxies store `masterCopy` at slot 0 in every version). The Harmony `multisig.harmony.one` singleton returns VERSION `1.2.0` but is a 16,040-byte build that differs "
              "from the canonical 24,410-byte GnosisSafe v1.2.0 runtime, i.e. a recompiled/forked build; all 66 of its proxies were created through factory `0x4f9b1dEf3a0f6747bF8C870a27D3DeCdf029100e`.\n")
