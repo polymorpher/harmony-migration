@@ -8,6 +8,13 @@ import hashlib
 import itertools
 import json
 import os
+import sys
+from pathlib import Path
+
+
+CONTRACT_REVIEW = Path(__file__).resolve().parents[1] / "contract-review"
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
 
 
 def parse_args():
@@ -50,6 +57,16 @@ def main():
                 )
             if database_row != rpc_row:
                 raise ValueError(f"delegation rows differ at line {line}")
+            lib.require_address_secure_key(
+                database_row["validator_address"],
+                database_row["validator_secure_key"],
+                f"delegation line {line} validator",
+            )
+            lib.require_address_secure_key(
+                database_row["delegator_address"],
+                database_row["delegator_secure_key"],
+                f"delegation line {line} delegator",
+            )
             amount = int(database_row["staked_to_vault_atto"])
             if amount <= 0:
                 raise ValueError(

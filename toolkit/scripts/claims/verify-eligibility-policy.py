@@ -7,6 +7,13 @@ import csv
 import hashlib
 import json
 import os
+import sys
+from pathlib import Path
+
+
+CONTRACT_REVIEW = Path(__file__).resolve().parents[1] / "contract-review"
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
 
 
 EMPTY_CODE_HASH = (
@@ -55,11 +62,16 @@ def file_sha256(path):
 
 
 def code_bearing(row):
-    return any(
-        row[field]
-        and row[field].lower() != EMPTY_CODE_HASH
+    if not row.get("code_hash_shard0", "").strip():
+        return None
+    hashes = [
+        row.get(field, "").strip().lower()
         for field in ("code_hash_shard0", "code_hash_shard1")
-    )
+        if row.get(field, "").strip()
+    ]
+    if not hashes:
+        return None
+    return any(value != EMPTY_CODE_HASH for value in hashes)
 
 
 def load_automatic_code_addresses(paths):
@@ -104,6 +116,11 @@ def read_category(path, expected, automatic_code):
             if key in keys:
                 raise ValueError(f"{path}:{line}: duplicate key")
             keys.add(key)
+            address = lib.require_address_secure_key(
+                row["address"],
+                key,
+                f"{path}:{line}",
+            )
             total_claim = int(row["total_claim_atto"])
             wallet = int(row["wallet_airdrop_atto"])
             vault = int(row["staked_to_vault_atto"])
@@ -118,7 +135,8 @@ def read_category(path, expected, automatic_code):
             if total_claim < 1000 * 10**18:
                 raise ValueError(f"{path}:{line}: below threshold")
             is_contract = code_bearing(row)
-            address = row["address"].lower()
+            if is_contract is None:
+                raise ValueError(f"{path}:{line}: unresolved code metadata")
             if expected == "automatic":
                 if is_contract and address not in automatic_code:
                     raise ValueError(
@@ -206,13 +224,22 @@ def main():
     expected_excluded_keys = set()
     exact = 0
     with open(args.input, newline="") as source:
-        for row in csv.DictReader(source):
+        for line, row in enumerate(csv.DictReader(source), start=2):
+            address = lib.require_address_secure_key(
+                row["address"],
+                row["secure_key"],
+                f"{args.input}:{line}",
+            )
+            if code_bearing(row) is None:
+                raise ValueError(
+                    f"{args.input}:{line}: unresolved code metadata"
+                )
             value = int(row["total_claim_atto"])
             if value == 1000 * 10**18:
                 exact += 1
             if value >= 1000 * 10**18:
                 expected_keys.add(row["secure_key"].lower())
-                if row["address"].lower() in excluded_addresses:
+                if address in excluded_addresses:
                     expected_excluded_keys.add(row["secure_key"].lower())
     actual_keys = (
         automatic["keys"] | contracts["keys"] | excluded["keys"]

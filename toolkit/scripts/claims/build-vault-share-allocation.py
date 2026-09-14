@@ -7,8 +7,15 @@ import csv
 import hashlib
 import json
 import os
+import sys
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
+
+
+CONTRACT_REVIEW = Path(__file__).resolve().parents[1] / "contract-review"
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
 
 
 ATTO_PER_ONE = 10**18
@@ -125,6 +132,11 @@ def load_category(path, category, claims, assignments):
                 raise ValueError(f"{path}:{line}: unknown secure key")
             if key in assignments:
                 raise ValueError(f"{path}:{line}: category overlap")
+            address = lib.require_address_secure_key(
+                row["address"],
+                key,
+                f"{path}:{line}",
+            )
             total_claim, wallet, staked = require_allocation_fields(
                 row, f"{path}:{line}"
             )
@@ -133,6 +145,7 @@ def load_category(path, category, claims, assignments):
                 total_claim != expected["total_claim"]
                 or wallet != expected["wallet"]
                 or staked != expected["staked"]
+                or address != expected["address"]
             ):
                 raise ValueError(f"{path}:{line}: claim mismatch")
             assignments[key] = category
@@ -210,6 +223,16 @@ def main():
         for line, row in enumerate(reader, start=2):
             validator_key = row["validator_secure_key"].lower()
             delegator_key = row["delegator_secure_key"].lower()
+            lib.require_address_secure_key(
+                row["validator_address"],
+                validator_key,
+                f"{args.delegations}:{line} validator",
+            )
+            lib.require_address_secure_key(
+                row["delegator_address"],
+                delegator_key,
+                f"{args.delegations}:{line} delegator",
+            )
             pair = (validator_key, delegator_key)
             if pair in seen_pairs:
                 raise ValueError(

@@ -7,7 +7,14 @@ import csv
 import hashlib
 import json
 import os
+import sys
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
+
+
+CONTRACT_REVIEW = Path(__file__).resolve().parents[1] / "contract-review"
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
 
 
 ATTO_PER_ONE = 10**18
@@ -120,6 +127,8 @@ def add_totals(totals, row):
 
 
 def code_bearing(row):
+    if not row.get("code_hash_shard0", "").strip():
+        return None
     hashes = [
         row.get(field, "").strip().lower()
         for field in ("code_hash_shard0", "code_hash_shard1")
@@ -198,6 +207,14 @@ def main():
                 previous = key
                 if not row["address"]:
                     raise ValueError(f"unresolved address at line {line}")
+                lib.require_address_secure_key(
+                    row["address"], key, f"input line {line}"
+                )
+                has_code = code_bearing(row)
+                if has_code is None:
+                    raise ValueError(
+                        f"unresolved code metadata at line {line}"
+                    )
                 value = int(row["total_claim_atto"])
                 wallet = int(row["wallet_airdrop_atto"])
                 vault = int(row["staked_to_vault_atto"])
@@ -220,11 +237,6 @@ def main():
                     below_threshold_rows += 1
                     continue
                 threshold_rows += 1
-                has_code = code_bearing(row)
-                if has_code is None:
-                    raise ValueError(
-                        f"unresolved code metadata at line {line}"
-                    )
                 address = row["address"].lower()
                 if address in excluded:
                     label = "excluded_address"

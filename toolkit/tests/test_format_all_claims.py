@@ -7,12 +7,21 @@ import unittest
 from pathlib import Path
 
 
+CONTRACT_REVIEW = (
+    Path(__file__).parents[1] / "scripts" / "contract-review"
+)
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
+
+
 SCRIPT = (
     Path(__file__).parents[1]
     / "scripts"
     / "claims"
     / "format-all-claims.py"
 )
+ADDRESS = "0x0000000000000000000000000000000000000001"
+SECURE_KEY = "0x" + lib.keccak256(bytes.fromhex(ADDRESS[2:])).hex()
 
 
 class FormatAllClaimsTest(unittest.TestCase):
@@ -45,8 +54,8 @@ class FormatAllClaimsTest(unittest.TestCase):
                 writer.writeheader()
                 writer.writerow(
                     {
-                        "secure_key": "0x01",
-                        "address": "0x0000000000000000000000000000000000000001",
+                        "secure_key": SECURE_KEY,
+                        "address": ADDRESS,
                         "liquid_shard0_atto": "1000000000000000000",
                         "liquid_shard1_atto": "2000000000000000000",
                         "liquid_total_atto": "3000000000000000000",
