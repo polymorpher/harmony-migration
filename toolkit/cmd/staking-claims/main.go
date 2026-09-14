@@ -148,15 +148,46 @@ func readValidatorList(db ethdb.KeyValueReader) []common.Address {
 	return addresses
 }
 
-func validatorCode(db ethdb.KeyValueReader, hash common.Hash) (code []byte, prefixed bool) {
+func optionalValue(
+	db ethdb.KeyValueReader,
+	key []byte,
+) ([]byte, bool, error) {
+	exists, err := db.Has(key)
+	if err != nil {
+		return nil, false, err
+	}
+	if !exists {
+		return nil, false, nil
+	}
+	encoded, err := db.Get(key)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(encoded) == 0 {
+		return nil, false, fmt.Errorf("present key has empty value")
+	}
+	return encoded, true, nil
+}
+
+func validatorCode(
+	db ethdb.KeyValueReader,
+	hash common.Hash,
+) (code []byte, prefixed bool, err error) {
 	key := append([]byte("vc"), hash.Bytes()...)
-	if encoded, err := db.Get(key); err == nil && len(encoded) != 0 {
-		return encoded, true
+	if encoded, exists, err := optionalValue(db, key); err != nil {
+		return nil, false, err
+	} else if exists {
+		return encoded, true, nil
 	}
-	if encoded, err := db.Get(hash.Bytes()); err == nil && len(encoded) != 0 {
-		return encoded, false
+	if encoded, exists, err := optionalValue(
+		db,
+		hash.Bytes(),
+	); err != nil {
+		return nil, false, err
+	} else if exists {
+		return encoded, false, nil
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 func requireNonNegative(value *big.Int, name string, validator, delegator common.Address) {
@@ -400,7 +431,15 @@ func main() {
 			if codeHash == types.EmptyCodeHash {
 				continue
 			}
-			if encoded, prefixed := validatorCode(db, codeHash); len(encoded) != 0 {
+			encoded, prefixed, err := validatorCode(db, codeHash)
+			if err != nil {
+				fatalf(
+					"read validator code %s: %v",
+					codeHash.Hex(),
+					err,
+				)
+			}
+			if len(encoded) != 0 {
 				processValidator(common.BytesToHash(iter.Key), codeHash, encoded, prefixed)
 			}
 		}
@@ -418,7 +457,14 @@ func main() {
 			if codeHash == types.EmptyCodeHash {
 				fatalf("validator %s has empty code hash", validatorAddress.Hex())
 			}
-			encoded, prefixed := validatorCode(db, codeHash)
+			encoded, prefixed, err := validatorCode(db, codeHash)
+			if err != nil {
+				fatalf(
+					"read validator code %s: %v",
+					codeHash.Hex(),
+					err,
+				)
+			}
 			if !processValidator(
 				crypto.Keccak256Hash(validatorAddress.Bytes()),
 				codeHash,

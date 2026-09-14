@@ -124,6 +124,68 @@ func cxLookupKey(hash common.Hash) []byte {
 	return key
 }
 
+func canonicalHashKey(number uint64) []byte {
+	key := make([]byte, 0, 10)
+	key = append(key, 'h')
+	encoded := make([]byte, 8)
+	binary.BigEndian.PutUint64(encoded, number)
+	key = append(key, encoded...)
+	return append(key, 'n')
+}
+
+func readCanonicalHash(
+	database ethdb.KeyValueReader,
+	number uint64,
+) (common.Hash, bool, error) {
+	key := canonicalHashKey(number)
+	exists, err := database.Has(key)
+	if err != nil {
+		return common.Hash{}, false, fmt.Errorf(
+			"check canonical hash presence: %w",
+			err,
+		)
+	}
+	if !exists {
+		return common.Hash{}, false, nil
+	}
+	encoded, err := database.Get(key)
+	if err != nil {
+		return common.Hash{}, false, fmt.Errorf(
+			"read canonical hash: %w",
+			err,
+		)
+	}
+	if len(encoded) != common.HashLength {
+		return common.Hash{}, false, fmt.Errorf(
+			"canonical hash has %d bytes",
+			len(encoded),
+		)
+	}
+	return common.BytesToHash(encoded), true, nil
+}
+
+func readCXLookup(
+	database ethdb.KeyValueReader,
+	hash common.Hash,
+) ([]byte, bool, error) {
+	lookupKey := cxLookupKey(hash)
+	applied, err := database.Has(lookupKey)
+	if err != nil {
+		return nil, false, fmt.Errorf("check lookup presence: %w", err)
+	}
+	if !applied {
+		return nil, false, nil
+	}
+	encoded, err := database.Get(lookupKey)
+	if err != nil {
+		return nil, false, fmt.Errorf("read lookup: %w", err)
+	}
+	if len(encoded) == 0 {
+		return nil, false, fmt.Errorf("lookup is present but empty")
+	}
+	return encoded, true, nil
+}
+
 func sumReceipts(
 	sourceShard uint32,
 	source ethdb.Database,
@@ -170,8 +232,19 @@ func sumReceipts(
 			result.AfterCutoffGroups++
 			continue
 		}
-		canonicalHash := rawdb.ReadCanonicalHash(source, blockNumber)
-		if canonicalHash == (common.Hash{}) {
+		canonicalHash, canonical, err := readCanonicalHash(
+			source,
+			blockNumber,
+		)
+		if err != nil {
+			fatalf(
+				"read source shard %d canonical hash at block %d: %v",
+				sourceShard,
+				blockNumber,
+				err,
+			)
+		}
+		if !canonical {
 			result.MissingCanonicalHashGroups++
 			continue
 		}
@@ -231,18 +304,16 @@ func sumReceipts(
 		spent := true
 		var destinationBlock uint64
 		for _, receipt := range receipts {
-			lookupKey := cxLookupKey(receipt.TxHash)
-			applied, err := destinationDB.Has(lookupKey)
+			encoded, applied, err := readCXLookup(
+				destinationDB,
+				receipt.TxHash,
+			)
 			if err != nil {
 				fatalf("read CX lookup %s: %v", receipt.TxHash.Hex(), err)
 			}
 			if !applied {
 				spent = false
 				break
-			}
-			encoded, err := destinationDB.Get(lookupKey)
-			if err != nil {
-				fatalf("read CX lookup %s: %v", receipt.TxHash.Hex(), err)
 			}
 			var entry txLookupEntry
 			if err := rlp.DecodeBytes(encoded, &entry); err != nil {
@@ -253,7 +324,19 @@ func sumReceipts(
 				spent = false
 				break
 			}
-			if rawdb.ReadCanonicalHash(destinationDB, entry.BlockIndex) != entry.BlockHash {
+			canonicalHash, canonical, err := readCanonicalHash(
+				destinationDB,
+				entry.BlockIndex,
+			)
+			if err != nil {
+				fatalf(
+					"read destination shard %d canonical hash at block %d: %v",
+					destination,
+					entry.BlockIndex,
+					err,
+				)
+			}
+			if !canonical || canonicalHash != entry.BlockHash {
 				spent = false
 				break
 			}
