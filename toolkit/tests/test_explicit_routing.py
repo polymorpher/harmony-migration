@@ -14,6 +14,7 @@ SCRIPT = (
     / "routing"
     / "apply-routes.py"
 )
+INITIALIZER = SCRIPT.with_name("init-local-routing.py")
 
 POLICY_DECISION_FIELDS = (
     "decision_id", "status", "decision", "evidence", "notes"
@@ -28,7 +29,9 @@ def resolved_policy_decisions():
             "decision": "fixture decision",
         }
         for decision_id in (
-            "rollback-exploit-proceeds", "wone-layerzero-double-issue"
+            "layerzero-nativeoft-reconciliation",
+            "rollback-exploit-proceeds",
+            "wone-reserve-custody",
         )
     ]
 
@@ -439,7 +442,7 @@ class PolicyDecisionGateTest(unittest.TestCase):
         rows.append({"decision_id": "additional-review", "status": "pending"})
         self.assertEqual(
             self.load_decisions(rows),
-            ["rollback-exploit-proceeds", "additional-review"],
+            ["layerzero-nativeoft-reconciliation", "additional-review"],
         )
 
     def test_invalid_schema_is_rejected(self):
@@ -452,8 +455,42 @@ class PolicyDecisionGateTest(unittest.TestCase):
         )
         self.assertEqual(
             self.routing.load_policy_decisions(example),
-            ["rollback-exploit-proceeds", "wone-layerzero-double-issue"],
+            [
+                "rollback-exploit-proceeds",
+                "layerzero-nativeoft-reconciliation",
+            ],
         )
+
+    def test_initializer_creates_split_reserve_gates_and_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "routing"
+            subprocess.run(
+                (
+                    sys.executable,
+                    str(INITIALIZER),
+                    "--directory",
+                    str(root),
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                self.routing.load_policy_decisions(
+                    root / "policy-decisions.csv"
+                ),
+                [
+                    "rollback-exploit-proceeds",
+                    "layerzero-nativeoft-reconciliation",
+                ],
+            )
+            self.assertTrue((root / "bridge-reserves.csv").is_file())
+            with (root / "destinations.csv").open(newline="") as source:
+                destination_ids = {
+                    row["destination_id"] for row in csv.DictReader(source)
+                }
+            self.assertIn("wone-reserve-custody", destination_ids)
+            self.assertIn("layerzero-nativeoft-custody", destination_ids)
 
 
 if __name__ == "__main__":
