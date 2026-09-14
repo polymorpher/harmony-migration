@@ -252,7 +252,7 @@ func main() {
 		)
 		cacheMB  = flag.Int("cache-mb", 128, "LevelDB/trie cache in MiB")
 		handles  = flag.Int("handles", 128, "LevelDB open-file handles")
-		discover = flag.Bool("discover-validators", false, "discover validators from the selected state root")
+		discover = flag.Bool("discover-validators", true, "discover validators from the selected state root instead of the database validator-list")
 	)
 	flag.Parse()
 	if *dbPath == "" || *rootText == "" || *output == "" {
