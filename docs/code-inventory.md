@@ -119,6 +119,8 @@ See `docs/contract-account-review.md`.
 
 ## Embargo and publication tooling
 
+- `scripts/check-python-version.py` — enforces the supported Python 3.12+
+  workflow before Make targets run
 - `toolkit/cmd/cutoff-final-verifier` — ignored exact artifact-bundle verifier;
   restored with the result package because it embeds expected output identities
 - `scripts/check-numerical-embargo.py` — rejects publishable result values and

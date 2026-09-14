@@ -1,4 +1,4 @@
-.PHONY: setup build test test-python verify verify-private manifest private-manifest check-public
+.PHONY: setup build check-python test test-python verify verify-private manifest private-manifest check-public
 
 setup:
 	./scripts/setup-harmony-dependencies.sh
@@ -6,10 +6,13 @@ setup:
 build:
 	./scripts/build-toolkit.sh
 
+check-python:
+	@python3 scripts/check-python-version.py
+
 test: test-python verify
 	./scripts/build-toolkit.sh
 
-test-python:
+test-python: check-python
 	python3 -m unittest discover -s toolkit/tests
 	python3 -m py_compile \
 		toolkit/scripts/census/*.py \
@@ -20,22 +23,22 @@ test-python:
 		toolkit/scripts/forensics/*.py \
 		scripts/*.py
 
-verify:
+verify: check-python
 	python3 scripts/verify-source-manifest.py
 
 verify-private: verify
 	python3 scripts/verify-private-results.py
 	python3 scripts/verify-release-manifest.py
 
-manifest:
+manifest: check-python
 	python3 scripts/update-source-manifest.py
 
-private-manifest:
+private-manifest: check-python
 	python3 scripts/prepare-private-embargo.py --replace
 	python3 scripts/update-results-manifest.py
 	python3 scripts/update-release-manifest.py
 	python3 scripts/update-source-manifest.py
 
-check-public:
+check-public: check-python
 	python3 scripts/check-public-package.py
 	python3 scripts/check-numerical-embargo.py

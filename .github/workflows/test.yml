@@ -16,6 +16,9 @@ jobs:
         with:
           go-version: "1.24.2"
           cache-dependency-path: toolkit/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install native build dependencies
         run: |
           sudo apt-get update
