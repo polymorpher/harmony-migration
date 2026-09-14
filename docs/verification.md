@@ -102,14 +102,27 @@ The strict verifiers check:
 The local final cross-component reconciliation passed. Its result count is
 withheld during independent reproduction.
 
+Cross-shard receipt lookup distinguishes an absent destination key from a
+database read failure. Absence may represent a pending receipt; any `Has`,
+`Get`, decode, or iterator error aborts before totals are published.
+
 The selected inclusive eligibility split is independently checked to ensure:
 
+- every resolved address matches its secure account key at merge, format,
+  eligibility, classification, and routing boundaries;
+- no eligibility row has unresolved code metadata;
 - every threshold row appears exactly once;
 - ordinary EOAs are in the automatic output;
 - every code-bearing row in the automatic output appears in the independently
   verified validator-account override;
 - every validator override is code-bearing, above threshold, and present
-  exactly once;
+  exactly once, with both validator RPC evidence and a cutoff-code RLP address
+  match;
+- ownership, Safe thresholds, recovery settings, proxies, guardians, and
+  holder evidence all share the recorded cutoff block hash and state root;
+- eligibility and routing consume deterministic
+  `contract-review-policy.csv` and `validator-policy-accounts.csv`; mutable
+  activity context is excluded from release-comparison inputs;
 - genuine contracts remain in manual review;
 - selected inaccessible/dead rows are handled by policy;
 - category wallet, vault, total-claim amounts and output hashes match the

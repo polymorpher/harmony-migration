@@ -95,10 +95,15 @@ Scripts under `toolkit/scripts/contract-review/` classify the code-bearing
 manual-review rows (validator accounts, Safe multisigs, 1wallets, SmartVault
 wallets, ERC-20, NFT, well-known applications) from archival RPC facts only:
 
-- `fetch-contract-facts.py` — code, balances, traces, tx history, ABI probes
-- `selector-census.py` — dispatcher signatures, proxy implementations
-- `enrich-contract-facts.py` — pair symbols, singletons, NFT owner census
+- `fetch-contract-facts.py` — cutoff-policy code/storage/probes plus contextual
+  balances, traces, and transaction history
+- `selector-census.py` — dispatcher signatures and cutoff-policy proxy
+  implementations
+- `enrich-contract-facts.py` — cutoff-policy pair symbols, singletons,
+  SmartVault ownership, and NFT owner census
 - `classify-contracts.py` — category CSVs and `summary.json`
+- `contract-review-policy.csv` / `validator-policy-accounts.csv` — generated
+  cutoff-pinned eligibility and routing inputs without mutable activity context
 - `build-report.py` — Markdown statistics report
 - `known-apps.json` — verified application registry and fingerprint rules
 
@@ -111,7 +116,8 @@ See `docs/contract-account-review.md`.
 - `toolkit/scripts/routing/build-treasury-routes.py` — convert the audited
   treasury inventory to explicit route rows
 - `toolkit/scripts/routing/build-contract-treasury-routes.py` — route every
-  reviewed non-multisig contract to treasury
+  reviewed non-multisig contract to a specific Safe or multisig holding
+  address for later verified claims
 - `toolkit/scripts/routing/apply-routes.py` — merge treasury and manual routes,
   split partial routes across wallet/vault delivery, verify implicit defaults,
   and emit sparse routing, governor, and unresolved exceptions

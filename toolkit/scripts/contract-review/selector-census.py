@@ -29,6 +29,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import contract_review_lib as lib  # noqa: E402
 
 ZERO = "0x0000000000000000000000000000000000000000"
+SELECTOR_EVIDENCE_VERSION = 2
+
+
+def is_verified_validator(facts):
+    validator = facts.get("validator") or {}
+    return bool(
+        validator.get("is_validator")
+        and validator.get("rlp_wrapper_matches")
+    )
+
 
 KNOWN_SIGNATURES = [
     # ERC-20 / 721 / 1155 / 165
@@ -144,6 +154,14 @@ def parse_args():
     parser.add_argument("--facts", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--rpc", default="https://a.api.s0.t.hmny.io")
+    parser.add_argument("--state-block", required=True, type=int)
+    parser.add_argument(
+        "--registry",
+        default=os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "known-apps.json",
+        ),
+    )
     parser.add_argument("--only", help="comma separated addresses (default: all non-validator addresses)")
     parser.add_argument("--no-openchain", action="store_true", help="do not query openchain.xyz for unknown selectors")
     return parser.parse_args()
@@ -177,6 +195,24 @@ def extract_selectors(code_hex):
     return ordered
 
 
+def policy_signature_map(registry):
+    signatures = set()
+    for section in ("signature_rules", "pattern_rules"):
+        for rule in registry.get(section, ()):
+            signatures.update(rule.get("all_of") or ())
+    result = dict(KNOWN)
+    for signature in sorted(signatures):
+        selector = lib.selector(signature)[2:]
+        existing = result.get(selector)
+        if existing is not None and existing != signature:
+            raise ValueError(
+                f"policy signature selector collision: "
+                f"{existing} and {signature}"
+            )
+        result[selector] = signature
+    return result
+
+
 def clone_implementation(code_hex):
     raw = code_hex[2:] if code_hex.startswith("0x") else code_hex
     if raw.startswith("363d3d373d3d3d363d73") and len(raw) == 90:
@@ -187,10 +223,12 @@ def clone_implementation(code_hex):
 
 def proxy_target(facts):
     basic = facts.get("basic") or {}
-    for key in ("eip1967_impl", "eip1967_beacon"):
-        value = basic.get(key)
-        if value and value != ZERO:
-            return value, key
+    implementation = basic.get("eip1967_impl")
+    if implementation and implementation != ZERO:
+        return implementation, "eip1967_impl"
+    beacon = basic.get("eip1967_beacon")
+    if beacon and beacon != ZERO:
+        return beacon, "eip1967_beacon"
     clone = clone_implementation(basic.get("code_cutoff") or "")
     if clone:
         return clone, "eip1167-clone"
@@ -232,10 +270,33 @@ def openchain_lookup(selectors, cache):
 def main():
     args = parse_args()
     facts_all = lib.load_json(args.facts, {})
+    registry = lib.load_json(args.registry, {})
+    policy_known = policy_signature_map(registry)
     output = lib.load_json(args.output, {}) or {}
     sig_cache = output.get("_signature_cache", {})
     client = lib.RpcClient(args.rpc, batch_size=20, workers=3)
-    addresses = [a for a, f in facts_all.items() if not (f.get("validator") or {}).get("is_validator")]
+    state_tag = hex(args.state_block)
+    policy_block = client.call(
+        "hmyv2_getBlockByNumber",
+        [args.state_block, {"fullTx": False, "inclStaking": False}],
+    )
+    if not policy_block or not policy_block.get("hash"):
+        raise ValueError("could not resolve policy-state block")
+    previous_policy = output.get("_policy_state") or {}
+    if (
+        not args.only
+        or previous_policy.get("schema_version")
+        != SELECTOR_EVIDENCE_VERSION
+        or previous_policy.get("block") != args.state_block
+        or previous_policy.get("block_hash") != policy_block["hash"]
+        or previous_policy.get("state_root") != policy_block["stateRoot"]
+    ):
+        output = {}
+    addresses = [
+        address
+        for address, facts in facts_all.items()
+        if not is_verified_validator(facts)
+    ]
     if args.only:
         wanted = {lib.normalize_address(x) for x in args.only.split(",")}
         addresses = [a for a in addresses if a in wanted]
@@ -247,10 +308,55 @@ def main():
         target, how = proxy_target(facts_all[a])
         if target:
             targets[a] = (target, how)
+    beacons = sorted(
+        {
+            target
+            for target, how in targets.values()
+            if how == "eip1967_beacon"
+        }
+    )
+    if beacons:
+        results = client.batch(
+            [
+                (
+                    "eth_call",
+                    [
+                        {
+                            "to": beacon,
+                            "data": lib.selector("implementation()"),
+                        },
+                        state_tag,
+                    ],
+                )
+                for beacon in beacons
+            ]
+        )
+        implementations = {}
+        for beacon, (result, error) in zip(beacons, results):
+            implementation = (
+                lib.decode_address(result) if result and not error else None
+            )
+            if not implementation or implementation == ZERO:
+                raise ValueError(
+                    f"cannot resolve EIP-1967 beacon {beacon} "
+                    "at policy-state block"
+                )
+            implementations[beacon] = implementation
+        targets = {
+            address: (
+                implementations[target],
+                "eip1967_beacon",
+            )
+            if how == "eip1967_beacon"
+            else (target, how)
+            for address, (target, how) in targets.items()
+        }
     impl_addresses = sorted({t for t, _ in targets.values()})
     impl_code = {}
     if impl_addresses:
-        results = client.batch([("eth_getCode", [t, "latest"]) for t in impl_addresses])
+        results = client.batch(
+            [("eth_getCode", [target, state_tag]) for target in impl_addresses]
+        )
         for t, (code, error) in zip(impl_addresses, results):
             impl_code[t] = code or "0x"
 
@@ -277,24 +383,43 @@ def main():
         all_selectors.update(own)
         entries[a] = entry
 
-    unknown = sorted(s for s in all_selectors if s not in KNOWN)
-    log(f"{len(all_selectors)} distinct selectors, {len(unknown)} not in built-in dictionary")
+    unknown = sorted(s for s in all_selectors if s not in policy_known)
+    log(
+        f"{len(all_selectors)} distinct selectors, "
+        f"{len(unknown)} not in local policy dictionary"
+    )
     if not args.no_openchain and unknown:
         openchain_lookup(unknown, sig_cache)
 
     def resolve(sels):
         out = []
         for s in sels:
-            name = KNOWN.get(s) or sig_cache.get(s)
+            name = policy_known.get(s) or sig_cache.get(s)
             out.append(f"{name}" if name else f"0x{s}")
         return out
 
     for a, entry in entries.items():
+        entry["own_policy_signatures"] = [
+            policy_known[selector]
+            for selector in entry["own_selectors"]
+            if selector in policy_known
+        ]
         entry["own_signatures"] = resolve(entry["own_selectors"])
         if "implementation_selectors" in entry:
+            entry["implementation_policy_signatures"] = [
+                policy_known[selector]
+                for selector in entry["implementation_selectors"]
+                if selector in policy_known
+            ]
             entry["implementation_signatures"] = resolve(entry["implementation_selectors"])
         output[a] = entry
     output["_signature_cache"] = sig_cache
+    output["_policy_state"] = {
+        "schema_version": SELECTOR_EVIDENCE_VERSION,
+        "block": args.state_block,
+        "block_hash": policy_block["hash"],
+        "state_root": policy_block["stateRoot"],
+    }
     lib.dump_json(args.output, output)
     log(f"done; wrote {args.output}")
 

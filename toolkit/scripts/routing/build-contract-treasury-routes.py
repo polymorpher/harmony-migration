@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Route every reviewed non-multisig contract claim to treasury."""
+"""Route non-multisig claims to a dedicated contract-funds holding address."""
 
 import argparse
 import csv
@@ -21,7 +21,11 @@ FIELDS = (
     "reason",
     "evidence",
     "notes",
+    "policy_state_block",
+    "policy_state_block_hash",
+    "policy_state_root",
 )
+DESTINATION_ID = "contract-recovery-custody"
 
 
 def parse_args():
@@ -29,7 +33,6 @@ def parse_args():
     parser.add_argument("--contracts", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", required=True)
-    parser.add_argument("--destination-id", default="treasury")
     parser.add_argument("--priority", type=int, default=500)
     parser.add_argument("--replace", action="store_true")
     return parser.parse_args()
@@ -67,13 +70,34 @@ def main():
             "primary_category",
             "subcategory",
             "total_claim_one",
+            "policy_state_block",
+            "policy_state_block_hash",
+            "policy_state_root",
         }
         missing = required - set(reader.fieldnames or ())
         if missing:
             raise ValueError(
                 f"contract review is missing fields: {sorted(missing)}"
             )
+        policy_state = None
         for line, row in enumerate(reader, start=2):
+            row_policy_state = {
+                "block": int(row["policy_state_block"]),
+                "block_hash": row["policy_state_block_hash"],
+                "state_root": row["policy_state_root"],
+            }
+            if not row_policy_state["block_hash"] or not row_policy_state[
+                "state_root"
+            ]:
+                raise ValueError(
+                    f"contract review has incomplete policy state at line {line}"
+                )
+            if policy_state is None:
+                policy_state = row_policy_state
+            elif row_policy_state != policy_state:
+                raise ValueError(
+                    f"contract review policy state differs at line {line}"
+                )
             input_rows += 1
             category = row["primary_category"]
             if category == "validator-account":
@@ -89,19 +113,24 @@ def main():
             categories[category] += 1
             routes.append(
                 {
-                    "route_id": f"contract-treasury-{address[2:]}",
+                    "route_id": f"contract-custody-{address[2:]}",
                     "priority": str(args.priority),
                     "source_address": address,
-                    "destination_id": args.destination_id,
+                    "destination_id": DESTINATION_ID,
                     "destination_address": "",
                     "amount_atto": "ALL",
                     "allocation_method": "wallet_first_pro_rata_vault",
-                    "reason": "non_multisig_contract_treasury",
+                    "reason": "non_multisig_contract_recovery_custody",
                     "evidence": (
                         "artifacts/contract-review-20260911/out/"
-                        "contract-review-all.csv"
+                        "contract-review-policy.csv"
                     ),
                     "notes": f"{category}: {row['subcategory']}",
+                    "policy_state_block": row["policy_state_block"],
+                    "policy_state_block_hash": row[
+                        "policy_state_block_hash"
+                    ],
+                    "policy_state_root": row["policy_state_root"],
                 }
             )
 
@@ -127,8 +156,9 @@ def main():
         "multisig_rows_skipped": multisigs,
         "non_multisig_contract_routes": len(routes),
         "categories": dict(sorted(categories.items())),
-        "destination_id": args.destination_id,
+        "destination_id": DESTINATION_ID,
         "priority": args.priority,
+        "policy_state": policy_state,
         "output": args.output,
         "output_sha256": file_sha256(args.output),
     }

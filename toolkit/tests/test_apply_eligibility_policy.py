@@ -1,10 +1,18 @@
 import csv
+import importlib.util
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+
+CONTRACT_REVIEW = (
+    Path(__file__).parents[1] / "scripts" / "contract-review"
+)
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
 
 
 SCRIPT = (
@@ -25,6 +33,26 @@ EMPTY_CODE_HASH = (
 
 
 class ApplyEligibilityPolicyTest(unittest.TestCase):
+    def test_blank_code_metadata_is_unresolved(self):
+        spec = importlib.util.spec_from_file_location(
+            "apply_eligibility_policy", SCRIPT
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertIsNone(
+            module.code_bearing(
+                {"code_hash_shard0": "", "code_hash_shard1": ""}
+            )
+        )
+        self.assertIsNone(
+            module.code_bearing(
+                {
+                    "code_hash_shard0": "",
+                    "code_hash_shard1": EMPTY_CODE_HASH,
+                }
+            )
+        )
+
     def test_splits_automatic_validator_contract_and_excluded_rows(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -53,7 +81,6 @@ class ApplyEligibilityPolicyTest(unittest.TestCase):
             )
 
             def row(
-                key,
                 address,
                 value,
                 code=EMPTY_CODE_HASH,
@@ -62,7 +89,10 @@ class ApplyEligibilityPolicyTest(unittest.TestCase):
                 wallet = value if wallet is None else wallet
                 vault = value - wallet
                 return {
-                    "secure_key": key,
+                    "secure_key": (
+                        "0x"
+                        + lib.keccak256(bytes.fromhex(address[2:])).hex()
+                    ),
                     "address": address,
                     "liquid_shard0_atto": str(wallet),
                     "liquid_shard1_atto": "0",
@@ -86,27 +116,30 @@ class ApplyEligibilityPolicyTest(unittest.TestCase):
                 )
                 writer.writeheader()
                 writer.writerows(
-                    (
-                        row("0x01", "0x0000000000000000000000000000000000000001", 999 * 10**18),
-                        row(
-                            "0x02",
-                            "0x0000000000000000000000000000000000000002",
-                            1000 * 10**18,
-                            wallet=100 * 10**18,
+                    sorted(
+                        (
+                            row(
+                                "0x0000000000000000000000000000000000000001",
+                                999 * 10**18,
+                            ),
+                            row(
+                                "0x0000000000000000000000000000000000000002",
+                                1000 * 10**18,
+                                wallet=100 * 10**18,
+                            ),
+                            row(
+                                validator,
+                                1001 * 10**18,
+                                "0x01",
+                            ),
+                            row(
+                                "0x0000000000000000000000000000000000000004",
+                                1002 * 10**18,
+                                "0x02",
+                            ),
+                            row(blocked, 1003 * 10**18),
                         ),
-                        row(
-                            "0x03",
-                            validator,
-                            1001 * 10**18,
-                            "0x01",
-                        ),
-                        row(
-                            "0x04",
-                            "0x0000000000000000000000000000000000000004",
-                            1002 * 10**18,
-                            "0x02",
-                        ),
-                        row("0x05", blocked, 1003 * 10**18),
+                        key=lambda item: item["secure_key"],
                     )
                 )
             with validators.open("w", newline="") as handle:

@@ -25,6 +25,9 @@ class ContractTreasuryRoutesTest(unittest.TestCase):
                 "primary_category",
                 "subcategory",
                 "total_claim_one",
+                "policy_state_block",
+                "policy_state_block_hash",
+                "policy_state_root",
             )
             rows = [
                 (1, "validator-account", "validator", "1000"),
@@ -44,6 +47,9 @@ class ContractTreasuryRoutesTest(unittest.TestCase):
                             "primary_category": category,
                             "subcategory": subcategory,
                             "total_claim_one": amount,
+                            "policy_state_block": "10",
+                            "policy_state_block_hash": "0xabc",
+                            "policy_state_root": "0xdef",
                         }
                     )
             routes = root / "routes.csv"
@@ -71,7 +77,17 @@ class ContractTreasuryRoutesTest(unittest.TestCase):
                 {f"0x{3:040x}", f"0x{4:040x}"},
             )
             self.assertTrue(
-                all(row["destination_id"] == "treasury" for row in output_rows)
+                all(
+                    row["destination_id"] == "contract-recovery-custody"
+                    for row in output_rows
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["reason"]
+                    == "non_multisig_contract_recovery_custody"
+                    for row in output_rows
+                )
             )
             self.assertTrue(
                 all(row["amount_atto"] == "ALL" for row in output_rows)
@@ -80,6 +96,14 @@ class ContractTreasuryRoutesTest(unittest.TestCase):
             self.assertEqual(result["validator_rows_skipped"], 1)
             self.assertEqual(result["multisig_rows_skipped"], 1)
             self.assertEqual(result["non_multisig_contract_routes"], 2)
+            self.assertEqual(
+                result["policy_state"],
+                {
+                    "block": 10,
+                    "block_hash": "0xabc",
+                    "state_root": "0xdef",
+                },
+            )
 
 
 if __name__ == "__main__":

@@ -5,6 +5,13 @@ import csv
 import hashlib
 import json
 import os
+import sys
+from pathlib import Path
+
+
+CONTRACT_REVIEW = Path(__file__).resolve().parents[1] / "contract-review"
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
 
 # `total_claim_atto` is the total economic claim and threshold amount.
 # `wallet_airdrop_atto` and `staked_to_vault_atto` specify how it is delivered.
@@ -40,6 +47,12 @@ def rows(path, kind):
                     f"{path}:{line_number}: secure keys are not strictly increasing"
                 )
             previous = key
+            if row.get("address"):
+                lib.require_address_secure_key(
+                    row["address"],
+                    key,
+                    f"{path}:{line_number}",
+                )
             row["secure_key"] = key
             row["_kind"] = kind
             yield row
@@ -62,6 +75,11 @@ def load_pending_receipts(path):
             for receipt in group.get("receipts") or []:
                 key = receipt["secure_key"].lower()
                 address = receipt["to"]
+                lib.require_address_secure_key(
+                    address,
+                    key,
+                    "pending receipt",
+                )
                 amount = int(receipt["amount_atto"])
                 if amount < 0:
                     raise ValueError(f"negative receipt amount for {key}")
@@ -204,6 +222,12 @@ def merge(args):
                 ):
                     raise ValueError(f"address mismatch for {key}: {addresses}")
                 address = addresses[0] if addresses else ""
+                if address:
+                    lib.require_address_secure_key(
+                        address,
+                        key,
+                        "merged claim",
+                    )
 
                 liquid0_value = int_field(current0, "balance_atto")
                 liquid1_value = int_field(current1, "balance_atto")

@@ -173,6 +173,67 @@ def normalize_address(value):
     return value
 
 
+def require_address_secure_key(address, secure_key, context="row"):
+    normalized = any_to_hex(address)
+    if normalized is None:
+        raise ValueError(f"{context}: invalid address")
+    try:
+        raw = bytes.fromhex(normalized[2:])
+    except ValueError as error:
+        raise ValueError(f"{context}: invalid address") from error
+    expected = "0x" + keccak256(raw).hex()
+    if str(secure_key).lower() != expected:
+        raise ValueError(f"{context}: address does not match secure key")
+    return normalized
+
+
+def _rlp_item_bounds(data, offset):
+    if offset >= len(data):
+        return None
+    prefix = data[offset]
+    if prefix <= 0x7F:
+        return False, offset, offset + 1, offset + 1
+    if prefix <= 0xB7:
+        length = prefix - 0x80
+        start = offset + 1
+        end = start + length
+        if end > len(data) or (
+            length == 1 and data[start] <= 0x7F
+        ):
+            return None
+        return False, start, end, end
+    if prefix <= 0xBF:
+        length_size = prefix - 0xB7
+        start_size = offset + 1
+        end_size = start_size + length_size
+        if end_size > len(data) or data[start_size] == 0:
+            return None
+        length = int.from_bytes(data[start_size:end_size], "big")
+        start = end_size
+        end = start + length
+        if length < 56 or end > len(data):
+            return None
+        return False, start, end, end
+    if prefix <= 0xF7:
+        length = prefix - 0xC0
+        start = offset + 1
+        end = start + length
+        if end > len(data):
+            return None
+        return True, start, end, end
+    length_size = prefix - 0xF7
+    start_size = offset + 1
+    end_size = start_size + length_size
+    if end_size > len(data) or data[start_size] == 0:
+        return None
+    length = int.from_bytes(data[start_size:end_size], "big")
+    start = end_size
+    end = start + length
+    if length < 56 or end > len(data):
+        return None
+    return True, start, end, end
+
+
 def rlp_validator_wrapper_address(code_hex):
     """If `code` is an RLP list whose first item is a 20-byte address, return it.
 
@@ -184,23 +245,23 @@ def rlp_validator_wrapper_address(code_hex):
         data = bytes.fromhex(raw)
     except ValueError:
         return None
-    if len(data) < 24 or data[0] < 0xC0:
+    if len(data) < 24:
         return None
-    # ValidatorWrapper{Validator{Address,...},...}: two nested list headers
-    # precede the address item (0x94 + 20 bytes).
-    offset = 0
-    for _ in range(3):
-        if offset >= len(data):
-            return None
-        prefix = data[offset]
-        if prefix == 0x94:
-            if len(data) < offset + 21:
-                return None
-            return "0x" + data[offset + 1:offset + 21].hex()
-        if prefix < 0xC0:
-            return None
-        offset += 1 if prefix <= 0xF7 else 1 + (prefix - 0xF7)
-    return None
+    wrapper = _rlp_item_bounds(data, 0)
+    if wrapper is None or not wrapper[0] or wrapper[3] != len(data):
+        return None
+    validator = _rlp_item_bounds(data, wrapper[1])
+    if validator is None or not validator[0] or validator[3] > wrapper[2]:
+        return None
+    address = _rlp_item_bounds(data, validator[1])
+    if (
+        address is None
+        or address[0]
+        or address[2] - address[1] != 20
+        or address[3] > validator[2]
+    ):
+        return None
+    return "0x" + data[address[1]:address[2]].hex()
 
 
 # --------------------------------------------------------------------------

@@ -4,7 +4,9 @@
 Reads the facts JSON produced by ``fetch-contract-facts.py`` plus the
 claims CSV and the known-apps registry, and writes:
 
-- ``contract-review-all.csv``       one row per address, primary category
+- ``contract-review-policy.csv``    deterministic policy/routing facts
+- ``contract-review-all.csv``       one row per address, including context
+- ``validator-policy-accounts.csv`` deterministic validator override set
 - ``validator-accounts.csv``        validator EOAs (ValidatorWrapper in code field)
 - ``multisig-wallets.csv``          Gnosis Safe / Safe proxies and other multisigs
 - ``onewallets.csv``                1wallet (Modulo OTP wallet) contracts
@@ -54,7 +56,16 @@ SELECTORS = {}
 
 def signatures(address):
     entry = SELECTORS.get(address) or {}
-    return set(entry.get("own_signatures") or []) | set(entry.get("implementation_signatures") or [])
+    return set(entry.get("own_policy_signatures") or []) | set(
+        entry.get("implementation_policy_signatures") or []
+    )
+
+
+def display_signatures(address):
+    entry = SELECTORS.get(address) or {}
+    return set(entry.get("own_signatures") or []) | set(
+        entry.get("implementation_signatures") or []
+    )
 
 
 # --------------------------------------------------------------------------
@@ -372,6 +383,14 @@ def detect_smartvault(address, facts, extra):
 # --------------------------------------------------------------------------
 
 
+def is_verified_validator(facts):
+    validator = facts.get("validator") or {}
+    return bool(
+        validator.get("is_validator")
+        and validator.get("rlp_wrapper_matches")
+    )
+
+
 def classify(address, facts, claim, registry, extra):
     basic = facts.get("basic") or {}
     total_claim = claim["total_claim_one"]
@@ -453,7 +472,7 @@ def classify(address, facts, claim, registry, extra):
     app = None
     proxy = None
     pattern = None
-    if validator.get("is_validator") and validator.get("rlp_wrapper_matches"):
+    if is_verified_validator(facts):
         primary, sub = "validator-account", "Harmony validator (EOA; ValidatorWrapper RLP stored in code field)"
         identity = validator.get("name") or ""
     else:
@@ -503,7 +522,7 @@ def classify(address, facts, claim, registry, extra):
             primary = "unidentified"
             sub = "unidentified contract"
             identity = ""
-    sigs = sorted(signatures(address))
+    sigs = sorted(display_signatures(address))
     row.update({
         "primary_category": primary,
         "subcategory": sub,
@@ -523,6 +542,7 @@ def classify(address, facts, claim, registry, extra):
         "proxy_type": (proxy or {}).get("type") or "",
         "proxy_implementation": csv_addr((proxy or {}).get("implementation")),
         "owner_probe": csv_addr(probe_address(facts, "owner") or probe_address(facts, "getOwner")),
+        "policy_signatures": " ".join(sorted(signatures(address))),
         "dispatcher_signatures": " ".join(sigs)[:4000],
     })
     return row, {"safe": safe, "wallet": wallet, "vault": vault, "token": token, "app": app, "proxy": proxy, "validator": validator, "pattern": pattern}
@@ -542,7 +562,9 @@ def write_csv(path, rows, fields):
 
 
 COMMON_FIELDS = [
-    "address", "address_bech32", "total_claim_one", "wallet_airdrop_one",
+    "address", "address_bech32",
+    "policy_state_block", "policy_state_block_hash", "policy_state_root",
+    "total_claim_one", "wallet_airdrop_one",
     "staked_to_vault_one", "liquid_total_one",
     "active_staked_or_delegated_one", "pending_undelegation_one",
     "unclaimed_staking_reward_one", "total_usd_at_cutoff_price",
@@ -565,6 +587,107 @@ ACTIVITY_FIELDS = [
     "last_direct_tx_block", "last_direct_tx_time_utc", "last_direct_tx_hash", "last_direct_tx_from",
 ]
 
+POLICY_FIELDS = [
+    "primary_category", "subcategory", "identity",
+    "address", "address_bech32",
+    "policy_state_block", "policy_state_block_hash", "policy_state_root",
+    "total_claim_one", "wallet_airdrop_one", "staked_to_vault_one",
+    "code_size_bytes", "code_hash",
+    "is_erc20", "is_nft", "is_multisig", "is_onewallet",
+    "is_smartvault", "known_app", "known_app_role",
+    "known_app_evidence", "pattern_label", "pattern_category",
+    "proxy_type", "proxy_implementation", "owner_probe",
+    "policy_signatures",
+] + CREATION_FIELDS + FUNDING_FIELDS
+
+
+def policy_state_identity(facts_all, selectors, extra):
+    identities = set()
+    for address, facts in facts_all.items():
+        basic = facts.get("basic") or {}
+        if basic.get("basic_evidence_version") != 2:
+            raise ValueError(f"{address}: stale basic evidence schema")
+        identity = (
+            basic.get("policy_state_block"),
+            basic.get("policy_state_block_hash"),
+            basic.get("policy_state_root"),
+        )
+        if None in identity:
+            raise ValueError(
+                f"{address}: missing pinned policy-state identity"
+            )
+        identities.add(identity)
+        if not is_verified_validator(facts):
+            if facts.get("probe_evidence_version") != 2:
+                raise ValueError(f"{address}: stale ABI probe schema")
+            probes_identity = (
+                facts.get("probes_block"),
+                facts.get("probes_block_hash"),
+                facts.get("probes_state_root"),
+            )
+            if probes_identity != identity:
+                raise ValueError(
+                    f"{address}: ABI probes do not match policy state"
+                )
+        validator = facts.get("validator") or {}
+        if validator.get("validator_evidence_version") != 2:
+            raise ValueError(f"{address}: stale validator evidence schema")
+        validator_identity = (
+            validator.get("policy_state_block"),
+            validator.get("policy_state_block_hash"),
+            validator.get("policy_state_root"),
+        )
+        if validator_identity != identity:
+            raise ValueError(
+                f"{address}: validator evidence does not match policy state"
+            )
+        creation_block = (facts.get("creation") or {}).get("block")
+        if creation_block is not None and creation_block > identity[0]:
+            raise ValueError(f"{address}: creation evidence is post-cutoff")
+        if not is_verified_validator(facts):
+            funding = facts.get("funding") or {}
+            if funding.get("funding_evidence_version") != 2:
+                raise ValueError(f"{address}: stale funding evidence schema")
+            funding_identity = (
+                funding.get("policy_state_block"),
+                funding.get("policy_state_block_hash"),
+                funding.get("policy_state_root"),
+            )
+            if funding_identity != identity:
+                raise ValueError(
+                    f"{address}: funding evidence does not match policy state"
+                )
+            funding_block = funding.get("block")
+            if funding_block is not None and funding_block > identity[0]:
+                raise ValueError(
+                    f"{address}: funding evidence is post-cutoff"
+                )
+    for name, document in (("selectors", selectors), ("extra", extra)):
+        if not document:
+            continue
+        metadata = document.get("_policy_state") or {}
+        if metadata.get("schema_version") != 2:
+            raise ValueError(f"{name}: stale policy-state schema")
+        identity = (
+            metadata.get("block"),
+            metadata.get("block_hash"),
+            metadata.get("state_root"),
+        )
+        if None in identity:
+            raise ValueError(f"{name}: missing pinned policy-state identity")
+        identities.add(identity)
+    if len(identities) != 1:
+        raise ValueError(
+            "contract-review inputs used more than one cutoff block, hash, "
+            "or state root"
+        )
+    block, block_hash, state_root = identities.pop()
+    return {
+        "block": block,
+        "block_hash": block_hash,
+        "state_root": state_root,
+    }
+
 
 def main():
     args = parse_args()
@@ -572,18 +695,51 @@ def main():
     facts_all = lib.load_json(args.facts, {})
     registry = lib.load_json(args.registry, {})
     extra = lib.load_json(args.extra, {}) if args.extra else {}
+    selectors = (
+        lib.load_json(args.selectors, {}) if args.selectors else {}
+    )
+    policy_state = policy_state_identity(facts_all, selectors, extra)
     if args.selectors:
-        SELECTORS.update({k: v for k, v in (lib.load_json(args.selectors, {}) or {}).items() if k.startswith("0x")})
+        SELECTORS.update(
+            {
+                key: value
+                for key, value in selectors.items()
+                if key.startswith("0x")
+            }
+        )
     claims = {}
+    claim_blocks = set()
     with open(args.claims, newline="") as handle:
-        for row in csv.DictReader(handle):
-            claims[lib.normalize_address(row["address"])] = row
+        for line, row in enumerate(csv.DictReader(handle), start=2):
+            address = lib.require_address_secure_key(
+                row["address"],
+                row["secure_key"],
+                f"{args.claims}:{line}",
+            )
+            claims[address] = row
+            try:
+                claim_blocks.add(int(row["claims_shard0_block"]))
+            except (KeyError, ValueError) as error:
+                raise ValueError(
+                    f"{args.claims}:{line}: invalid claims_shard0_block"
+                ) from error
+    if claim_blocks != {policy_state["block"]}:
+        raise ValueError(
+            "contract-review policy state is not the claim cutoff"
+        )
 
     all_rows = []
     details = {}
     for address, claim in claims.items():
         facts = facts_all.get(address) or {}
         row, det = classify(address, facts, claim, registry, extra)
+        row.update(
+            {
+                "policy_state_block": policy_state["block"],
+                "policy_state_block_hash": policy_state["block_hash"],
+                "policy_state_root": policy_state["state_root"],
+            }
+        )
         all_rows.append(row)
         details[address] = det
 
@@ -591,6 +747,11 @@ def main():
         key=lambda row: -lib.one_str_to_atto(
             row["total_claim_one"]
         )
+    )
+    write_csv(
+        os.path.join(args.output_dir, "contract-review-policy.csv"),
+        all_rows,
+        POLICY_FIELDS,
     )
     write_csv(
         os.path.join(args.output_dir, "contract-review-all.csv"),
@@ -634,7 +795,7 @@ def main():
     for row in all_rows:
         det = details[row["address"].lower()]
         v = det["validator"]
-        if not v.get("is_validator"):
+        if not is_verified_validator({"validator": v}):
             continue
         validator_rows.append(dict(row, **{
             "validator_name": v.get("name") or "",
@@ -654,6 +815,11 @@ def main():
             "validator_creation_height", "creation_time_utc", "creation_tx_hash", "validator_total_delegation_one",
             "validator_delegation_count", "bls_key_count", "code_size_bytes",
         ] + ACTIVITY_FIELDS,
+    )
+    write_csv(
+        os.path.join(args.output_dir, "validator-policy-accounts.csv"),
+        validator_rows,
+        POLICY_FIELDS,
     )
 
     # multisigs
@@ -844,6 +1010,7 @@ def main():
 
     summary = {
         "input_rows": len(all_rows),
+        "policy_state": policy_state,
         "primary_categories": bucket(all_rows, "primary_category"),
         "subcategories": bucket(all_rows, "subcategory"),
         "overlapping": {

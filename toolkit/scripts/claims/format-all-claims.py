@@ -7,7 +7,14 @@ import csv
 import hashlib
 import json
 import os
+import sys
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
+
+
+CONTRACT_REVIEW = Path(__file__).resolve().parents[1] / "contract-review"
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
 
 
 ATTO_SCALE = 18
@@ -149,6 +156,12 @@ def main():
                     )
                 values[component] = expected
             address = row["address"]
+            if address:
+                lib.require_address_secure_key(
+                    address,
+                    key,
+                    f"input line {line}",
+                )
             unresolved += int(not address)
             result = {
                 "secure_key": key,

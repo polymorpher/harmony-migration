@@ -7,6 +7,13 @@ import unittest
 from pathlib import Path
 
 
+CONTRACT_REVIEW = (
+    Path(__file__).parents[1] / "scripts" / "contract-review"
+)
+sys.path.insert(0, str(CONTRACT_REVIEW))
+import contract_review_lib as lib  # noqa: E402
+
+
 SCRIPT = (
     Path(__file__).parents[1]
     / "scripts"
@@ -19,6 +26,14 @@ VERIFY_SCRIPT = (
     / "claims"
     / "verify-vault-delegations.py"
 )
+
+
+def address(index):
+    return f"0x{index:040x}"
+
+
+def secure_key(index):
+    return "0x" + lib.keccak256(bytes.fromhex(address(index)[2:])).hex()
 
 
 class VaultShareAllocationTest(unittest.TestCase):
@@ -49,8 +64,8 @@ class VaultShareAllocationTest(unittest.TestCase):
 
             def claim(index, wallet, vault):
                 return {
-                    "secure_key": f"0x{index:064x}",
-                    "address": f"0x{index:040x}",
+                    "secure_key": secure_key(index),
+                    "address": address(index),
                     "wallet_airdrop_atto": str(wallet * 10**18),
                     "staked_to_vault_atto": str(vault * 10**18),
                     "total_claim_atto": str(
@@ -58,11 +73,17 @@ class VaultShareAllocationTest(unittest.TestCase):
                     ),
                 }
 
-            claim_rows = (
-                claim(1, 100, 1000),
-                claim(2, 200, 1000),
-                claim(3, 300, 1000),
-                claim(4, 100, 800),
+            claims_by_index = {
+                1: claim(1, 100, 1000),
+                2: claim(2, 200, 1000),
+                3: claim(3, 300, 1000),
+                4: claim(4, 100, 800),
+            }
+            claim_rows = tuple(
+                sorted(
+                    claims_by_index.values(),
+                    key=lambda row: row["secure_key"],
+                )
             )
             with claims.open("w", newline="") as handle:
                 writer = csv.DictWriter(
@@ -71,9 +92,9 @@ class VaultShareAllocationTest(unittest.TestCase):
                 writer.writeheader()
                 writer.writerows(claim_rows)
             for path, row in (
-                (automatic, claim_rows[0]),
-                (contracts, claim_rows[1]),
-                (excluded, claim_rows[2]),
+                (automatic, claims_by_index[1]),
+                (contracts, claims_by_index[2]),
+                (excluded, claims_by_index[3]),
             ):
                 with path.open("w", newline="") as handle:
                     writer = csv.DictWriter(
@@ -100,10 +121,10 @@ class VaultShareAllocationTest(unittest.TestCase):
             ):
                 detail_rows.append(
                     {
-                        "validator_address": f"0x{validator:040x}",
-                        "validator_secure_key": f"0x{validator:064x}",
-                        "delegator_address": f"0x{delegator:040x}",
-                        "delegator_secure_key": f"0x{delegator:064x}",
+                        "validator_address": address(validator),
+                        "validator_secure_key": secure_key(validator),
+                        "delegator_address": address(delegator),
+                        "delegator_secure_key": secure_key(delegator),
                         "staked_to_vault_atto": str(amount * 10**18),
                         "is_self_delegation": "false",
                     }

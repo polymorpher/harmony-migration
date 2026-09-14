@@ -1,3 +1,4 @@
 route_id,priority,source_address,destination_id,destination_address,amount_atto,allocation_method,reason,evidence,notes
 example-lost-wallet,10,0x1111111111111111111111111111111111111111,,0x2222222222222222222222222222222222222222,ALL,wallet_first_pro_rata_vault,example only,example://ticket,
 example-partial-treasury,100,0x3333333333333333333333333333333333333333,treasury,,1000000000000000000000,wallet_first_pro_rata_vault,example only,example://policy,
+example-shard0-reserve,400,0x4444444444444444444444444444444444444444,wone-reserve-custody,,SHARD0_LIQUID,wallet_first_pro_rata_vault,example only,example://reserve,

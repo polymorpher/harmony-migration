@@ -130,7 +130,6 @@ func newAccumulator() *accumulator {
 		unclaimedDelegationReward:    new(big.Int),
 		validatorLifetimeBlockReward: new(big.Int),
 		validators:                   make(map[common.Address]struct{}),
-		validatorList:                make(map[common.Address]struct{}),
 		validatorKeys:                make(map[common.Hash]struct{}),
 	}
 }
@@ -179,15 +178,46 @@ func readValidatorList(db ethdb.KeyValueReader) map[common.Address]struct{} {
 	return result
 }
 
-func validatorCode(db ethdb.KeyValueReader, codeHash common.Hash) (code []byte, prefixed bool) {
+func optionalValue(
+	db ethdb.KeyValueReader,
+	key []byte,
+) ([]byte, bool, error) {
+	exists, err := db.Has(key)
+	if err != nil {
+		return nil, false, err
+	}
+	if !exists {
+		return nil, false, nil
+	}
+	encoded, err := db.Get(key)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(encoded) == 0 {
+		return nil, false, fmt.Errorf("present key has empty value")
+	}
+	return encoded, true, nil
+}
+
+func validatorCode(
+	db ethdb.KeyValueReader,
+	codeHash common.Hash,
+) (code []byte, prefixed bool, err error) {
 	key := append(append([]byte{}, []byte("vc")...), codeHash.Bytes()...)
-	if encoded, err := db.Get(key); err == nil && len(encoded) != 0 {
-		return encoded, true
+	if encoded, exists, err := optionalValue(db, key); err != nil {
+		return nil, false, err
+	} else if exists {
+		return encoded, true, nil
 	}
-	if encoded, err := db.Get(codeHash.Bytes()); err == nil && len(encoded) != 0 {
-		return encoded, false
+	if encoded, exists, err := optionalValue(
+		db,
+		codeHash.Bytes(),
+	); err != nil {
+		return nil, false, err
+	} else if exists {
+		return encoded, false, nil
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 func (sum *accumulator) addValidator(
@@ -230,8 +260,10 @@ func (sum *accumulator) addValidator(
 	}
 	sum.validators[wrapper.Address] = struct{}{}
 	sum.validatorCount++
-	if _, listed := sum.validatorList[wrapper.Address]; !listed {
-		sum.validatorNotInListCount++
+	if sum.validatorList != nil {
+		if _, listed := sum.validatorList[wrapper.Address]; !listed {
+			sum.validatorNotInListCount++
+		}
 	}
 
 	if wrapper.BlockReward == nil || wrapper.BlockReward.Sign() < 0 {
@@ -286,6 +318,14 @@ func (sum *accumulator) addValidator(
 	}
 }
 
+func effectiveValidatorDiscovery(
+	staking bool,
+	validatorOnly bool,
+	requested bool,
+) bool {
+	return staking && !validatorOnly && requested
+}
+
 func main() {
 	var (
 		dbPath             = flag.String("db", "", "path to a Harmony shard LevelDB")
@@ -294,10 +334,16 @@ func main() {
 		cacheMB            = flag.Int("cache-mb", 512, "LevelDB/trie cache in MiB")
 		handles            = flag.Int("handles", 512, "LevelDB open-file handles")
 		staking            = flag.Bool("staking", false, "scan and require beacon-chain validator state")
-		validatorOnly      = flag.Bool("validator-only", false, "scan validator state without traversing all accounts")
-		discoverValidators = flag.Bool("discover-validators", false, "discover validators from the selected state root instead of current validator-list")
+		validatorOnly      = flag.Bool("validator-only", false, "scan only the current validator-list without traversing all accounts")
+		discoverValidators = flag.Bool("discover-validators", true, "discover validators from the selected state root instead of current validator-list")
 	)
 	flag.Parse()
+	discoverExplicit := false
+	flag.Visit(func(selected *flag.Flag) {
+		if selected.Name == "discover-validators" {
+			discoverExplicit = true
+		}
+	})
 	if *dbPath == "" || *rootText == "" || *output == "" {
 		flag.Usage()
 		os.Exit(2)
@@ -305,12 +351,16 @@ func main() {
 	if *validatorOnly && !*staking {
 		fatalf("-validator-only requires -staking")
 	}
-	if *discoverValidators && !*staking {
-		fatalf("-discover-validators requires -staking")
+	if *validatorOnly && (!discoverExplicit || *discoverValidators) {
+		fatalf(
+			"-validator-only requires explicit -discover-validators=false",
+		)
 	}
-	if *validatorOnly && *discoverValidators {
-		fatalf("-validator-only cannot be combined with -discover-validators")
-	}
+	*discoverValidators = effectiveValidatorDiscovery(
+		*staking,
+		*validatorOnly,
+		*discoverValidators,
+	)
 	root := parseHash(*rootText)
 
 	disk, err := leveldb.New(*dbPath, *cacheMB, *handles, "", true)
@@ -345,7 +395,14 @@ func main() {
 				fatalf("validator account %s has no code", validatorAddress.Hex())
 			}
 			codeHash := common.BytesToHash(account.CodeHash)
-			encoded, prefixed := validatorCode(db, codeHash)
+			encoded, prefixed, err := validatorCode(db, codeHash)
+			if err != nil {
+				fatalf(
+					"read validator code %s: %v",
+					codeHash.Hex(),
+					err,
+				)
+			}
 			if len(encoded) == 0 {
 				fatalf(
 					"validator account %s has no validator code %s",
@@ -387,7 +444,18 @@ func main() {
 					_, listed := sum.validatorKeys[secureKey]
 					if *discoverValidators || !listed {
 						codeHash := common.BytesToHash(account.CodeHash)
-						if encoded, prefixed := validatorCode(db, codeHash); len(encoded) != 0 {
+						encoded, prefixed, err := validatorCode(
+							db,
+							codeHash,
+						)
+						if err != nil {
+							fatalf(
+								"read validator code %s: %v",
+								codeHash.Hex(),
+								err,
+							)
+						}
+						if len(encoded) != 0 {
 							sum.addValidator(
 								secureKey,
 								codeHash,

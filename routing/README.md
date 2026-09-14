@@ -49,12 +49,17 @@ python3 toolkit/scripts/routing/init-local-routing.py
 
 The initializer refuses to overwrite existing routing decisions.
 
-`build-contract-treasury-routes.py` populates every reviewed non-multisig
-contract as an `ALL` route to treasury. Reviewed multisigs are deliberately
-omitted: add a row to `multisigs.csv` only after the replacement Ethereum Safe
-address has been supplied and verified. Higher-priority entries in
-`bridge-reserves.csv` consume reserve-backed contract claims before the generic
-contract-treasury rows are considered.
+`build-contract-treasury-routes.py` writes every reviewed non-multisig
+contract as an `ALL` route to `contract-recovery-custody`. That destination is
+one Ethereum Safe or multisig that holds the funds until a verified claimant
+is paid. It is separate from the general treasury. Operators may sign for the
+holding address, but they may not spend that ONE as ordinary treasury money.
+The builder always uses this destination; it cannot send those rows to
+`treasury`. A later edit that points a generated row at `treasury` is rejected
+by `apply-routes.py`. Reviewed multisigs are omitted on purpose: add a row to
+`multisigs.csv` only after the replacement Ethereum Safe address has been
+supplied and verified. Higher-priority entries in `bridge-reserves.csv` take
+reserve-backed contract claims before these holding-address rows are used.
 
 The routing command accepts `--routes` repeatedly. Files are merged by
 `priority`, then `route_id`; file order is irrelevant. Use `--replace` when
@@ -68,7 +73,8 @@ regenerating the exception outputs after an approved input change.
 - `destination_id` — symbolic destination from `destinations.csv`;
 - `destination_address` — optional direct Ethereum address; takes precedence
   over `destination_id`;
-- `amount_atto` — exact amount or `ALL` for everything still unassigned;
+- `amount_atto` — exact amount, `ALL` for everything still unassigned, or
+  `SHARD0_LIQUID` for the source's shard-0 liquid component;
 - `allocation_method`:
   - `wallet_first_pro_rata_vault`
   - `wallet_only`
@@ -80,6 +86,10 @@ regenerating the exception outputs after an approved input change.
 For a partial route, `wallet_first_pro_rata_vault` consumes direct wallet tokens
 first. Any remainder is taken proportionally from all of the source's validator
 positions, using exact integer largest-remainder allocation.
+
+Reserve-contract routes use `SHARD0_LIQUID` so same-address value on another
+shard is not mislabeled as contract backing. Any remainder proceeds to the next
+applicable route, normally generic contract-recovery custody.
 
 ## Generated output contracts
 
@@ -96,6 +106,11 @@ contain:
 `validator_wrapper_same_address` rows, and generated holds for contract,
 excluded, or explicitly routed deferred claims. An ordinary code-less EOA with
 no explicit route is absent.
+
+Generated contract-recovery route rows also carry the cutoff block number,
+block hash, and state root used to classify the contract. Routing rejects a
+missing, mixed, or mismatched cutoff identity and requires it to match the
+validator-classification CSV from the same contract-review run.
 
 `validator-governor-exceptions.csv` contains only explicit governor overrides
 and generated governor holds. The default governor for an otherwise untouched
@@ -153,7 +168,8 @@ numerically correct route unsafe. Each row has:
 A resolved row must state the decision. Any pending row keeps the generated
 routing summary on hold.
 
-The file must include `rollback-exploit-proceeds`, `wone-reserve-custody`, and
+The file must include `rollback-exploit-proceeds`,
+`contract-recovery-custody`, `wone-reserve-custody`, and
 `layerzero-nativeoft-reconciliation`, as created by
 `init-local-routing.py`. Missing required decisions reject the input, including
 an empty or header-only file. Additional decisions are allowed and also keep
@@ -177,9 +193,10 @@ are reconciled and a custody destination is approved.
 - Every verified validator wrapper is recorded as a code-bearing same-address
   exception with the validator classification file as evidence.
 - Genuine contracts default to hold unless an explicit recovery route exists.
-- The current canonical policy explicitly routes non-multisig contracts to
-  treasury after any higher-priority incident-specific or reserve-custody
-  route.
+- After any higher-priority incident or reserve route, ordinary
+  non-multisig contracts go to the contract holding address. The builder
+  cannot send those generated rows to the general treasury. Later claimant
+  payments come from that existing balance; they are not a second issuance.
 - Any unconsumed remainder for an ordinary EOA is implicit; any unconsumed
   validator remainder remains an explicit validator exception.
 - Routing requests may not exceed the source's remaining total claim.
