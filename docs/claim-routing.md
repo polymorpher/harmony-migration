@@ -75,6 +75,11 @@ The contract review records a classification and recovery evidence:
   operator;
 - unidentified: insufficient evidence for an automatic destination.
 
+All ownership, Safe-threshold, recovery, proxy, guardian, and holder facts used
+for classification or destination evidence are read at the shard-0 claim
+cutoff block. Latest balances, delegations, and activity may be retained as
+investigative context but cannot select a recovery destination.
+
 ### Recovery principles
 
 - A Safe claim requires an Ethereum Safe or claim process preserving the
@@ -128,10 +133,22 @@ files. A complete deployment allocation must be built later from the base
 entitlements and approved exceptions; the sparse routing outputs are not
 themselves a wallet distribution or Merkle input.
 
-The current policy routes reviewed non-multisig contracts to treasury unless a
-higher-priority incident or reserve-custody route applies. Multisig rows remain
-held until a replacement Ethereum Safe with the verified owner set and
-threshold is supplied.
+The current policy sends reviewed non-multisig contracts to
+`contract-recovery-custody` unless a higher-priority incident or reserve route
+applies. That name is only a label for one Ethereum Safe or multisig holding
+address. The ONE there waits until a verified claimant is paid. Treasury
+operators may sign for the holding address, but they may not spend that ONE as
+ordinary treasury money. Later claimant payments come from the amount already
+in that address; no extra ONE is created.
+
+`build-contract-treasury-routes.py` always writes those rows to
+`contract-recovery-custody`. It has no option that sends them to `treasury`.
+If a generated row is later edited to use `treasury`, `apply-routes.py`
+rejects the file. Send a contract to the general treasury only with a
+separate, higher-priority manual route and recorded evidence.
+
+Multisig rows stay on hold until a replacement Ethereum Safe with the verified
+owner set and threshold is supplied.
 
 ## Additional policy decisions
 
@@ -147,23 +164,27 @@ decision keeps the routing summary on hold even if every address is populated.
 
 ### WONE reserve custody
 
-The native ONE held by the WONE contract is backing, not unrestricted treasury
-property. It is migrated exactly once to a dedicated reserve multisig, separate
-from the general treasury. A later claim portal pays eligible WONE and
-bridged-WONE claimants by transferring ONE from that finite reserve. It does not
-mint or allocate additional ONE for those claims.
+The native ONE in the WONE contract is reserve backing for WONE. It is not
+the treasury's own spendable money. It is migrated once to a dedicated reserve
+multisig, separate from the general treasury. A later claim portal pays eligible
+WONE and bridged-WONE claimants by transferring ONE from that finite reserve.
+It does not mint or allocate additional ONE for those claims.
 
 The WONE contract therefore receives a higher-priority
-`wone-reserve-custody` route instead of the generic contract-treasury route.
-The destination remains held until the approved multisig address is supplied.
-Aggregate portal payments may not exceed the amount transferred to that
-reserve, and each entitlement must be claimable only once.
+`wone-reserve-custody` route instead of generic contract-recovery custody.
+That route consumes only `SHARD0_LIQUID`, the component held by the actual WONE
+contract. Same-address value on another shard is not WONE backing and falls
+through to generic contract-recovery custody. The destination remains held
+until the approved multisig address is supplied. Aggregate portal payments may
+not exceed the amount transferred to that reserve, and each entitlement must
+be claimable only once.
 
 ### LayerZero NativeOFT reconciliation
 
 The LayerZero NativeOFT contracts do not use the WONE reserve; they directly
 hold native ONE backing their cross-chain token system. Their reserves must be
-routed separately and may not become unrestricted treasury property.
+routed separately. They must not be treated as the treasury's own spendable
+money.
 
 Before approving their custody destination, reconcile each Harmony reserve
 against the corresponding remote-chain supply and messages in flight at pinned

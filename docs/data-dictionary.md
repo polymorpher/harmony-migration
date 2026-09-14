@@ -9,6 +9,10 @@
 - `address_or_secure_key` — address when resolved, otherwise the secure key.
 - `address_resolved` — `true` only when `address` is present and verified.
 
+Merge, formatting, eligibility, classification, and routing stages all reject
+an address whose raw 20-byte Keccak-256 hash differs from `secure_key`. The
+standalone final verifier is defense in depth, not the first identity check.
+
 ## Snapshot metadata
 
 - `claims_shard0_block` — fixed shard-0 state block.
@@ -65,6 +69,11 @@ cutoff block. The resulting
 `all-address-migration-claims-cutoff-metadata.csv` companion explicitly
 resolves every blank shard-0 code field to either the empty-code hash or its
 actual code hash, including below-threshold rows reserved for a later portal.
+
+Contract review emits `contract-review-policy.csv` and
+`validator-policy-accounts.csv` as the deterministic cutoff-pinned inputs to
+routing and eligibility. Files containing latest activity context are
+investigative outputs and are not authoritative assignment inputs.
 
 ## Difference CSVs
 

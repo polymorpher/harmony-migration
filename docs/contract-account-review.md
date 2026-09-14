@@ -33,7 +33,8 @@ Detection is exact and needs no heuristics:
    own 20-byte address.
 
 Rows that pass both tests belong in the key-controlled automatic category, not
-the genuine-contract review category. The classifier writes them to
+the genuine-contract review category. The classifier writes the deterministic
+override set to `validator-policy-accounts.csv` and contextual details to
 `validator-accounts.csv`. It locates the `CreateValidator` transaction in the
 canonical block identified by the wrapper's `creation-height`.
 
@@ -47,12 +48,19 @@ total-claim, wallet-airdrop, and staked-to-vault components come from the
 independently constructed two-shard claim CSV.
 Explorer and indexer balances are not used.
 
+Every state fact that can affect classification or recovery—owners,
+thresholds, recovery addresses, proxy slots and implementations, guardians,
+interface probes, and holder enumeration—is read at the shard-0 cutoff block.
+Each derived cache records that block's hash and state root. Classification
+stops if any input used a different block, hash, or root. Latest balances,
+delegations, and activity are context only.
+
 | question | detector |
 |---|---|
 | Gnosis Safe multisig | `getOwners()` returns a non-empty address array, `getThreshold()` in `[1, owners]`, `VERSION()` returns a string, storage slot 0 holds the singleton. Works for the Harmony `multisig.harmony.one` v1.2.0 fork singleton and canonical v1.3.0 / v1.4.1 singletons. Output: owners, threshold, version, singleton, creation, first funding. |
 | 1wallet (all versions) | `getInfo()` returns exactly eight words `(root, height, interval, t0, lifespan, maxOperationsPerInterval, lastResortAddress, dailyLimit)` with sane ranges; `getVersion()` gives major/minor for v2+. Recovery address is reported only when it differs from the 1wallet treasury addresses (`0x7534978F…`, old `0x02F2cF45…`), which the contract itself treats as "not set". `getForwardAddress()` is reported when set. |
 | ERC-20 | `totalSupply()`, `balanceOf()`, `name()`/`symbol()` succeed and the dispatcher (own code or proxy implementation) contains `transfer/approve` and `allowance|transferFrom`. Synthetix-style staking pools that merely expose `balanceOf/totalSupply` are excluded. |
-| NFT | ERC-165 answers for `0x80ac58cd` / `0xd9b67a26` when ERC-165 is implemented consistently; otherwise dispatcher must contain `ownerOf`, `safeTransferFrom`, `setApprovalForAll`, `transferFrom`. CryptoPunks-style markets are reported as "other NFT". Current owners are enumerated from state through Multicall3. |
+| NFT | ERC-165 answers for `0x80ac58cd` / `0xd9b67a26` when ERC-165 is implemented consistently; otherwise dispatcher must contain `ownerOf`, `safeTransferFrom`, `setApprovalForAll`, `transferFrom`. CryptoPunks-style markets are reported as "other NFT". Cutoff-state owners are enumerated through Multicall3. |
 | well-known apps | registry of verified addresses (official address books and repositories), on-chain parent relationships (`factory()`, `POOL()`, `comptroller()`, `walletFactory()`, Safe singleton), function-signature fingerprints matched to the project's source, and (last) `name()`/`symbol()` patterns. The evidence rule that fired is recorded per row. |
 | type-only identification | generic fingerprint rules (staking-precompile delegation pools, NFT marketplaces, presales, payment splitters, escrows, games) for contracts whose operator cannot be attributed. |
 

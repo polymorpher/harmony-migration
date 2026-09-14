@@ -131,8 +131,11 @@ bin/staking-claims \
   > "$OUT/state/staking-claims-summary.json"
 ```
 
-`-discover-validators` is important. It discovers wrappers from the selected
-root instead of trusting a validator list that may describe a later head.
+State-root discovery is the default. The command retains
+`-discover-validators` explicitly above so the recorded invocation shows that
+it discovers wrappers from the selected root instead of trusting a validator
+list that may describe a later head. Use
+`-discover-validators=false` only for an intentional current-list comparison.
 
 ## 7. Recover missing addresses
 
@@ -263,8 +266,9 @@ python3 toolkit/scripts/claims/apply-eligibility-policy.py \
 
 Run the contract-account review described in
 `toolkit/scripts/contract-review/README.md`, using the preliminary code-bearing
-CSV as its input. The review must produce `validator-accounts.csv` from the two
-independent validator-wrapper checks.
+CSV as its input. The review must produce
+`validator-policy-accounts.csv` from the two independent validator-wrapper
+checks.
 
 Apply the final destination split. Verified validator-wrapper accounts are
 allowed in the automatic output; other code-bearing rows remain in genuine
@@ -273,7 +277,7 @@ contract review:
 ```sh
 python3 toolkit/scripts/claims/apply-eligibility-policy.py \
   --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
-  --automatic-code-addresses "$OUT/contract-review/out/validator-accounts.csv" \
+  --automatic-code-addresses "$OUT/contract-review/out/validator-policy-accounts.csv" \
   --automatic-output "$OUT/claims/migration-claims-automatic.csv" \
   --contract-review-output "$OUT/claims/migration-claims-genuine-contract-review.csv" \
   --excluded-address-output "$OUT/claims/migration-claims-excluded.csv" \
@@ -293,7 +297,7 @@ python3 toolkit/scripts/claims/verify-eligibility-policy.py \
   --automatic "$OUT/claims/migration-claims-automatic.csv" \
   --contract-review "$OUT/claims/migration-claims-genuine-contract-review.csv" \
   --excluded-address "$OUT/claims/migration-claims-excluded.csv" \
-  --automatic-code-addresses "$OUT/contract-review/out/validator-accounts.csv" \
+  --automatic-code-addresses "$OUT/contract-review/out/validator-policy-accounts.csv" \
   --policy-summary "$OUT/claims/migration-claims-policy-summary.json" \
   --output "$OUT/claims/migration-claims-policy.verify.json"
 ```
@@ -350,7 +354,7 @@ python3 toolkit/scripts/routing/build-treasury-routes.py \
   --summary routing/local/treasury-summary.json
 
 python3 toolkit/scripts/routing/build-contract-treasury-routes.py \
-  --contracts artifacts/contract-review-20260911/out/contract-review-all.csv \
+  --contracts artifacts/contract-review-20260911/out/contract-review-policy.csv \
   --output routing/local/contracts-to-treasury.csv \
   --summary routing/local/contracts-to-treasury-summary.json
 
@@ -362,7 +366,7 @@ python3 toolkit/scripts/routing/apply-routes.py \
   --priority-shares "$OUT/claims/base-priority-vault-shares.csv" \
   --deferred-shares "$OUT/claims/base-deferred-vault-shares.csv" \
   --base-vault-deposits "$OUT/claims/base-validator-vault-deposits.csv" \
-  --validator-accounts artifacts/contract-review-20260911/out/validator-accounts.csv \
+  --validator-accounts artifacts/contract-review-20260911/out/validator-policy-accounts.csv \
   --routes routing/local/manual.csv \
   --routes routing/local/multisigs.csv \
   --routes routing/local/lost-wallets.csv \
@@ -402,6 +406,11 @@ bin/actual-supply \
   -staking \
   -discover-validators
 ```
+
+As with `staking-claims`, validator discovery from the selected root is the
+default when `-staking` is enabled. `-validator-only` intentionally selects the
+current validator-list comparison because it does not traverse the state trie;
+it therefore requires an explicit `-discover-validators=false`.
 
 Verify the formatted claims:
 

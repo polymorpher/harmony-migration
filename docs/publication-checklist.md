@@ -25,6 +25,9 @@ Before publishing the migration allocation:
    never manually edit, the sparse exception and unresolved outputs. Require
    the routing summary to report `status: ready`, with no inactive route,
    unresolved wallet amount, vault-share amount, or validator governor.
+   Confirm that `contract-recovery-custody` maps to a specific Safe or multisig
+   holding address, separate from general treasury, and that verified claimants
+   are paid only from its existing balance.
 6. State explicitly whether identified rollback-exploit proceeds are honored
    as state claims or redirected. Do not imply that the existing treasury
    inventory covers that incident.
