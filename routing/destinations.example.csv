@@ -1,2 +1,4 @@
 destination_id,destination_address,status,notes
 treasury,,hold,fill the approved Ethereum treasury address before distribution
+wone-reserve-custody,,hold,fill the approved dedicated WONE reserve multisig address
+layerzero-nativeoft-custody,,hold,fill only after NativeOFT reconciliation and custody approval

@@ -57,6 +57,7 @@ def main():
             "multisigs.csv",
             "lost-wallets.csv",
             "frozen-wallets.csv",
+            "bridge-reserves.csv",
             "destinations.csv",
             "validator-governors.csv",
             "policy-decisions.csv",
@@ -73,6 +74,7 @@ def main():
         "multisigs.csv",
         "lost-wallets.csv",
         "frozen-wallets.csv",
+        "bridge-reserves.csv",
     ):
         write_csv(directory / name, ROUTE_FIELDS, ())
     write_csv(
@@ -86,6 +88,24 @@ def main():
                 "notes": (
                     "fill the approved Ethereum treasury address before "
                     "distribution"
+                ),
+            },
+            {
+                "destination_id": "wone-reserve-custody",
+                "destination_address": "",
+                "status": "hold",
+                "notes": (
+                    "fill the approved dedicated WONE reserve multisig "
+                    "address"
+                ),
+            },
+            {
+                "destination_id": "layerzero-nativeoft-custody",
+                "destination_address": "",
+                "status": "hold",
+                "notes": (
+                    "fill only after NativeOFT reconciliation and custody "
+                    "approval"
                 ),
             },
         ),
@@ -110,13 +130,29 @@ def main():
                 ),
             },
             {
-                "decision_id": "wone-layerzero-double-issue",
+                "decision_id": "wone-reserve-custody",
+                "status": "resolved",
+                "decision": (
+                    "migrate the WONE native reserve once to a dedicated "
+                    "custody multisig; claimants receive transfers from that "
+                    "finite reserve, not additional issuance"
+                ),
+                "evidence": (
+                    "docs/claim-routing.md#wone-reserve-custody"
+                ),
+                "notes": (
+                    "the custody destination remains held until its approved "
+                    "multisig address is supplied"
+                ),
+            },
+            {
+                "decision_id": "layerzero-nativeoft-reconciliation",
                 "status": "pending",
                 "decision": "",
                 "evidence": "",
                 "notes": (
-                    "prove each locked ONE backs only one migration or "
-                    "external-chain claim"
+                    "reconcile each direct native reserve against remote "
+                    "supply and messages in flight before approving custody"
                 ),
             },
         ),

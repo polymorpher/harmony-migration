@@ -1,4 +1,5 @@
 decision_id,status,decision,evidence,notes
 rollback-exploit-proceeds,pending,,,Decide how identified exploit proceeds are treated
-wone-layerzero-double-issue,pending,,,Reconcile locked ONE with external-chain claims
+wone-reserve-custody,resolved,Migrate the WONE native reserve once to a dedicated custody multisig and pay claims only by transfer from that reserve,docs/claim-routing.md#wone-reserve-custody,Supply the approved multisig address before distribution
+layerzero-nativeoft-reconciliation,pending,,,Reconcile direct native reserves with remote supply and messages in flight
 example-policy,resolved,document the selected policy,example://governance,
