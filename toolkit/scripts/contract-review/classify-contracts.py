@@ -453,7 +453,7 @@ def classify(address, facts, claim, registry, extra):
     app = None
     proxy = None
     pattern = None
-    if validator.get("is_validator"):
+    if validator.get("is_validator") and validator.get("rlp_wrapper_matches"):
         primary, sub = "validator-account", "Harmony validator (EOA; ValidatorWrapper RLP stored in code field)"
         identity = validator.get("name") or ""
     else:
