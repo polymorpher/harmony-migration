@@ -11,6 +11,7 @@ includes:
 - result population and routing-category counts;
 - per-address balances and claim mappings;
 - contract-classification counts and monetary breakdowns;
+- cutoff-relative account-activity counts and claim-value breakdowns;
 - treasury-routing and incident-recovery amounts;
 - generated CSV hashes and expected verification outputs;
 - detailed finding reports and machine-readable result files.

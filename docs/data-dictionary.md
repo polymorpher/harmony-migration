@@ -75,6 +75,43 @@ Contract review emits `contract-review-policy.csv` and
 routing and eligibility. Files containing latest activity context are
 investigative outputs and are not authoritative assignment inputs.
 
+## Account activity context
+
+`migration-claims-at-least-1000-one-metadata-activity.csv` is an
+activity-enriched companion to the authoritative prioritized-claim CSV. It
+appends:
+
+- `last_activity_time_utc` — UTC time of the latest qualifying transaction at
+  or before the claim cutoff;
+- `last_activity_timestamp_unix` — the same time as a Unix timestamp;
+- `last_activity_block` — the transaction's block on its source shard;
+- `last_activity_shard` — `0` or `1`;
+- `last_activity_type` — `regular` or `staking`;
+- `last_activity_tx_hash` — Harmony transaction hash used as evidence;
+- `last_activity_index` — transaction position within its regular or staking
+  transaction list; and
+- `last_activity_detail` — how the address participated, such as `sender`,
+  `recipient`, or a staking-message role.
+
+A qualifying activity is a direct regular transaction involving the address
+on shard 0 or shard 1, or a shard-0 staking transaction involving that
+address. The scanner reads the archival node's local per-address
+explorer-node index and verifies each selected block against the canonical
+chain database. It does not use the retiring Explorer website or REST API.
+Internal EVM calls and validator consensus signatures are not counted. Blank
+activity fields mean that no qualifying indexed transaction was found; they do
+not prove that the account was never used.
+
+Indexed activity includes failed, reverted, and zero-value top-level
+transactions. A cross-shard `recipient` entry records destination intent in
+the source transaction; it does not prove that the destination receipt was
+applied. A validator can also receive a staking-index entry because somebody
+else delegated or undelegated. Contract creation indexes the creator rather
+than the newly created address.
+
+Activity is capped at the cutoff and is reporting context only. It does not
+change claim amounts, eligibility, or routing.
+
 ## Difference CSVs
 
 Difference files contain, for every component:

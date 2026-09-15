@@ -16,6 +16,18 @@
 - `toolkit/scripts/claims/filter-claims-by-one.py` — generic ONE threshold
 - `toolkit/scripts/claims/enrich-claim-metadata-rpc.py` — complete missing
   cutoff code metadata before contract classification
+- `toolkit/cmd/account-activity` — read each archival node's local
+  per-address explorer-node index in descending order and verify selected
+  activity against canonical block headers; does not use the Explorer website
+  or REST API
+- `toolkit/scripts/claims/fetch-account-activity-rpc.py` — produce the same
+  per-shard activity ledger through an archival explorer node's built-in
+  Harmony RPC when its local database is unavailable
+- `toolkit/scripts/claims/enrich-claim-activity.py` — merge the independent
+  shard-0 and shard-1 activity scans into the prioritized claim CSV
+- `toolkit/scripts/claims/summarize-claim-activity.py` — calculate cumulative
+  prioritized-claim totals for cutoff-relative activity windows and render
+  the embargoed activity finding
 - `toolkit/scripts/claims/vault-share-ledger-rpc.py` — independent historical
   RPC export of per-validator active delegation
 - `toolkit/scripts/claims/verify-vault-delegations.py` — byte-for-byte database

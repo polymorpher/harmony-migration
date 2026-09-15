@@ -249,11 +249,90 @@ python3 toolkit/scripts/claims/filter-claims-by-one.py \
   --comparison ge
 ```
 
+Scan cutoff-capped account activity from each archival node's local
+per-address explorer-node index and verify timestamps against canonical block
+headers. This does not use the retiring Explorer website or REST API. Stop the
+corresponding node before opening its LevelDB files:
+
+```sh
+export SHARD0_EXPLORER_DB=/path/to/shard0/explorer_storage
+export SHARD1_EXPLORER_DB=/path/to/shard1/explorer_storage
+
+bin/account-activity \
+  -db "$SHARD0_DB" \
+  -explorer-db "$SHARD0_EXPLORER_DB" \
+  -candidates "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  -shard 0 \
+  -cutoff-block 93623067 \
+  -cutoff-hash 0x23572e11f6ef9afe4c27ab3102f15b99fd7277ae5f685ccaef0ae571fe7ee0b6 \
+  -output "$OUT/claims/account-activity-shard0.csv" \
+  -summary "$OUT/claims/account-activity-shard0-summary.json"
+
+bin/account-activity \
+  -db "$SHARD1_DB" \
+  -explorer-db "$SHARD1_EXPLORER_DB" \
+  -candidates "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  -shard 1 \
+  -cutoff-block 95882100 \
+  -cutoff-hash 0xf801577a5480175c05a63c8e4e5cf3d2623e1a01bdf176e16b46967405ae02ee \
+  -output "$OUT/claims/account-activity-shard1.csv" \
+  -summary "$OUT/claims/account-activity-shard1-summary.json"
+```
+
+If a local explorer-node database is unavailable but the archival explorer
+node is running, `fetch-account-activity-rpc.py` produces the same per-shard
+CSV through Harmony's built-in RPC. It requests history in descending order,
+resolves each transaction, and skips stale fork entries after comparing their
+block hashes with canonical blocks:
+
+```sh
+export SHARD1_RPC='https://your-shard1-archival-rpc.example'
+
+python3 toolkit/scripts/claims/fetch-account-activity-rpc.py \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  --snapshot-manifest manifests/snapshot-2026-09-10.json \
+  --rpc "$SHARD1_RPC" \
+  --shard 1 \
+  --checkpoint "$OUT/claims/account-activity-shard1-rpc-checkpoint.json" \
+  --output "$OUT/claims/account-activity-shard1.csv" \
+  --summary "$OUT/claims/account-activity-shard1-summary.json"
+```
+
+Merge the per-shard ledgers:
+
+```sh
+python3 toolkit/scripts/claims/enrich-claim-activity.py \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  --snapshot-manifest manifests/snapshot-2026-09-10.json \
+  --shard0-activity "$OUT/claims/account-activity-shard0.csv" \
+  --shard0-summary "$OUT/claims/account-activity-shard0-summary.json" \
+  --shard1-activity "$OUT/claims/account-activity-shard1.csv" \
+  --shard1-summary "$OUT/claims/account-activity-shard1-summary.json" \
+  --output "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity.csv" \
+  --summary "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity-summary.json"
+```
+
+Build the embargoed cumulative 3, 6, 12, 24, 36, and 48 calendar-month
+analysis:
+
+```sh
+python3 toolkit/scripts/claims/summarize-claim-activity.py \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity.csv" \
+  --activity-summary "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity-summary.json" \
+  --snapshot-manifest manifests/snapshot-2026-09-10.json \
+  --summary artifacts/claim-accounting-20260911/priority-claim-activity-summary.json \
+  --report artifacts/claim-accounting-20260911/PRIORITY_CLAIM_ACTIVITY_2026-09-14.md
+```
+
+The activity fields are reporting context only. Activity extraction does not
+inspect internal EVM traces or validator consensus signatures, and an empty
+activity time does not prove that an account was never used.
+
 Create the preliminary code-bearing review set:
 
 ```sh
 python3 toolkit/scripts/claims/apply-eligibility-policy.py \
-  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity.csv" \
   --automatic-output "$OUT/claims/migration-claims-automatic-preliminary-complete.csv" \
   --contract-review-output "$OUT/claims/migration-claims-code-bearing-complete.csv" \
   --excluded-address-output "$OUT/claims/migration-claims-excluded-preliminary-complete.csv" \
@@ -276,7 +355,7 @@ contract review:
 
 ```sh
 python3 toolkit/scripts/claims/apply-eligibility-policy.py \
-  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity.csv" \
   --automatic-code-addresses "$OUT/contract-review/out/validator-policy-accounts.csv" \
   --automatic-output "$OUT/claims/migration-claims-automatic.csv" \
   --contract-review-output "$OUT/claims/migration-claims-genuine-contract-review.csv" \
@@ -293,7 +372,7 @@ contain no unapproved code-bearing account in the automatic output:
 
 ```sh
 python3 toolkit/scripts/claims/verify-eligibility-policy.py \
-  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity.csv" \
   --automatic "$OUT/claims/migration-claims-automatic.csv" \
   --contract-review "$OUT/claims/migration-claims-genuine-contract-review.csv" \
   --excluded-address "$OUT/claims/migration-claims-excluded.csv" \

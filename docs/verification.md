@@ -106,6 +106,27 @@ Cross-shard receipt lookup distinguishes an absent destination key from a
 database read failure. Absence may represent a pending receipt; any `Has`,
 `Get`, decode, or iterator error aborts before totals are published.
 
+The prioritized activity enrichment additionally checks:
+
+- every `>= 1,000 ONE` candidate has exactly one activity record;
+- the local explorer-node indexes are read in descending block/index order for
+  shard-0 and shard-1 regular transactions and shard-0 staking transactions;
+- each selected block exists in the canonical chain database and is at or
+  before the corresponding cutoff;
+- stale fork entries in an explorer-node index are skipped rather than
+  accepted as account activity;
+- the selected transaction block is at or before its shard cutoff and its
+  timestamp is at or before `2026-09-10T14:00:00Z`;
+- activity evidence is either complete or entirely blank; and
+- cumulative calendar-month totals close against the exact candidate ledger.
+
+The scanner does not use the retiring Explorer website or REST API. Activity
+is contextual evidence only. Internal EVM traces and validator consensus
+signatures are not scanned, so these fields are not used to change eligibility
+or routing. Cross-shard recipient entries are not treated as proof that the
+destination receipt was applied, and failed/reverted transactions remain
+activity because they are present in the top-level index.
+
 The selected inclusive eligibility split is independently checked to ensure:
 
 - every resolved address matches its secure account key at merge, format,
