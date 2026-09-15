@@ -46,7 +46,15 @@ FINDING_MAPPINGS = (
         / "artifacts"
         / "source-workspace-top-level"
         / "BLACKLISTED_ADDRESS_TREASURY_RECLAIM_2026-09-11.md",
-        DESTINATION_FINDINGS / "treasury-routing.md",
+        DESTINATION_FINDINGS / "historical-treasury-routing-audit.md",
+        "destination-mapping",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "supply-reconciliation-20260911"
+        / "NON_ISSUANCE_POLICY_2026-09-15.md",
+        DESTINATION_FINDINGS / "non-issuance.md",
         "destination-mapping",
     ),
 )
@@ -213,13 +221,13 @@ RESULT_MAPPINGS = (
         / "artifacts"
         / "supply-reconciliation-20260911"
         / "treasury-reclaim-inventory-summary.json",
-        DESTINATION_RESULTS / "treasury-routing-summary.json",
+        DESTINATION_RESULTS / "non-issuance-source-inventory-summary.json",
         "destination-mapping",
         "policy-scenario",
     ),
     (
-        ROOT / "routing" / "local" / "treasury.csv",
-        DESTINATION_RESULTS / "routes" / "treasury.csv",
+        ROOT / "routing" / "local" / "not-issuing.csv",
+        DESTINATION_RESULTS / "routes" / "not-issuing.csv",
         "destination-mapping",
         "policy-scenario",
     ),
@@ -278,8 +286,8 @@ RESULT_MAPPINGS = (
         "policy-scenario",
     ),
     (
-        ROOT / "routing" / "local" / "treasury-summary.json",
-        DESTINATION_RESULTS / "routes" / "treasury-summary.json",
+        ROOT / "routing" / "local" / "not-issuing-summary.json",
+        DESTINATION_RESULTS / "routes" / "not-issuing-summary.json",
         "destination-mapping",
         "policy-scenario",
     ),
@@ -384,8 +392,10 @@ These unredacted files are under the numerical-results embargo:
   candidates with indexed activity in the prior 3–48 calendar months;
 - `destination-mapping/contract-account-review.md` — contract
   classifications, balances, and claim destination evidence;
-- `destination-mapping/treasury-routing.md` — burn-aware incident and treasury
-  destination policy.
+- `destination-mapping/historical-treasury-routing-audit.md` — retained
+  burn-aware calculation of the exact amounts formerly assigned to treasury;
+- `destination-mapping/non-issuance.md` — current terminal non-issuance policy
+  for those exact amounts.
 
 `SOURCE-HASHES.json` maps each packaged finding to its retained local source.
 
@@ -407,7 +417,7 @@ an independent reproduction with the original migration calculation.
   summaries;
 - `destination-mapping/` contains the preliminary and corrected eligibility
   splits, contract-review summary, vault-share allocation, sparse routing and
-  governor exceptions, unresolved work queue, and treasury-routing scenario.
+  governor exceptions, unresolved work queue, and non-issuance scenario.
 
 `index.json` records each result's domain, evidence classification, source
 identity, packaged identity, byte size, and optional row count.

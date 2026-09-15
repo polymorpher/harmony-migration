@@ -45,9 +45,9 @@ The withheld set includes:
 - preliminary code-bearing review output;
 - final automatic, genuine-contract recovery, and policy-routed outputs;
 - contract-account classifications and destination evidence;
-- explicit treasury/manual routes, compiled sparse wallet/vault exceptions,
-  validator-governor exceptions, and the unresolved work queue;
-- treasury-routing outputs;
+- explicit non-issuance/manual routes, compiled sparse wallet/vault
+  exceptions, validator-governor exceptions, and the unresolved work queue;
+- historical treasury-calculation and current non-issuance outputs;
 - result summary JSON;
 - row counts, component totals, aggregate totals, and output hashes.
 

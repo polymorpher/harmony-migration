@@ -11,7 +11,7 @@ It contains:
   difference CSVs;
 - address-preimage recovery evidence;
 - contract-classification facts, reports, and category CSVs;
-- treasury-routing calculations;
+- historical treasury-routing and current non-issuance calculations;
 - copied remote run outputs and source-workspace evidence.
 
 Do not publish these files during the numerical embargo. Do not place private
