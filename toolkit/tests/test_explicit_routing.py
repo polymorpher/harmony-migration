@@ -211,6 +211,12 @@ class ExplicitRoutingTest(unittest.TestCase):
                         "status": "ready",
                         "notes": "",
                     },
+                    {
+                        "destination_id": "not-issuing",
+                        "destination_address": "",
+                        "status": "not_issuing",
+                        "notes": "",
+                    },
                 ],
             )
             routes = root / "routes.csv"
@@ -263,10 +269,10 @@ class ExplicitRoutingTest(unittest.TestCase):
                         "policy_state_root": "0xdef",
                     },
                     {
-                        "route_id": "excluded-treasury",
+                        "route_id": "excluded-not-issuing",
                         "priority": "100",
                         "source_address": f"0x{3:040x}",
-                        "destination_id": "treasury",
+                        "destination_id": "not-issuing",
                         "destination_address": "",
                         "amount_atto": "SHARD0_LIQUID",
                         "allocation_method": "wallet_first_pro_rata_vault",
@@ -385,8 +391,12 @@ class ExplicitRoutingTest(unittest.TestCase):
             self.assertEqual(result["status"], "hold")
             self.assertEqual(result["source_wallet_airdrop_atto"], "270")
             self.assertEqual(result["source_staked_to_vault_atto"], "190")
-            self.assertEqual(result["unresolved_wallet_airdrop_atto"], "190")
+            self.assertEqual(result["unresolved_wallet_airdrop_atto"], "110")
             self.assertEqual(result["unresolved_staked_to_vault_atto"], "70")
+            self.assertEqual(result["not_issued_wallet_airdrop_atto"], "80")
+            self.assertEqual(result["not_issued_staked_to_vault_atto"], "0")
+            self.assertEqual(result["not_issued_total_claim_atto"], "80")
+            self.assertEqual(result["issuable_total_claim_atto"], "380")
             with exceptions.open(newline="") as handle:
                 rows = list(csv.DictReader(handle))
             treasury = [
@@ -405,6 +415,23 @@ class ExplicitRoutingTest(unittest.TestCase):
                     == f"0x{1:040x}"
                     and row["route_id"].startswith("default-")
                     for row in rows
+                )
+            )
+            non_issued = [
+                row
+                for row in rows
+                if row["route_id"] == "excluded-not-issuing"
+            ]
+            self.assertEqual(len(non_issued), 1)
+            self.assertEqual(
+                non_issued[0]["destination_status"], "not_issuing"
+            )
+            with unresolved.open(newline="") as handle:
+                unresolved_rows = list(csv.DictReader(handle))
+            self.assertFalse(
+                any(
+                    row["route_id"] == "excluded-not-issuing"
+                    for row in unresolved_rows
                 )
             )
             validator_rows = [
@@ -547,6 +574,7 @@ class PolicyDecisionGateTest(unittest.TestCase):
             self.assertIn("wone-reserve-custody", destination_ids)
             self.assertIn("layerzero-nativeoft-custody", destination_ids)
             self.assertIn("contract-recovery-custody", destination_ids)
+            self.assertIn("not-issuing", destination_ids)
 
 
 if __name__ == "__main__":
