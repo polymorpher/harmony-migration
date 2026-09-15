@@ -165,6 +165,12 @@ below-threshold claims.
   `{one(routing["unresolved_wallet_airdrop_atto"])} ONE`
 - unresolved staked-to-vault amount:
   `{one(routing["unresolved_staked_to_vault_atto"])} ONE`
+- not-issued wallet amount:
+  `{one(routing["not_issued_wallet_airdrop_atto"])} ONE`
+- not-issued staked-to-vault amount:
+  `{one(routing["not_issued_staked_to_vault_atto"])} ONE`
+- total remaining issuable amount:
+  `{one(routing["issuable_total_claim_atto"])} ONE`
 - unresolved validator governors: `{routing["unresolved_governors"]}`
 - pending policy decisions:
   `{", ".join(routing["pending_policy_decisions"]) or "none"}`
@@ -173,6 +179,11 @@ Ordinary code-less EOAs use the implicit same-address rule and are deliberately
 absent from the sparse exception output. The routing result remains on hold
 until every required exception destination and validator governor is supplied
 and every policy gate is resolved.
+
+`not_issuing` is a terminal result, not a hold. Those exact amounts receive no
+token. A not-issued staked row also removes the corresponding vault deposit
+assets and shares. Existing partial-row remainders continue to their ordinary
+destinations.
 
 Ordinary non-multisig contract claims go to `contract-recovery-custody`: one
 Safe or multisig that holds those funds until a verified claimant is paid. It
