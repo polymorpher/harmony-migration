@@ -28,6 +28,14 @@ FINDING_MAPPINGS = (
     (
         ROOT
         / "artifacts"
+        / "claim-accounting-20260911"
+        / "PRIORITY_CLAIM_ACTIVITY_2026-09-14.md",
+        CLAIM_FINDINGS / "priority-claim-activity.md",
+        "claim-accounting",
+    ),
+    (
+        ROOT
+        / "artifacts"
         / "contract-review-20260911"
         / "CONTRACT_ACCOUNT_REVIEW_2026-09-11.md",
         DESTINATION_FINDINGS / "contract-account-review.md",
@@ -140,6 +148,45 @@ RESULT_MAPPINGS = (
         CLAIM_RESULTS / "priority-claim-metadata-filter-summary.json",
         "claim-accounting",
         "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "cutoff-20260910"
+        / "claims"
+        / "account-activity-shard0-summary.json",
+        CLAIM_RESULTS / "account-activity-shard0-summary.json",
+        "claim-accounting",
+        "database-derived",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "cutoff-20260910"
+        / "claims"
+        / "account-activity-shard1-summary.json",
+        CLAIM_RESULTS / "account-activity-shard1-summary.json",
+        "claim-accounting",
+        "RPC-derived",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "cutoff-20260910"
+        / "claims"
+        / "migration-claims-at-least-1000-one-metadata-activity-summary.json",
+        CLAIM_RESULTS / "priority-claim-activity-source-summary.json",
+        "claim-accounting",
+        "RPC-derived",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "claim-accounting-20260911"
+        / "priority-claim-activity-summary.json",
+        CLAIM_RESULTS / "priority-claim-activity-summary.json",
+        "claim-accounting",
+        "RPC-derived",
     ),
     (
         ROOT
@@ -333,6 +380,8 @@ These unredacted files are under the numerical-results embargo:
 - `claim-accounting/block-time-reference.md` — block/time mapping evidence;
 - `claim-accounting/claim-delivery-split.md` — exact separation
   of direct wallet airdrop and the amount staked to validator vaults;
+- `claim-accounting/priority-claim-activity.md` — cumulative claim totals for
+  candidates with indexed activity in the prior 3–48 calendar months;
 - `destination-mapping/contract-account-review.md` — contract
   classifications, balances, and claim destination evidence;
 - `destination-mapping/treasury-routing.md` — burn-aware incident and treasury
@@ -354,7 +403,8 @@ This ignored dated directory contains compact numerical outputs used to compare
 an independent reproduction with the original migration calculation.
 
 - `claim-accounting/` contains total-claim, wallet-airdrop,
-  staked-to-vault, threshold, and independent RPC summaries;
+  staked-to-vault, threshold, cutoff-relative activity, and independent RPC
+  summaries;
 - `destination-mapping/` contains the preliminary and corrected eligibility
   splits, contract-review summary, vault-share allocation, sparse routing and
   governor exceptions, unresolved work queue, and treasury-routing scenario.

@@ -31,6 +31,21 @@ RELEASE_FILES = (
     / "migration-claims-at-least-1000-one-metadata.csv",
     ROOT
     / "artifacts"
+    / "cutoff-20260910"
+    / "claims"
+    / "account-activity-shard0.csv",
+    ROOT
+    / "artifacts"
+    / "cutoff-20260910"
+    / "claims"
+    / "account-activity-shard1.csv",
+    ROOT
+    / "artifacts"
+    / "cutoff-20260910"
+    / "claims"
+    / "migration-claims-at-least-1000-one-metadata-activity.csv",
+    ROOT
+    / "artifacts"
     / "contract-review-20260911"
     / "out"
     / "policy-automatic.csv",
@@ -118,9 +133,16 @@ def inspect(path):
     elif name == "staked-to-vault-by-delegation-rpc.csv":
         domain = "claim-accounting"
         classification = "RPC-derived"
+    elif name == "account-activity-shard0.csv":
+        domain = "claim-accounting"
+        classification = "database-derived"
+    elif name == "account-activity-shard1.csv":
+        domain = "claim-accounting"
+        classification = "RPC-derived"
     elif name in {
         "all-address-migration-claims-cutoff-metadata.csv",
         "migration-claims-at-least-1000-one-metadata.csv",
+        "migration-claims-at-least-1000-one-metadata-activity.csv",
     }:
         domain = "claim-accounting"
         classification = "RPC-derived"
