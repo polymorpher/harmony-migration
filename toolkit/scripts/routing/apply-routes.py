@@ -26,6 +26,8 @@ REQUIRED_POLICY_DECISIONS = {
     "rollback-exploit-proceeds",
     "wone-reserve-custody",
 }
+DESTINATION_STATUSES = {"ready", "hold", "not_issuing"}
+NOT_ISSUING_DESTINATION_ID = "not-issuing"
 ROUTING_EXCEPTION_FIELDS = (
     "component",
     "source_secure_key",
@@ -283,11 +285,26 @@ def load_destinations(path):
             if address:
                 address = lib.to_checksum(lib.normalize_address(address))
             status = row["status"].strip()
-            if status not in {"ready", "hold"}:
+            if status not in DESTINATION_STATUSES:
                 raise ValueError(f"{path}:{line}: invalid destination status")
             if status == "ready" and not address:
                 raise ValueError(
                     f"{path}:{line}: ready destination has no address"
+                )
+            if status == "not_issuing" and (
+                address or destination_id != NOT_ISSUING_DESTINATION_ID
+            ):
+                raise ValueError(
+                    f"{path}:{line}: not_issuing must use the "
+                    "not-issuing id with no address"
+                )
+            if (
+                destination_id == NOT_ISSUING_DESTINATION_ID
+                and status != "not_issuing"
+            ):
+                raise ValueError(
+                    f"{path}:{line}: not-issuing destination must have "
+                    "not_issuing status"
                 )
             destinations[destination_id] = {
                 "address": address,
@@ -366,25 +383,37 @@ def resolve_destination(row, destinations):
     direct = row.get("destination_address", "").strip()
     destination_id = row.get("destination_id", "").strip()
     explicit_status = row.get("status", "").strip()
-    if explicit_status and explicit_status not in {"ready", "hold"}:
+    if explicit_status and explicit_status not in DESTINATION_STATUSES:
         raise ValueError(f"invalid explicit destination status: {explicit_status}")
     if direct:
+        if explicit_status == "not_issuing":
+            raise ValueError("not_issuing destination cannot have an address")
         return (
             destination_id,
             lib.to_checksum(lib.normalize_address(direct)),
             explicit_status or "ready",
         )
     if not destination_id:
-        if explicit_status == "ready":
-            raise ValueError("ready destination has no address or id")
+        if explicit_status in {"ready", "not_issuing"}:
+            raise ValueError(
+                f"{explicit_status} destination has no address or id"
+            )
         return "", "", "hold"
     if destination_id not in destinations:
-        if explicit_status == "ready":
+        if explicit_status in {"ready", "not_issuing"}:
             raise ValueError(
-                f"ready destination id is undefined: {destination_id}"
+                f"{explicit_status} destination id is undefined: "
+                f"{destination_id}"
             )
         return destination_id, "", "hold"
     destination = destinations[destination_id]
+    if (
+        explicit_status == "not_issuing"
+        and destination["status"] != "not_issuing"
+    ):
+        raise ValueError(
+            "explicit not_issuing status requires the not-issuing destination"
+        )
     status = (
         "hold"
         if explicit_status == "hold"
@@ -871,7 +900,7 @@ def main():
     unresolved = [
         {field: row[field] for field in UNRESOLVED_FIELDS}
         for row in routing_exceptions
-        if row["destination_status"] != "ready"
+        if row["destination_status"] == "hold"
     ]
 
     governor_overrides = {}
@@ -886,6 +915,10 @@ def main():
             destination_id, destination, status = resolve_destination(
                 row, destinations
             )
+            if status == "not_issuing":
+                raise ValueError(
+                    "not-issuing is not a validator-governor destination"
+                )
             governor_overrides[validator] = {
                 "destination_id": destination_id,
                 "destination": destination,
@@ -940,7 +973,7 @@ def main():
                         "evidence": governor["evidence"],
                     }
                 )
-            if governor["status"] != "ready":
+            if governor["status"] == "hold":
                 unresolved.append(
                     {
                         "component": "validator_governor",
@@ -1027,6 +1060,18 @@ def main():
     unresolved_governors = sum(
         row["component"] == "validator_governor" for row in unresolved
     )
+    not_issued_wallet = sum(
+        int(row["amount_atto"])
+        for row in routing_exceptions
+        if row["component"] == "wallet_airdrop"
+        and row["destination_status"] == "not_issuing"
+    )
+    not_issued_staked = sum(
+        int(row["amount_atto"])
+        for row in routing_exceptions
+        if row["component"] == "vault_shares"
+        and row["destination_status"] == "not_issuing"
+    )
     result = {
         "status": (
             "ready"
@@ -1058,6 +1103,23 @@ def main():
         "source_total_claim_atto": str(source_wallet + source_staked),
         "routed_wallet_airdrop_atto": str(routed_wallet),
         "routed_staked_to_vault_atto": str(routed_staked),
+        "not_issued_wallet_airdrop_atto": str(not_issued_wallet),
+        "not_issued_staked_to_vault_atto": str(not_issued_staked),
+        "not_issued_total_claim_atto": str(
+            not_issued_wallet + not_issued_staked
+        ),
+        "issuable_wallet_airdrop_atto": str(
+            source_wallet - not_issued_wallet
+        ),
+        "issuable_staked_to_vault_atto": str(
+            source_staked - not_issued_staked
+        ),
+        "issuable_total_claim_atto": str(
+            source_wallet
+            + source_staked
+            - not_issued_wallet
+            - not_issued_staked
+        ),
         "exception_wallet_airdrop_atto": str(exception_wallet),
         "exception_staked_to_vault_atto": str(exception_staked),
         "implicit_wallet_airdrop_atto": str(

@@ -144,6 +144,15 @@ def main():
                 ),
             },
             {
+                "destination_id": "not-issuing",
+                "destination_address": "",
+                "status": "not_issuing",
+                "notes": (
+                    "terminal outcome: do not create or distribute tokens "
+                    "for the routed amount"
+                ),
+            },
+            {
                 "destination_id": "contract-recovery-custody",
                 "destination_address": "",
                 "status": "hold",
