@@ -106,6 +106,11 @@ burn/inaccessible and report-identified perpetrator balances use separate
 rules. Some rows require a partial destination split. The total claim stayed
 unchanged.
 
+The September 15 policy update kept those exact audited amounts and partial
+remainders, but changed their outcome from treasury delivery to terminal
+`not_issuing`. The gross audit ledger remains unchanged; final issued supply is
+reduced by the not-issued amount.
+
 ## 9. Contract-account correction
 
 The original policy treated every non-empty code hash as a contract-review

@@ -149,8 +149,9 @@ threshold set is first split by explicit policy and code presence. Code-bearing
 rows are then classified to distinguish key-controlled validator-wrapper
 accounts from genuine EVM contracts. The final outputs carry direct wallet
 airdrop and staked-to-vault amounts separately for automatic key-controlled
-claims, class-specific contract recovery, and treasury-routed claims. Routing
-changes destinations but not the total claim.
+claims, class-specific contract recovery, and policy-routed claims. The gross
+claim remains auditable, while terminal `not_issuing` amounts are excluded from
+final token and vault-share creation.
 
 ## Difference calculation
 

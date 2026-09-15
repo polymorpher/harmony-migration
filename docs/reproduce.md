@@ -421,16 +421,17 @@ python3 toolkit/scripts/claims/build-vault-share-allocation.py \
   --minimum-one 1000
 ```
 
-Build explicit treasury routes, combine them with locally reviewed manual
-routes, and apply them to both delivery paths:
+Build exact non-issuance routes from the historical audited inventory, combine
+them with locally reviewed manual routes, and apply them to both delivery
+paths:
 
 ```sh
 python3 toolkit/scripts/routing/init-local-routing.py  # once, in a new clone
 
-python3 toolkit/scripts/routing/build-treasury-routes.py \
+python3 toolkit/scripts/routing/build-non-issuance-routes.py \
   --inventory artifacts/supply-reconciliation-20260911/treasury-reclaim-inventory.csv \
-  --output routing/local/treasury.csv \
-  --summary routing/local/treasury-summary.json
+  --output routing/local/not-issuing.csv \
+  --summary routing/local/not-issuing-summary.json
 
 python3 toolkit/scripts/routing/build-contract-treasury-routes.py \
   --contracts artifacts/contract-review-20260911/out/contract-review-policy.csv \
@@ -451,7 +452,7 @@ python3 toolkit/scripts/routing/apply-routes.py \
   --routes routing/local/lost-wallets.csv \
   --routes routing/local/frozen-wallets.csv \
   --routes routing/local/bridge-reserves.csv \
-  --routes routing/local/treasury.csv \
+  --routes routing/local/not-issuing.csv \
   --routes routing/local/contracts-to-treasury.csv \
   --destinations routing/local/destinations.csv \
   --governors routing/local/validator-governors.csv \
@@ -469,6 +470,13 @@ summary. It deliberately does not repeat ordinary code-less EOA same-address
 delivery. These files are not a deployment allocation; construct and verify
 the complete wallet/Merkle input only after `routing-summary.json` reports
 `status: ready`. See `routing/README.md` for the file contracts.
+
+The deployment build must exclude every row with
+`destination_status: not_issuing`. For a not-issued staked row, subtract the
+same amount from both the validator's vault deposit and share mint. Verify that
+issued wallet and vault totals equal the routing summary's `issuable_*` totals,
+and that issued plus not-issued amounts close to the unchanged gross claim
+ledger.
 
 See `docs/eligibility-policy.md`, `docs/claim-routing.md`, and
 `docs/contract-account-review.md` before publication.

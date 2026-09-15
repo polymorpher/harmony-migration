@@ -6,8 +6,9 @@ Claim amounts and destinations are separate concerns:
 total_claim = wallet_airdrop + staked_to_vault
 ```
 
-Routes never change `total_claim`. They only redirect wallet tokens and vault
-shares from a Harmony source address to an Ethereum destination or hold.
+Routes never change the gross `total_claim` audit ledger. They redirect wallet
+tokens and vault shares, hold them, or mark an exact amount `not_issuing`.
+Not-issued amounts are excluded from final token and vault-share creation.
 
 Same-address delivery is implicit only for an ordinary code-less EOA. Generated
 routing files contain exceptions, not one row per ordinary wallet. Verified
@@ -26,6 +27,7 @@ deferred claims are also exceptions.
 
 Place manual additions in separate files under `routing/local/`, for example:
 
+- `not-issuing.csv`
 - `treasury.csv`
 - `contracts-to-treasury.csv`
 - `multisigs.csv`
@@ -48,6 +50,11 @@ python3 toolkit/scripts/routing/init-local-routing.py
 ```
 
 The initializer refuses to overwrite existing routing decisions.
+
+`build-non-issuance-routes.py` converts the exact audited amounts previously
+assigned to treasury into `not-issuing.csv`. It reads the legacy
+`treasury_reclaim_atto` inventory field without increasing it. Existing
+partial-row remainders continue to the ordinary destination.
 
 `build-contract-treasury-routes.py` writes every reviewed non-multisig
 contract as an `ALL` route to `contract-recovery-custody`. That destination is
@@ -117,14 +124,15 @@ and generated governor holds. The default governor for an otherwise untouched
 validator vault is implicitly the validator's key-controlled address.
 
 `unresolved-routing.csv` is derived from the two exception sets. It contains
-every non-ready wallet, vault-share, or governor exception, including its amount
-and intended destination. It is a work queue and release gate, not an input and
-not an additional policy decision.
+every held wallet, vault-share, or governor exception, including its amount and
+intended destination. A `not_issuing` row is terminal and does not appear in
+this work queue. The file is a release gate, not an input or an additional
+policy decision.
 
 `routing-summary.json` proves that explicit routes plus implicit defaults
 preserve the complete wallet and staked-to-vault totals. It records hashes for
-the three generated CSVs, unresolved totals, inactive routes, and pending
-policy decisions.
+the three generated CSVs, unresolved totals, not-issued and remaining issuable
+totals, inactive routes, and pending policy decisions.
 
 These files do not constitute a complete deployment allocation. A later
 deployment build must materialize and verify the final wallet/Merkle input from
@@ -132,13 +140,19 @@ the base entitlements plus the approved sparse exceptions.
 
 ## Destination input columns
 
-- `destination_id` — symbolic identifier such as `treasury`;
+- `destination_id` — symbolic identifier such as `treasury` or
+  `not-issuing`;
 - `destination_address` — Ethereum address, blank while unresolved;
-- `status` — `ready` or `hold`;
+- `status` — `ready`, `hold`, or terminal `not_issuing`;
 - `notes` — operator notes.
 
 A blank or held exception destination never falls back to the original source
 address. It remains in `unresolved-routing.csv`.
+
+`not-issuing` is the only destination allowed to have `not_issuing` status. It
+must have no address. The routed amount is complete and resolved, but no token
+may be created for it. A not-issued staked row also reduces the corresponding
+validator vault's deployed assets and shares by that exact amount.
 
 ## Validator-governor input columns
 
@@ -187,8 +201,8 @@ are reconciled and a custody destination is approved.
 
 ## Safety
 
-- Treasury, burn, inaccessible, and perpetrator routes take precedence over
-  same-address delivery.
+- Non-issuance, treasury, burn, inaccessible, and perpetrator routes take
+  precedence over same-address delivery.
 - Ordinary code-less EOAs alone use an implicit same-address default.
 - Every verified validator wrapper is recorded as a code-bearing same-address
   exception with the validator classification file as evidence.
@@ -200,8 +214,8 @@ are reconciled and a custody destination is approved.
 - Any unconsumed remainder for an ordinary EOA is implicit; any unconsumed
   validator remainder remains an explicit validator exception.
 - Routing requests may not exceed the source's remaining total claim.
-- Explicit exceptions plus implicit defaults must sum back to the original
-  wallet and vault totals.
+- Issuable amounts plus not-issued amounts must sum back to the original wallet
+  and vault totals.
 
 The authoritative routing policy consists of the reviewed sparse inputs and
 their generated exception outputs under `routing/local/`. It may feed a later

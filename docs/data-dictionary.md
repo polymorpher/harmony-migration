@@ -147,8 +147,8 @@ The threshold result is split into:
 
 - automatic ordinary-EOA and verified validator-account claims;
 - genuine-contract manual review and class-specific recovery;
-- treasury-routed burn, inaccessible, previously-blacklisted, and
-  report-identified perpetrator addresses.
+- non-issued burn, inaccessible, previously-blacklisted, and
+  report-identified perpetrator amounts.
 
 The account-category CSVs carry both `wallet_airdrop_atto` and
 `staked_to_vault_atto`. A separate per-validator ledger maps each active
@@ -192,6 +192,12 @@ code-less EOA implicit default:
 - `exception_type` — explicit route, validator same-address approval, or
   generated hold;
 - route, destination, status, reason, and evidence fields.
+
+`destination_status = not_issuing` is a terminal outcome with no destination
+address. `routing-summary.json` records `not_issued_*` totals and the remaining
+`issuable_*` totals. Gross claims remain unchanged, and:
+
+`gross claim = issuable amount + not-issued amount`.
 
 `validator-governor-exceptions.csv` is separate because control of a validator
 vault is not delivery of the validator account's own claim. It contains

@@ -87,32 +87,32 @@ An EVM contract does not normally control the same address on Ethereum with a
 private key. Do not simply send ERC-20 tokens to a genuine contract address
 without a recovery design.
 
-## Treasury-routed addresses
+## Not-issued incident amounts
 
-The treasury-routing review covers selected burn/inaccessible addresses,
+The non-issuance review covers selected burn/inaccessible addresses,
 blacklisted direct extra-mint recipients, and positive perpetrator addresses
 explicitly named by the wallet-theft reports. Address counts and category
 amounts are withheld during independent reproduction.
 
 For an extra-mint recipient:
 
-`treasury reclaim = min(total claim, max(exact extra mint - verified burn, 0))`.
+`not-issued amount = min(total claim, max(exact extra mint - verified burn, 0))`.
 
 This prevents a full burn or legitimate balance above the unreturned extra
-mint from being seized. The total treasury-routing amount is withheld during
+mint from being removed. The total non-issuance amount is withheld during
 independent reproduction.
 
 The original whole-row category splitter cannot represent partially
 reclaimable addresses. Final allocation generation must split those rows
-between treasury and the original address.
+between `not-issuing` and the original address.
 
 The explicit route engine performs that split across direct wallet tokens and
 validator-vault shares. The base category files are not distribution outputs.
 See `routing/README.md`.
 
-Treasury routing changes the destination of direct tokens and, where
-applicable, vault shares. It does not subtract anything from the total claim or
-any supply total.
+`not-issuing` is not an address and receives nothing. The gross claim remains
+in the audit ledger, while final issued supply excludes the exact not-issued
+wallet and vault amounts.
 
 ## Retired-shard receipts
 
@@ -130,6 +130,6 @@ The final release metadata must state:
 - threshold denomination and exact atto value;
 - inclusive `>=`;
 - contract-account treatment;
-- treasury-routing address inventory and policy;
+- non-issuance address inventory and policy;
 - retired-shard receipt treatment;
 - output row count, total amount, and SHA-256.

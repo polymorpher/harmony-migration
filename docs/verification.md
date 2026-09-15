@@ -159,15 +159,20 @@ The selected inclusive eligibility split is independently checked to ensure:
   separate;
 - no held destination silently falls back to the original address.
 
-The later treasury-routing overlay must additionally verify:
+The incident non-issuance overlay must additionally verify:
 
-- recipient reclaim is
+- each direct extra-mint recipient's not-issued amount is
   `min(total claim, max(exact extra mint - verified burn, 0))`;
-- partially reclaimed rows preserve the remainder for the original address;
+- partially affected rows preserve the remainder for the original address;
 - burn/inaccessible and report-identified perpetrator rows use the selected
-  full-claim policy;
-- treasury and ordinary-destination outputs sum back to unchanged wallet and
-  vault entitlements.
+  previously audited amount;
+- every `not_issuing` row has no destination address and is absent from the
+  unresolved work queue;
+- no token is created for a not-issued wallet row, and every not-issued staked
+  row reduces both its validator-vault deposit and share mint by the same
+  amount; and
+- issuable plus not-issued wallet and vault amounts sum back to the unchanged
+  gross entitlements.
 
 ## Expected primary result
 

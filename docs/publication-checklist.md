@@ -17,14 +17,16 @@ Before publishing the migration allocation:
    - genuine contracts remain in class-specific recovery;
    - every contract destination has documented evidence and no category is
      silently sent to its old Harmony contract address.
-4. Publish the burn-aware treasury-routing ledger. Confirm that extra-mint
-   recipient amounts are capped by unreturned extra mint, partial rows are
-   split correctly across wallet and vault delivery, and treasury routing does
-   not change the total claim.
+4. Publish the burn-aware non-issuance ledger. Confirm that extra-mint
+   recipient amounts are capped by unreturned extra mint, partial rows preserve
+   the existing ordinary-destination remainder, and no token or vault share is
+   created for a `not_issuing` row. A not-issued staked row must also reduce
+   the corresponding validator-vault deposit by the same amount.
 5. Apply every reviewed route input under `routing/local/`. Regenerate, but
    never manually edit, the sparse exception and unresolved outputs. Require
    the routing summary to report `status: ready`, with no inactive route,
    unresolved wallet amount, vault-share amount, or validator governor.
+   Confirm that gross claims equal issuable plus not-issued amounts exactly.
    Confirm that `contract-recovery-custody` maps to a specific Safe or multisig
    holding address, separate from general treasury, and that verified claimants
    are paid only from its existing balance.

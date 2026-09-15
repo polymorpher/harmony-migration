@@ -32,8 +32,9 @@ The inclusive result is split into ordinary EOAs, verified validator-wrapper
 accounts that are also key-controlled, genuine contracts requiring
 class-specific recovery, and policy-routed accounts. Extra-mint recipients are
 capped by their exact unreturned extra mint, so some claim rows must be
-split between treasury and the ordinary destination. Routing does not change
-the total claim.
+split between terminal non-issuance and the ordinary destination. The gross
+claim ledger stays unchanged, but not-issued amounts are excluded from final
+token and vault-share creation.
 
 Calculated totals, component breakdowns, result population counts, and output
 hashes are intentionally withheld pending independent reproduction and the
@@ -43,8 +44,8 @@ first public results article. See
 ## Distribution status
 
 The public source package is ready for independent review. It is **not itself a
-distribution file**. Treasury, contract recovery, lost-wallet, frozen-wallet,
-and validator-governor destinations live in ignored routing files.
+distribution file**. Non-issuance, treasury, contract recovery, lost-wallet,
+frozen-wallet, and validator-governor decisions live in ignored routing files.
 
 The ignored routing workspace under `routing/local/` contains reviewed sparse
 exceptions, a generated unresolved work queue, and a conservation summary.

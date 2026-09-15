@@ -21,8 +21,8 @@ remove deferred delegators' backing from the vault.
 Apply routing decisions in this order:
 
 1. enforce the inclusive `>= 1,000 ONE` eligibility threshold;
-2. apply explicitly approved treasury, burn, inaccessible-address, and
-   incident-recovery rules;
+2. apply explicitly approved non-issuance, treasury, and incident-recovery
+   rules;
 3. identify Harmony validator-wrapper accounts and treat them as
    key-controlled accounts;
 4. apply an implicit same-address rule only to ordinary code-less EOAs and
@@ -98,23 +98,29 @@ investigative context but cannot select a recovery destination.
 - NFT holders do not automatically own the ONE balance of the NFT contract.
 - Operator-unattributed or unidentified contracts remain on hold.
 
-## Incident and treasury overlays
+## Incident non-issuance overlay
 
 For a direct extra-mint recipient, the current policy ceiling is:
 
 `min(total claim, max(exact extra mint - verified incident-linked burn, 0))`.
 
-This may split both direct-wallet and vault-share delivery between treasury
-and the ordinary destination. Burn/inaccessible and report-identified
-perpetrator policies are separate. No routing overlay may reduce or inflate the
-total claim.
+The exact amount previously assigned to treasury is now marked
+`not-issuing`. It receives no ERC-20 tokens. If the route reaches a staked
+component, the corresponding vault deposit assets and shares are also omitted.
+Any existing remainder stays at the ordinary destination. Burn/inaccessible and
+report-identified perpetrator rows retain their previously audited exact
+amounts, but those amounts are also not issued.
+
+The gross cutoff claim ledger remains unchanged for audit. Final issued supply
+is `gross claim - not-issued amount`; this is an intentional supply reduction,
+not an unresolved destination or transfer to treasury.
 
 ## Explicit routing files
 
 Real routes live under the ignored `routing/local/` directory. Separate CSVs
-may be maintained for treasury, bridge reserves, multisigs, lost wallets,
-frozen wallets, and other manual decisions. See `routing/README.md` for the
-schema and precedence.
+may be maintained for non-issuance, treasury, bridge reserves, multisigs, lost
+wallets, frozen wallets, and other manual decisions. See `routing/README.md`
+for the schema and precedence.
 
 Routes are applied to direct wallet tokens first and then proportionally across
 the source's validator-vault positions when necessary. A missing destination
@@ -155,9 +161,9 @@ owner set and threshold is supplied.
 - Historical rollback-exploit proceeds remain part of state-derived total
   claims unless an explicit route file redirects identified addresses. The
   treasury inventory does not implicitly cover that incident.
-- If a validator address is explicitly frozen or treasury-routed, its vault
-  governor defaults to hold until `validator-governors.csv` names an approved
-  Ethereum governor.
+- If a validator address is explicitly frozen, non-issued, or
+  treasury-routed, its vault governor defaults to hold until
+  `validator-governors.csv` names an approved Ethereum governor.
 
 These are release gates in `routing/local/policy-decisions.csv`; a pending
 decision keeps the routing summary on hold even if every address is populated.
@@ -202,7 +208,7 @@ The public classifier and evidence schema are documented in:
 - `toolkit/scripts/claims/vault-share-ledger-rpc.py`;
 - `toolkit/scripts/claims/verify-vault-delegations.py`;
 - `toolkit/scripts/claims/build-vault-share-allocation.py`;
-- `toolkit/scripts/routing/build-treasury-routes.py`;
+- `toolkit/scripts/routing/build-non-issuance-routes.py`;
 - `toolkit/scripts/routing/build-contract-treasury-routes.py`;
 - `toolkit/scripts/routing/apply-routes.py`.
 

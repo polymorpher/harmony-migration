@@ -125,14 +125,15 @@ See `docs/contract-account-review.md`.
 
 - `toolkit/scripts/routing/init-local-routing.py` — create held-by-default local
   route and policy files without overwriting operator decisions
-- `toolkit/scripts/routing/build-treasury-routes.py` — convert the audited
-  treasury inventory to explicit route rows
+- `toolkit/scripts/routing/build-non-issuance-routes.py` — convert the exact
+  audited amounts formerly assigned to treasury into terminal non-issuance
+  routes without changing partial-row remainders
 - `toolkit/scripts/routing/build-contract-treasury-routes.py` — route every
   reviewed non-multisig contract to a specific Safe or multisig holding
   address for later verified claims
-- `toolkit/scripts/routing/apply-routes.py` — merge treasury and manual routes,
-  split partial routes across wallet/vault delivery, verify implicit defaults,
-  and emit sparse routing, governor, and unresolved exceptions
+- `toolkit/scripts/routing/apply-routes.py` — merge non-issuance and manual
+  routes, split partial routes across wallet/vault delivery, verify implicit
+  defaults, and emit sparse routing, governor, and unresolved exceptions
 - `routing/` — public schema/examples plus ignored real routing files
 
 ## Embargo and publication tooling
