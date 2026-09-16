@@ -53,7 +53,15 @@ FINDING_MAPPINGS = (
         ROOT
         / "artifacts"
         / "supply-reconciliation-20260911"
-        / "NON_ISSUANCE_POLICY_2026-09-15.md",
+        / "WALLET_THEFT_INVENTORY_UPDATE_2026-09-16.md",
+        DESTINATION_FINDINGS / "wallet-theft-inventory-update.md",
+        "destination-mapping",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "supply-reconciliation-20260911"
+        / "NON_ISSUANCE_POLICY_2026-09-16.md",
         DESTINATION_FINDINGS / "non-issuance.md",
         "destination-mapping",
     ),
@@ -221,7 +229,34 @@ RESULT_MAPPINGS = (
         / "artifacts"
         / "supply-reconciliation-20260911"
         / "treasury-reclaim-inventory-summary.json",
-        DESTINATION_RESULTS / "non-issuance-source-inventory-summary.json",
+        DESTINATION_RESULTS / "historical-treasury-inventory-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "supply-reconciliation-20260911"
+        / "reported-wallet-theft-perpetrator-related-cutoff-summary.json",
+        DESTINATION_RESULTS / "wallet-theft-perpetrator-related-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "supply-reconciliation-20260911"
+        / "wallet-theft-victim-inventory-summary.json",
+        DESTINATION_RESULTS / "wallet-theft-victim-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "supply-reconciliation-20260911"
+        / "non-issuance-inventory-summary.json",
+        DESTINATION_RESULTS / "non-issuance-inventory-summary.json",
         "destination-mapping",
         "policy-scenario",
     ),
@@ -394,6 +429,8 @@ These unredacted files are under the numerical-results embargo:
   classifications, balances, and claim destination evidence;
 - `destination-mapping/historical-treasury-routing-audit.md` — retained
   burn-aware calculation of the exact amounts formerly assigned to treasury;
+- `destination-mapping/wallet-theft-inventory-update.md` — expanded
+  perpetrator-related inventory and separate reported-victim reconciliation;
 - `destination-mapping/non-issuance.md` — current terminal non-issuance policy
   for those exact amounts.
 

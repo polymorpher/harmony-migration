@@ -107,6 +107,22 @@ RELEASE_FILES = (
     ROOT
     / "artifacts"
     / "supply-reconciliation-20260911"
+    / "reported-wallet-theft-perpetrator-related-cutoff.csv",
+    ROOT
+    / "artifacts"
+    / "supply-reconciliation-20260911"
+    / "wallet-theft-inventory-additions-20260916.csv",
+    ROOT
+    / "artifacts"
+    / "supply-reconciliation-20260911"
+    / "wallet-theft-victim-inventory-20260916.csv",
+    ROOT
+    / "artifacts"
+    / "supply-reconciliation-20260911"
+    / "non-issuance-inventory.csv",
+    ROOT
+    / "artifacts"
+    / "supply-reconciliation-20260911"
     / "treasury-reclaim-inventory.csv",
 )
 
