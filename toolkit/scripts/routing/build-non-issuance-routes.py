@@ -22,10 +22,11 @@ FIELDS = (
     "notes",
 )
 DESTINATION_ID = "not-issuing"
-AMOUNT_FIELD = "treasury_reclaim_atto"
+AMOUNT_FIELD = "not_issued_atto"
 ALLOWED_CATEGORIES = {
     "blacklisted_extra_mint_recipient",
     "burn_or_inaccessible",
+    "report_linked_theft_recipient",
     "reported_wallet_theft_perpetrator",
 }
 
@@ -112,13 +113,9 @@ def main():
                     "amount_atto": str(amount),
                     "allocation_method": "wallet_first_pro_rata_vault",
                     "reason": f"not_issuing_{category}",
-                    "evidence": (
-                        "artifacts/supply-reconciliation-20260911/"
-                        "treasury-reclaim-inventory.csv"
-                    ),
+                    "evidence": args.inventory,
                     "notes": (
-                        "exact amount previously assigned to treasury; "
-                        "now excluded from issuance"
+                        "exact reviewed amount excluded from issuance"
                     ),
                 }
             )
@@ -138,8 +135,8 @@ def main():
     result = {
         "status": "passed",
         "policy": (
-            "do not issue the exact amounts previously assigned to treasury; "
-            "preserve every existing remainder at its ordinary destination"
+            "do not issue the exact reviewed amounts; preserve every "
+            "existing remainder at its ordinary destination"
         ),
         "inventory": args.inventory,
         "inventory_sha256": file_sha256(args.inventory),

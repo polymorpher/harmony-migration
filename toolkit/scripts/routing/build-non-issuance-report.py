@@ -13,6 +13,9 @@ CATEGORY_LABELS = {
         "Burn-aware extra-mint portion for blacklisted recipients"
     ),
     "burn_or_inaccessible": "Burn and inaccessible-address amounts",
+    "report_linked_theft_recipient": (
+        "Direct recipients linked to reported wallet thefts"
+    ),
     "reported_wallet_theft_perpetrator": (
         "Report-identified wallet-theft perpetrator amounts"
     ),
@@ -64,15 +67,15 @@ def main():
     inventory = load(args.inventory_summary)
     routes = load(args.route_summary)
     routing = load(args.routing_summary)
-    historical_amount = int(inventory["totals_atto"]["treasury_reclaim"])
+    inventory_amount = int(inventory["totals_atto"]["not_issued"])
     not_issued = int(routes["not_issued_atto"])
     applied_not_issued = int(routing["not_issued_total_claim_atto"])
     gross = int(routing["source_total_claim_atto"])
     issuable = int(routing["issuable_total_claim_atto"])
     if routes.get("destination_id") != "not-issuing":
         raise ValueError("route summary is not terminal non-issuance")
-    if historical_amount != not_issued:
-        raise ValueError("non-issuance changed the audited historical amount")
+    if inventory_amount != not_issued:
+        raise ValueError("routes changed the reviewed non-issuance amount")
     if applied_not_issued != not_issued:
         raise ValueError("applied routing did not consume every exact route")
     if gross != issuable + applied_not_issued:
@@ -82,6 +85,7 @@ def main():
     for category in (
         "blacklisted_extra_mint_recipient",
         "burn_or_inaccessible",
+        "report_linked_theft_recipient",
         "reported_wallet_theft_perpetrator",
     ):
         values = routes["categories"][category]
@@ -94,26 +98,35 @@ def main():
         )
     text = f"""# Incident-address non-issuance policy
 
-Prepared: `2026-09-15`
+Prepared: `2026-09-16` (updates the September 15 destination decision)
 
 ## Decision
 
-The exact amounts previously assigned to treasury are now **not issued**.
+The reviewed incident amounts are **not issued**.
 `not-issuing` is a terminal routing outcome, not an address, account, transfer,
 or unresolved hold. No ERC-20 ONE, validator-vault deposit asset, or
 validator-vault share is created for these amounts.
 
-This update changes only the destination outcome. It does not expand the
-address set or the amount selected by the prior audit. In particular,
-burn-aware extra-mint rows keep their existing ordinary-destination remainder.
-The source inventory retains the legacy field name
-`treasury_reclaim_atto` because that file is historical evidence.
+The historical amounts previously assigned to treasury remain exact.
+Burn-aware extra-mint rows keep their existing ordinary-destination remainder.
+The September 16 update adds four reviewed perpetrator-related addresses:
+two explicitly named alleged perpetrators and two direct theft recipients.
+Their balances already existed in the gross cutoff ledger; this is a
+classification and routing update, not additional supply.
+
+Twenty reported victim wallets are recorded separately and are not routed to
+non-issuance.
 
 ## Exact non-issuance
 
 {table(("Category", "Routes", "Not issued ONE"), category_rows)}
 
 - **Total not issued:** `{one(applied_not_issued)} ONE`
+- **September 16 perpetrator-related addition:**
+  `{one(inventory["wallet_theft_addition_atto"])} ONE`
+- **Reported victim wallets kept outside non-issuance:**
+  `{inventory["victim_addresses_not_routed"]}` addresses,
+  `{one(inventory["victim_total_claim_atto_not_routed"])} ONE`
 - **Gross cutoff claims represented by routing:**
   `{one(gross)} ONE`
 - **Remaining issuable amount:** `{one(issuable)} ONE`
@@ -127,8 +140,8 @@ gross cutoff claim = remaining issuable + not issued
 
 ## Routing behavior
 
-- `build-non-issuance-routes.py` copies each positive historical
-  `treasury_reclaim_atto` amount exactly.
+- `build-non-issuance-routes.py` copies each positive `not_issued_atto`
+  amount exactly.
 - `apply-routes.py` emits `destination_status = not_issuing` with no
   destination address.
 - Not-issued rows do not appear in `unresolved-routing.csv`.
@@ -140,7 +153,7 @@ gross cutoff claim = remaining issuable + not issued
 
 ## Evidence
 
-- Historical audited inventory:
+- Current reviewed non-issuance inventory:
   `{args.inventory_summary}`
 - Generated non-issuance route summary:
   `{args.route_summary}`
@@ -148,8 +161,8 @@ gross cutoff claim = remaining issuable + not issued
   `{args.routing_summary}`
 
 The historical treasury-routing analysis remains retained separately as the
-evidence used to calculate the exact amounts. This policy report supersedes
-only its destination conclusion.
+evidence used to calculate the original exact amounts. The September 16
+wallet-theft inventory provides the evidence for the four additions.
 """
     with open(args.output + ".partial", "x", encoding="utf-8") as output:
         output.write(text)

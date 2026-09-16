@@ -23,7 +23,7 @@ class NonIssuanceRoutesTest(unittest.TestCase):
             fields = (
                 "address_hex",
                 "category",
-                "treasury_reclaim_atto",
+                "not_issued_atto",
                 "cutoff_claim_atto",
                 "remaining_original_address_allocation_atto",
             )
@@ -39,14 +39,14 @@ class NonIssuanceRoutesTest(unittest.TestCase):
                             "category": (
                                 "blacklisted_extra_mint_recipient"
                             ),
-                            "treasury_reclaim_atto": "40",
+                            "not_issued_atto": "40",
                             "cutoff_claim_atto": "100",
                             "remaining_original_address_allocation_atto": "60",
                         },
                         {
                             "address_hex": f"0x{2:040x}",
                             "category": "burn_or_inaccessible",
-                            "treasury_reclaim_atto": "75",
+                            "not_issued_atto": "75",
                             "cutoff_claim_atto": "75",
                             "remaining_original_address_allocation_atto": "0",
                         },
@@ -55,8 +55,15 @@ class NonIssuanceRoutesTest(unittest.TestCase):
                             "category": (
                                 "reported_wallet_theft_perpetrator"
                             ),
-                            "treasury_reclaim_atto": "0",
+                            "not_issued_atto": "0",
                             "cutoff_claim_atto": "0",
+                            "remaining_original_address_allocation_atto": "0",
+                        },
+                        {
+                            "address_hex": f"0x{4:040x}",
+                            "category": "report_linked_theft_recipient",
+                            "not_issued_atto": "5",
+                            "cutoff_claim_atto": "5",
                             "remaining_original_address_allocation_atto": "0",
                         },
                     )
@@ -81,7 +88,7 @@ class NonIssuanceRoutesTest(unittest.TestCase):
             with routes.open(newline="") as source:
                 rows = list(csv.DictReader(source))
             self.assertEqual(
-                [row["amount_atto"] for row in rows], ["40", "75"]
+                [row["amount_atto"] for row in rows], ["40", "75", "5"]
             )
             self.assertTrue(
                 all(
@@ -91,9 +98,9 @@ class NonIssuanceRoutesTest(unittest.TestCase):
                 )
             )
             result = json.loads(summary.read_text())
-            self.assertEqual(result["not_issued_atto"], "115")
-            self.assertEqual(result["routes"], 2)
-            self.assertEqual(result["inventory_rows"], 3)
+            self.assertEqual(result["not_issued_atto"], "120")
+            self.assertEqual(result["routes"], 3)
+            self.assertEqual(result["inventory_rows"], 4)
 
 
 if __name__ == "__main__":
