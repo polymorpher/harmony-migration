@@ -22,6 +22,9 @@ Before publishing the migration allocation:
    the existing ordinary-destination remainder, and no token or vault share is
    created for a `not_issuing` row. A not-issued staked row must also reduce
    the corresponding validator-vault deposit by the same amount.
+   Confirm that wallet-theft additions distinguish explicitly reported
+   perpetrators from transaction-linked recipients and that reported victim
+   wallets are not routed to non-issuance.
 5. Apply every reviewed route input under `routing/local/`. Regenerate, but
    never manually edit, the sparse exception and unresolved outputs. Require
    the routing summary to report `status: ready`, with no inactive route,

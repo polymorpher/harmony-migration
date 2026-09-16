@@ -148,7 +148,10 @@ The threshold result is split into:
 - automatic ordinary-EOA and verified validator-account claims;
 - genuine-contract manual review and class-specific recovery;
 - non-issued burn, inaccessible, previously-blacklisted, and
-  report-identified perpetrator amounts.
+  report-identified perpetrator or directly linked theft-recipient amounts.
+
+Reported victim wallets are a distinct incident-evidence category. They are not
+automatically classified as perpetrators or routed to `not-issuing`.
 
 The account-category CSVs carry both `wallet_airdrop_atto` and
 `staked_to_vault_atto`. A separate per-validator ledger maps each active

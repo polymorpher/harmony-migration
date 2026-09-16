@@ -36,6 +36,10 @@ split between terminal non-issuance and the ordinary destination. The gross
 claim ledger stays unchanged, but not-issued amounts are excluded from final
 token and vault-share creation.
 
+Wallet-theft evidence keeps explicitly reported perpetrators,
+transaction-linked theft recipients, and reported victim wallets as separate
+roles. Victim wallets are not automatically routed to non-issuance.
+
 Calculated totals, component breakdowns, result population counts, and output
 hashes are intentionally withheld pending independent reproduction and the
 first public results article. See

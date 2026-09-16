@@ -51,10 +51,14 @@ python3 toolkit/scripts/routing/init-local-routing.py
 
 The initializer refuses to overwrite existing routing decisions.
 
-`build-non-issuance-routes.py` converts the exact audited amounts previously
-assigned to treasury into `not-issuing.csv`. It reads the legacy
-`treasury_reclaim_atto` inventory field without increasing it. Existing
-partial-row remainders continue to the ordinary destination.
+`merge-wallet-theft-inventory.py` preserves the historical exact amounts,
+validates reviewed wallet-theft additions against the global cutoff ledger,
+and writes `non-issuance-inventory.csv`. Reported victim wallets remain a
+separate review population and are not routed to non-issuance.
+
+`build-non-issuance-routes.py` converts each positive
+`not_issued_atto` amount into `not-issuing.csv`. Existing partial-row
+remainders continue to the ordinary destination.
 
 `build-contract-treasury-routes.py` writes every reviewed non-multisig
 contract as an `ALL` route to `contract-recovery-custody`. That destination is

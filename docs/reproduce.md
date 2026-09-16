@@ -428,8 +428,20 @@ paths:
 ```sh
 python3 toolkit/scripts/routing/init-local-routing.py  # once, in a new clone
 
+python3 toolkit/scripts/routing/merge-wallet-theft-inventory.py \
+  --historical-inventory artifacts/supply-reconciliation-20260911/treasury-reclaim-inventory.csv \
+  --historical-perpetrators artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-cutoff.csv \
+  --additions artifacts/supply-reconciliation-20260911/wallet-theft-inventory-additions-20260916.csv \
+  --victims artifacts/supply-reconciliation-20260911/wallet-theft-victim-inventory-20260916.csv \
+  --all-claims "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
+  --perpetrator-output artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-related-cutoff.csv \
+  --perpetrator-summary artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-related-cutoff-summary.json \
+  --victim-summary artifacts/supply-reconciliation-20260911/wallet-theft-victim-inventory-summary.json \
+  --non-issuance-output artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
+  --non-issuance-summary artifacts/supply-reconciliation-20260911/non-issuance-inventory-summary.json
+
 python3 toolkit/scripts/routing/build-non-issuance-routes.py \
-  --inventory artifacts/supply-reconciliation-20260911/treasury-reclaim-inventory.csv \
+  --inventory artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
   --output routing/local/not-issuing.csv \
   --summary routing/local/not-issuing-summary.json
 
@@ -462,6 +474,19 @@ python3 toolkit/scripts/routing/apply-routes.py \
   --unresolved-output routing/local/generated/unresolved-routing.csv \
   --summary routing/local/generated/routing-summary.json \
   --replace
+
+python3 toolkit/scripts/routing/build-wallet-theft-inventory-report.py \
+  --perpetrator-summary artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-related-cutoff-summary.json \
+  --victim-summary artifacts/supply-reconciliation-20260911/wallet-theft-victim-inventory-summary.json \
+  --additions artifacts/supply-reconciliation-20260911/wallet-theft-inventory-additions-20260916.csv \
+  --non-issuance-summary artifacts/supply-reconciliation-20260911/non-issuance-inventory-summary.json \
+  --output artifacts/supply-reconciliation-20260911/WALLET_THEFT_INVENTORY_UPDATE_2026-09-16.md
+
+python3 toolkit/scripts/routing/build-non-issuance-report.py \
+  --inventory-summary artifacts/supply-reconciliation-20260911/non-issuance-inventory-summary.json \
+  --route-summary routing/local/not-issuing-summary.json \
+  --routing-summary routing/local/generated/routing-summary.json \
+  --output artifacts/supply-reconciliation-20260911/NON_ISSUANCE_POLICY_2026-09-16.md
 ```
 
 The generated directory contains sparse routing exceptions, separate

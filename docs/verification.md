@@ -166,6 +166,10 @@ The incident non-issuance overlay must additionally verify:
 - partially affected rows preserve the remainder for the original address;
 - burn/inaccessible and report-identified perpetrator rows use the selected
   previously audited amount;
+- new perpetrator-related rows already exist in the global claim ledger,
+  preserve explicitly reported and transaction-linked roles separately, and
+  do not overlap the reported victim population;
+- reported victim wallets receive no automatic non-issuance route;
 - every `not_issuing` row has no destination address and is absent from the
   unresolved work queue;
 - no token is created for a not-issued wallet row, and every not-issued staked

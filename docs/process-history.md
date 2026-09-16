@@ -111,6 +111,12 @@ remainders, but changed their outcome from treasury delivery to terminal
 `not_issuing`. The gross audit ledger remains unchanged; final issued supply is
 reduced by the not-issued amount.
 
+The September 16 wallet-theft review added four existing cutoff accounts to
+the perpetrator-related inventory: two explicitly named alleged perpetrators
+and two direct theft recipients. Twenty reported victim wallets were recorded
+separately and were not routed to non-issuance. No balance was added to the
+global claim ledger.
+
 ## 9. Contract-account correction
 
 The original policy treated every non-empty code hash as a contract-review

@@ -125,9 +125,15 @@ See `docs/contract-account-review.md`.
 
 - `toolkit/scripts/routing/init-local-routing.py` — create held-by-default local
   route and policy files without overwriting operator decisions
-- `toolkit/scripts/routing/build-non-issuance-routes.py` — convert the exact
-  audited amounts formerly assigned to treasury into terminal non-issuance
-  routes without changing partial-row remainders
+- `toolkit/scripts/routing/build-non-issuance-routes.py` — convert the current
+  reviewed non-issuance inventory into terminal routes without changing
+  partial-row remainders
+- `toolkit/scripts/routing/merge-wallet-theft-inventory.py` — validate reviewed
+  perpetrator additions and separate victim positions against the global claim
+  ledger, then build the current non-issuance inventory
+- `toolkit/scripts/routing/build-wallet-theft-inventory-report.py` and
+  `build-non-issuance-report.py` — render the embargoed incident and routing
+  findings
 - `toolkit/scripts/routing/build-contract-treasury-routes.py` — route every
   reviewed non-multisig contract to a specific Safe or multisig holding
   address for later verified claims

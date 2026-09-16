@@ -109,7 +109,9 @@ The exact amount previously assigned to treasury is now marked
 component, the corresponding vault deposit assets and shares are also omitted.
 Any existing remainder stays at the ordinary destination. Burn/inaccessible and
 report-identified perpetrator rows retain their previously audited exact
-amounts, but those amounts are also not issued.
+amounts. Separately reviewed direct theft recipients may be added with their
+own evidence category. Those amounts are also not issued. Reported victim
+wallets are not included in this outcome.
 
 The gross cutoff claim ledger remains unchanged for audit. Final issued supply
 is `gross claim - not-issued amount`; this is an intentional supply reduction,

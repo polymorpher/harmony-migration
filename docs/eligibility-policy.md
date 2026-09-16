@@ -91,8 +91,11 @@ without a recovery design.
 
 The non-issuance review covers selected burn/inaccessible addresses,
 blacklisted direct extra-mint recipients, and positive perpetrator addresses
-explicitly named by the wallet-theft reports. Address counts and category
-amounts are withheld during independent reproduction.
+explicitly named by the wallet-theft reports. It also records separately
+reviewed first recipients linked by successful theft transactions. Reported
+victim wallets remain a separate recovery population and are not automatically
+excluded from issuance. Address counts and category amounts are withheld during
+independent reproduction.
 
 For an extra-mint recipient:
 

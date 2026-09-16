@@ -153,6 +153,10 @@ claims, class-specific contract recovery, and policy-routed claims. The gross
 claim remains auditable, while terminal `not_issuing` amounts are excluded from
 final token and vault-share creation.
 
+Incident evidence preserves separate roles for explicitly reported
+perpetrators, transaction-linked theft recipients, and reported victims.
+Victim classification alone never creates a non-issuance route.
+
 ## Difference calculation
 
 `scripts/cutoff/migration-claims-diff.py` performs a sorted union of the
