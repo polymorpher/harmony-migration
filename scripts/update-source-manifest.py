@@ -33,6 +33,8 @@ def public_files():
         if path.is_symlink():
             raise ValueError(f"public package contains symlink: {relative}")
         if not path.is_file():
+            if not path.exists():
+                continue
             raise FileNotFoundError(path)
         yield path
 

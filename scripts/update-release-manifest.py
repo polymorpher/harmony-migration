@@ -157,6 +157,46 @@ RELEASE_FILES = (
     / "out"
     / "base-deferred-vault-shares.csv",
     ROOT
+    / "artifacts"
+    / "migration-policy-20260917"
+    / "migration-stage-policy.csv",
+    ROOT
+    / "artifacts"
+    / "migration-policy-20260917"
+    / "migration-stage-summary.json",
+    ROOT
+    / "artifacts"
+    / "migration-policy-20260917"
+    / "migration-stage.verify.json",
+    ROOT
+    / "artifacts"
+    / "migration-policy-20260917"
+    / "INITIAL_STAGE_MATERIALIZATION_2026-09-17.md",
+    ROOT
+    / "routing"
+    / "local"
+    / "not-issuing.csv",
+    ROOT
+    / "routing"
+    / "local"
+    / "not-issuing-summary.json",
+    ROOT
+    / "routing"
+    / "local"
+    / "bridge-reserves.csv",
+    ROOT
+    / "routing"
+    / "local"
+    / "bridge-reserves-summary.json",
+    ROOT
+    / "routing"
+    / "local"
+    / "contract-policy.csv",
+    ROOT
+    / "routing"
+    / "local"
+    / "contract-policy-summary.json",
+    ROOT
     / "routing"
     / "local"
     / "exchanges.csv",
@@ -174,6 +214,26 @@ RELEASE_FILES = (
     / "local"
     / "generated"
     / "validator-governor-exceptions.csv",
+    ROOT
+    / "routing"
+    / "local"
+    / "generated"
+    / "validator-vault-stages.csv",
+    *(
+        ROOT
+        / "routing"
+        / "local"
+        / "generated"
+        / "initial-stage"
+        / filename
+        for filename in (
+            "wallet-allocations.csv",
+            "vault-shares.csv",
+            "validator-vaults.csv",
+            "unresolved.csv",
+            "summary.json",
+        )
+    ),
     ROOT
     / "routing"
     / "local"
@@ -222,6 +282,10 @@ def inspect(path):
     elif name in {
         "all-address-migration-claims-cutoff.csv",
         "migration-claims-at-least-1000-one.csv",
+        "migration-stage-policy.csv",
+        "migration-stage-summary.json",
+        "migration-stage.verify.json",
+        "INITIAL_STAGE_MATERIALIZATION_2026-09-17.md",
     }:
         domain = "claim-accounting"
         classification = "policy-scenario"

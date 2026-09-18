@@ -36,6 +36,22 @@ FINDING_MAPPINGS = (
     (
         ROOT
         / "artifacts"
+        / "migration-policy-20260917"
+        / "MIGRATION_STAGE_POLICY_2026-09-17.md",
+        CLAIM_FINDINGS / "migration-stage-policy.md",
+        "claim-accounting",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "migration-policy-20260917"
+        / "INITIAL_STAGE_MATERIALIZATION_2026-09-17.md",
+        CLAIM_FINDINGS / "initial-stage-materialization.md",
+        "claim-accounting",
+    ),
+    (
+        ROOT
+        / "artifacts"
         / "wone-holder-accounting-20260917"
         / "WONE_MIGRATION_INTEGRATION_2026-09-17.md",
         CLAIM_FINDINGS / "wone-holder-qualification.md",
@@ -153,6 +169,15 @@ RESULT_MAPPINGS = (
     (
         ROOT
         / "artifacts"
+        / "migration-policy-20260917"
+        / "migration-stage.verify.json",
+        CLAIM_RESULTS / "migration-stage.verify.json",
+        "claim-accounting",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
         / "wone-holder-accounting-20260917"
         / "wone-holders-cutoff-summary.json",
         CLAIM_RESULTS / "wone-holder-scan-summary.json",
@@ -246,6 +271,24 @@ RESULT_MAPPINGS = (
         CLAIM_RESULTS / "account-activity-shard0-summary.json",
         "claim-accounting",
         "hybrid",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "migration-policy-20260917"
+        / "migration-stage-summary.json",
+        CLAIM_RESULTS / "migration-stage-summary.json",
+        "claim-accounting",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "migration-policy-20260917"
+        / "migration-stage-policy.csv",
+        CLAIM_RESULTS / "migration-stage-policy.csv",
+        "claim-accounting",
+        "policy-scenario",
     ),
     (
         ROOT
@@ -366,8 +409,8 @@ RESULT_MAPPINGS = (
         "policy-scenario",
     ),
     (
-        ROOT / "routing" / "local" / "contracts-to-treasury.csv",
-        DESTINATION_RESULTS / "routes" / "contracts-to-treasury.csv",
+        ROOT / "routing" / "local" / "contract-policy.csv",
+        DESTINATION_RESULTS / "routes" / "contract-policy.csv",
         "destination-mapping",
         "policy-scenario",
     ),
@@ -441,10 +484,40 @@ RESULT_MAPPINGS = (
         ROOT
         / "routing"
         / "local"
-        / "contracts-to-treasury-summary.json",
+        / "contract-policy-summary.json",
         DESTINATION_RESULTS
         / "routes"
-        / "contracts-to-treasury-summary.json",
+        / "contract-policy-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    *(
+        (
+            ROOT
+            / "routing"
+            / "local"
+            / "generated"
+            / "initial-stage"
+            / filename,
+            DESTINATION_RESULTS / "initial-stage" / filename,
+            "destination-mapping",
+            "policy-scenario",
+        )
+        for filename in (
+            "wallet-allocations.csv",
+            "vault-shares.csv",
+            "validator-vaults.csv",
+            "unresolved.csv",
+            "summary.json",
+        )
+    ),
+    (
+        ROOT
+        / "routing"
+        / "local"
+        / "generated"
+        / "validator-vault-stages.csv",
+        DESTINATION_RESULTS / "validator-vault-stages.csv",
         "destination-mapping",
         "policy-scenario",
     ),
@@ -534,12 +607,16 @@ These unredacted files are under the numerical-results embargo:
 - `claim-accounting/block-time-reference.md` — block/time mapping evidence;
 - `claim-accounting/claim-delivery-split.md` — exact separation
   of direct wallet airdrop and the amount staked to validator vaults;
-- `claim-accounting/priority-claim-activity.md` — cumulative claim totals for
-  candidates with indexed activity in the prior 3–48 calendar months;
+- `claim-accounting/priority-claim-activity.md` — raw all-address threshold
+  totals by indexed activity window;
+- `claim-accounting/migration-stage-policy.md` — exact wallet-only initial
+  stage, deferred wallets, reviewed contract stages, and conservation;
+- `claim-accounting/initial-stage-materialization.md` — initial-only wallet,
+  vault-share, validator-vault, unresolved, and readiness outputs;
 - `claim-accounting/wone-holder-qualification.md` — cutoff WONE holder
   reconciliation, combined threshold, wallet amount, and source split;
 - `destination-mapping/contract-account-review.md` — contract
-  classifications, balances, and claim destination evidence;
+  classifications, balances, destination evidence, and reviewed stage policy;
 - `destination-mapping/historical-treasury-routing-audit.md` — retained
   burn-aware calculation of the exact amounts formerly assigned to treasury;
 - `destination-mapping/wallet-theft-inventory-update.md` — expanded
