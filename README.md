@@ -31,9 +31,11 @@ vault shares. The direct wallet airdrop excludes that staked amount and
 includes WONE for rows in the current qualifying batch.
 
 The inclusive result is split into ordinary EOAs, verified validator-wrapper
-accounts that are also key-controlled, genuine contracts requiring
-class-specific recovery, and policy-routed accounts. Extra-mint recipients are
-capped by their exact unreturned extra mint, so some claim rows must be
+accounts that are also key-controlled, reviewed genuine contracts, and
+policy-routed accounts. Reviewed multisig, LayerZero collateral, and 1wallet
+allocations are next stage; SmartVault and other reviewed contracts are not
+issued. Extra-mint recipients are capped by their exact unreturned extra mint,
+so some claim rows must be
 split between terminal non-issuance and the ordinary destination. The gross
 claim ledger stays unchanged, but not-issued amounts are excluded from final
 token and vault-share creation.
@@ -48,9 +50,16 @@ is a hold and never falls back to the source wallet.
 
 WONE uses a separate conservation overlay. The source reserve paired with
 qualified-holder WONE is terminal `redistributed`; the remaining
-below-threshold/excluded reserve is `not_issuing` and retained in the Year 2025
-Supply Reserve. This prevents the WONE contract and its holders from both
+below-threshold/excluded reserve is `not_issuing` and retained in the 2050
+premint reserve. This prevents the WONE contract and its holders from both
 receiving the same backing.
+
+The initial stage contains eligible wallets with indexed activity in the six
+calendar months before the cutoff. Reviewed multisig, LayerZero collateral,
+and 1wallet allocations are held for the next stage regardless of activity.
+SmartVault and all other reviewed genuine-contract allocations are not issued.
+Migration stage, account classification, destination, and readiness are
+recorded separately.
 
 Wallet-theft evidence keeps explicitly reported perpetrators,
 transaction-linked theft recipients, and reported victim wallets as separate
@@ -64,7 +73,7 @@ first public results article. See
 ## Distribution status
 
 The public source package is ready for independent review. It is **not itself a
-distribution file**. Non-issuance, treasury, contract recovery, exchange,
+distribution file**. Non-issuance, reviewed-contract, exchange,
 lost-wallet, frozen-wallet, and validator-governor decisions live in ignored
 routing files.
 
@@ -73,8 +82,9 @@ exceptions, a generated unresolved work queue, and a conservation summary.
 Ordinary code-less EOA same-address delivery is implicit; verified
 validator-wrapper accounts are explicit code-bearing same-address exceptions.
 These routing artifacts are not a complete distribution file. Build and verify
-the final wallet/Merkle input separately, and only after the routing summary
-says `status: ready`.
+the stage-specific wallet/Merkle and validator-vault inputs separately.
+Release a stage only when its `stage_readiness` entry is ready; the global
+status remains a conservative all-stage gate.
 
 The toolkit also records the strict comparison for audit. See
 [`docs/eligibility-policy.md`](docs/eligibility-policy.md).

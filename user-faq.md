@@ -1,10 +1,17 @@
 ## What will happen to my tokens?
 
-We will take a snapshot of the blockchain, find out how much ONE is in your wallet (including staking rewards and pending undelegations), and airdrop the new Harmony ERC-20 token on Ethereum to you using the same wallet address.
+We took a cutoff snapshot of the blockchain and calculated each allocation.
+Same-address delivery applies only when the wallet policy and destination
+checks allow it; active stake is represented separately through validator-vault
+shares.
 
 The cutoff time (asset migration snapshot time) is Thursday, September 10, 2026, at 7 a.m. Pacific Time (14:00 UTC).
 
-Wallets with at least 1,000 ONE in combined qualification value will be prioritized. Your liquid ONE, active delegation or validator stake, pending undelegation, unclaimed staking rewards, pending cross-shard transfers, and WONE held on Harmony will be summed for this calculation.
+Wallets with at least 1,000 ONE in combined snapshot qualification value and
+indexed activity in the six calendar months before cutoff are in the initial
+stage. Liquid ONE, active delegation or validator stake, pending undelegation,
+unclaimed staking rewards, supported pending cross-shard transfers, and WONE
+held on Harmony are summed before deductions for threshold membership.
 
 Wallets with below 1,000 ONE may claim from a claim portal at a later time, or wait for another batch of airdrop when it makes economic sense to do so - there is no scheduled time for that at this time.
 
@@ -13,7 +20,8 @@ We are coordinating directly with participating exchanges. Exchange-controlled
 wallets that requested consolidation will be excluded from the ordinary
 same-address automatic airdrop and transferred manually to the exchange's
 confirmed Ethereum destination. Gate did not request consolidation, so its
-wallets continue through the ordinary at-least-1,000-ONE automatic policy.
+wallets continue through the ordinary at-least-1,000-ONE wallet policy,
+including the six-month initial-stage rule.
 Your exchange remains responsible for crediting your account; contact it for
 its customer timeline.
 
@@ -28,7 +36,10 @@ In these scenarios, the process or outcome would be slightly different. See belo
 
 ## What will happen to dApps and smart contracts?
 
-They will not be migrated. If you are a dApp developer, please deploy your dApp on Ethereum.
+Contract code will not be migrated. Reviewed multisig, LayerZero collateral,
+and 1wallet allocations are reserved for a later stage. SmartVault and other
+reviewed contract allocations are not issued and remain in the 2050 premint
+reserve.
 
 ## Do I need to do anything?
 
@@ -48,18 +59,20 @@ A claim contract on Ethereum will be made available for you to claim the new ERC
 
 ### My assets are in a smart-contract wallet
 
-We urge you to withdraw your assets to a simple EOA wallet (Ledger, MetaMask, command line wallet...) before the cutoff time. Smart contracts will not be migrated, so automatic migration of those balances is not guaranteed. If you own a multisig and want to continue using a multisig to hold the new ERC-20 ONE or other assets on Ethereum, please:
-1. create a Gnosis Safe wallet on Ethereum, and re-create the owners and configurations
-2. move the assets from your Harmony multisig to a simple EOA wallet before the cutoff time
-3. wait for the ERC-20 ONE airdrop. If you own other bridged assets, use that EOA wallet to complete the claim process
-4. after migration, move the airdropped ERC-20 ONE and other assets to the Gnosis Safe you created
+Reviewed multisig allocations are reserved for the next stage regardless of
+activity. Create a Safe on Ethereum with the same owners and threshold and
+retain evidence linking it to the cutoff owner set. Do not assume that the old
+Harmony contract address is a valid Ethereum destination.
 
-For those who were unable to do that before cutoff time, please:
-
-1. Create a Safe on Ethereum with exactly the same owners
-2. If your Safe has at least 1,000,000 ONE: you may contact us with your new Safe address so we can verify the ownership and transfer the allocation to your new Safe address; or,
-3. Wait for an automated claim portal to do that. It might take a while
+Reviewed 1wallet allocations will use next-stage recovery-multisig handling.
+The implementation will preserve cutoff recovery/ownership evidence and will
+not substitute an unverified destination. SmartVault is a separate family and
+is not issued under the selected policy.
 
 ### I deployed ONE or bridged assets in dApps, such as liquidity pools or lending pools
 
-Please withdraw your ONE or bridged assets to a simple EOA wallet (Ledger, MetaMask, command line wallet...) as soon as possible. DApps and pools will not be migrated, so your funds may be lost if you do not act before the cutoff time.
+The cutoff has passed. Reviewed pool, application, token, and unidentified
+contract allocations outside the approved next-stage set are not issued. This
+policy does not assert that every contract lacked underlying holders; it means
+the migration does not create replacement tokens or vault shares for those
+contract allocations.

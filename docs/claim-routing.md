@@ -20,8 +20,8 @@ remove deferred delegators' backing from the vault.
 
 Apply routing decisions in this order:
 
-1. classify the inclusive `>= 1,000 ONE` automatic batch while retaining
-   below-threshold claims as deferred;
+1. determine inclusive `>= 1,000 ONE` snapshot membership before deductions,
+   classify account identity, and assign migration stage separately;
 2. apply explicitly approved non-issuance, treasury, and incident-recovery
    rules;
 3. exclude qualifying non-Gate exchange wallets from the implicit automatic
@@ -29,10 +29,13 @@ Apply routing decisions in this order:
    positive deferred native claims; Gate remains under the ordinary threshold;
 4. identify Harmony validator-wrapper accounts and treat them as
    key-controlled accounts;
-5. apply an implicit same-address rule only to ordinary code-less EOAs and
-   assign each `staked_to_vault` entry through its validator vault;
-6. classify genuine contract accounts and route them through a class-specific
-   recovery process.
+5. apply the six-month activity rule only to eligible wallets for the initial
+   stage;
+6. apply an implicit same-address destination only to ordinary code-less EOAs,
+   without treating destination readiness as stage authorization;
+7. apply the reviewed next-stage or non-issuance policy to genuine contracts
+   and assign each remaining `staked_to_vault` entry through its validator
+   vault.
 
 The higher-priority rule wins. For example, detecting a validator wrapper does
 not override an explicit incident-recovery destination.
@@ -94,8 +97,9 @@ investigative context but cannot select a recovery destination.
 - A 1wallet treasury-default address is not a user-set recovery address.
   Prefer a verified forward or user recovery address; otherwise require manual
   proof.
-- A SmartVault owner or guardian set is evidence for manual recovery, not an
-  automatic ownership transfer.
+- SmartVault allocations are not issued and remain in the 2050 premint
+  reserve. Owner or guardian evidence remains factual identity evidence but no
+  longer selects a migration destination.
 - Token, bridge, pool, and application contracts require liability-aware
   treatment. Sending their ONE balance to a deployer can double-pay or
   confiscate user-backed assets.
@@ -117,9 +121,10 @@ amounts. Separately reviewed direct theft recipients may be added with their
 own evidence category. Those amounts are also not issued. Reported victim
 wallets are not included in this outcome.
 
-The gross cutoff claim ledger remains unchanged for audit. Final issued supply
-is `gross claim - not-issued amount`; this is an intentional supply reduction,
-not an unresolved destination or transfer to treasury.
+The gross cutoff claim ledger remains unchanged for audit. The migration
+allocation is `gross claim - not-issued amount`; the omitted amount stays
+unallocated in the fixed 2050 premint reserve. This is not a reduction of fixed
+ERC-20 total supply, an unresolved destination, or a transfer to treasury.
 
 That equation describes the native incident overlay. The expanded WONE routing
 input additionally subtracts a `redistributed` source offset paired with WONE
@@ -141,8 +146,11 @@ becomes a hold; it never falls back to the original address.
 The exchange route builder uses the cutoff ledger for payout amounts and the
 exchange submission only for membership, destination authorization, and
 reconciliation. Gate receives no generated exchange route. Its qualifying
-ordinary wallets remain implicit same-address deliveries, while its complete
-airdrop/not-airdrop address split is retained in the private Gate audit.
+ordinary wallets use the same-address destination policy only when their
+migration stage is `initial`. Other exchange routes retain their separately
+assigned stage; explicitly named below-threshold claims remain
+`manual_review`. The private Gate audit joins the stage policy before labeling
+an address as initially delivered.
 
 Generated routing is sparse:
 
@@ -157,22 +165,28 @@ files. A complete deployment allocation must be built later from the base
 entitlements and approved exceptions; the sparse routing outputs are not
 themselves a wallet distribution or Merkle input.
 
-The current policy sends reviewed non-multisig contracts to
-`contract-recovery-custody` unless a higher-priority incident or reserve route
-applies. That name is only a label for one Ethereum Safe or multisig holding
-address. The ONE there waits until a verified claimant is paid. Treasury
-operators may sign for the holding address, but they may not spend that ONE as
-ordinary treasury money. Later claimant payments come from the amount already
-in that address; no extra ONE is created.
+### Reviewed contract policy
 
-`build-contract-treasury-routes.py` always writes those rows to
-`contract-recovery-custody`. It has no option that sends them to `treasury`.
-If a generated row is later edited to use `treasury`, `apply-routes.py`
-rejects the file. Send a contract to the general treasury only with a
-separate, higher-priority manual route and recorded evidence.
+The former blanket `contract-recovery-custody` recommendation is superseded.
+`build-contract-policy-routes.py` applies the confirmed address-based
+partition from the cutoff contract review:
 
-Multisig rows stay on hold until a replacement Ethereum Safe with the verified
-owner set and threshold is supplied.
+- reviewed multisigs are next-stage allocations and remain held until a
+  replacement Ethereum Safe or other approved destination preserves the
+  verified owner set and threshold; generated holds have no shared fillable
+  destination, and each approved manual route must precede priority `500`;
+- the two reviewed LayerZero collateral contracts are next-stage allocations
+  regardless of activity, but their destinations remain held pending
+  reconciliation;
+- reviewed 1wallet allocations are next-stage recovery-multisig allocations;
+  no unverified destination address is embedded;
+- SmartVault and every other reviewed genuine contract are terminal
+  `not_issuing`, including both wallet-token and staked-vault components.
+
+Activity does not move any genuine contract into the initial wallet stage.
+The public “Abandoned contracts” label is an aggregate reporting label, not an
+inactivity classifier or a finding that every underlying owner abandoned the
+assets. The route data preserves the actual identity and policy reason.
 
 ## Additional policy decisions
 
@@ -183,8 +197,10 @@ owner set and threshold is supplied.
   treasury-routed, its vault governor defaults to hold until
   `validator-governors.csv` names an approved Ethereum governor.
 
-These are release gates in `routing/local/policy-decisions.csv`; a pending
-decision keeps the routing summary on hold even if every address is populated.
+These are release gates in `routing/local/policy-decisions.csv`. The routing
+summary records both a conservative global status and stage-scoped readiness.
+The LayerZero gate applies to the next stage; a policy decision that can affect
+wallet claims remains an initial-stage gate.
 
 ### WONE holder redistribution
 
@@ -205,24 +221,27 @@ The first route has terminal status `redistributed`. It has no destination
 address because the corresponding ONE is already present in qualified-holder
 wallet rows. The second route is terminal `not_issuing`; no replacement token
 is created for the below-threshold/excluded remainder, which remains in the
-Year 2025 Supply Reserve.
+2050 premint reserve.
 
 `build-wone-routes.py` derives both exact amounts from the verified holder
 overlay. The WONE contract's self-held WONE is excluded as a circular system
 balance. Same-address value on shard 1 is not WONE backing and falls through
-to generic contract-recovery custody.
+to reviewed-contract non-issuance. It is not subtracted as backing a second
+time.
 
 ### LayerZero NativeOFT reconciliation
 
 The LayerZero NativeOFT contracts do not use the WONE reserve; they directly
 hold native ONE backing their cross-chain token system. Their reserves must be
-routed separately. They must not be treated as the treasury's own spendable
-money.
+routed separately in the next stage. They must not be treated as the
+treasury's own spendable money.
 
-Before approving their custody destination, reconcile each Harmony reserve
+Next-stage eligibility is resolved. Before approving their destination,
+reconcile each Harmony reserve
 against the corresponding remote-chain supply and messages in flight at pinned
-blocks. The `layerzero-nativeoft-reconciliation` decision remains pending until
-that evidence and settlement method are recorded.
+blocks. The `layerzero-nativeoft-reconciliation` release gate remains pending
+only for destination readiness and settlement evidence; it does not return the
+two contracts to the initial stage or make them ineligible.
 
 ## Reproduction and evidence
 
@@ -232,12 +251,15 @@ The public classifier and evidence schema are documented in:
 - `toolkit/scripts/contract-review/README.md`;
 - `toolkit/scripts/claims/apply-eligibility-policy.py`;
 - `toolkit/scripts/claims/verify-eligibility-policy.py`;
+- `toolkit/scripts/claims/build-migration-stage-policy.py`;
+- `toolkit/scripts/claims/verify-migration-stage-policy.py`;
 - `toolkit/scripts/claims/vault-share-ledger-rpc.py`;
 - `toolkit/scripts/claims/verify-vault-delegations.py`;
 - `toolkit/scripts/claims/build-vault-share-allocation.py`;
 - `toolkit/scripts/routing/build-non-issuance-routes.py`;
 - `toolkit/scripts/routing/build-wone-routes.py`;
-- `toolkit/scripts/routing/build-contract-treasury-routes.py`;
+- `toolkit/scripts/routing/build-contract-policy-routes.py`;
+- `toolkit/scripts/routing/materialize-initial-stage.py`;
 - `toolkit/scripts/exchanges/normalize-exchange-wallets.py`;
 - `toolkit/scripts/exchanges/build-exchange-accounting.py`;
 - `toolkit/scripts/exchanges/verify-exchange-routing.py`;

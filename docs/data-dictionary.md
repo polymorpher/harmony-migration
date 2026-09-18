@@ -121,8 +121,10 @@ applied. A validator can also receive a staking-index entry because somebody
 else delegated or undelegated. Contract creation indexes the creator rather
 than the newly created address.
 
-Activity is capped at the cutoff and is reporting context only. It does not
-change claim amounts, eligibility, or routing.
+Activity is capped at the cutoff. It does not change the snapshot amount or
+threshold membership. The separate migration-stage policy uses the six-month
+window only for eligible wallets; genuine contracts are excluded from every
+wallet activity row.
 
 When a candidate-set extension reuses an earlier direct-database scan and
 fetches only new rows through archival RPC, the combined activity summary is
@@ -166,10 +168,10 @@ stake/delegation therefore helps an account qualify, even though it is excluded
 from the direct wallet airdrop; WONE also helps qualify and is then included in
 that wallet amount.
 
-The threshold result is split into:
+The threshold result is first split by account/routing classification:
 
 - automatic ordinary-EOA and verified validator-account claims;
-- genuine-contract manual review and class-specific recovery;
+- genuine-contract review;
 - exchange and other policy-routed claims excluded from implicit same-address
   delivery; and
 - non-issued burn, inaccessible, previously-blacklisted, and
@@ -177,6 +179,23 @@ The threshold result is split into:
 
 Reported victim wallets are a distinct incident-evidence category. They are not
 automatically classified as perpetrators or routed to `not-issuing`.
+
+`migration-stage-policy.csv` then records policy separately:
+
+- `account_classification` and `contract_category` — factual identity;
+- `policy_group` — wallet, validator wallet, multisig, LayerZero collateral,
+  1wallet, SmartVault, or other reviewed contract;
+- `routing_category` — automatic policy, exchange/manual, or contract policy;
+- `migration_stage` — `initial`, `next_stage`, or `deferred`; blank when no
+  allocation remains. Compiled explicitly routed below-threshold rows use
+  `manual_review`;
+- `issuance_treatment` — `issue` or `not_issued` in the stage ledger and
+  `issue`, `not_issued`, or `redistributed` in compiled routing;
+- gross, prior-deduction, WONE-source-offset, reviewed-contract
+  non-issuance, final wallet/vault, and total migration-allocation atto fields;
+- `stage_reason` — policy rationale, not destination evidence.
+
+Threshold membership is evaluated before every deduction in that file.
 
 The account-category CSVs carry `native_wallet_airdrop_atto`,
 `wone_airdrop_atto`, `wallet_airdrop_atto`, and `staked_to_vault_atto`. A
@@ -199,7 +218,8 @@ Per-vault deposit fields:
 - `vault_assets_atto` — complete active principal deposited into the validator
   vault;
 - `priority_staked_to_vault_atto` — principal whose beneficiary is in
-  the prioritized batch;
+  the snapshot-threshold batch; this legacy field name does not mean the
+  principal belongs to the six-month initial stage;
 - `deferred_staked_to_vault_atto` — principal reserved for later claim/batch;
 - `delegation_rows` — positive delegations backing that vault.
 
@@ -228,6 +248,9 @@ the cutoff claim, complete WONE census, existing prioritized activity record,
 and final eligibility category. They add:
 
 - `qualification_status` and `policy_category`;
+- `migration_stage`, joined from the separate stage policy for the final
+  report pass;
+- `issuance_treatment`, kept separate from that stage;
 - `planned_delivery_status`, `planned_wallet_airdrop_atto`,
   `planned_staked_to_vault_atto`, `planned_total_entitlement_atto`, and
   `remaining_not_airdropped_atto`;
@@ -253,6 +276,11 @@ code-less EOA implicit default:
 - `source_category` — `ordinary_eoa`, `validator_account`,
   `contract_review`, `excluded`, or `deferred`;
 - `source_code_bearing` — whether cutoff metadata contains non-empty code;
+- `migration_stage` — `initial`, `next_stage`, `deferred`, or `manual_review`;
+  terminal rows keep an associated stage only when they deduct part of a staged
+  allocation;
+- `issuance_treatment` — `issue`, terminal `not_issued`, or source
+  `redistributed`;
 - `amount_atto` — the affected wallet amount or vault-share principal;
 - `exception_type` — explicit route, validator same-address approval, or
   generated hold;
@@ -266,9 +294,32 @@ but it is paired with WONE already added to holder rows.
 
 `expanded claim = issuable amount + not-issued amount + redistributed source`.
 
+`stage_readiness` records, for each stage, issued wallet/vault totals, ready and
+held portions, held validator-governor assets, scoped policy decisions,
+release authorization, blockers, and status. `initial_stage_status` is an
+explicit convenience field; global `status` remains conservative.
+
 `validator-governor-exceptions.csv` is separate because control of a validator
 vault is not delivery of the validator account's own claim. It contains
 explicit governor overrides and safety holds only.
+
+`validator-vault-stages.csv` partitions every base vault's assets into:
+
+- `initial_assets_atto`;
+- `next_stage_assets_atto`;
+- `qualified_deferred_assets_atto`;
+- `manual_review_assets_atto`;
+- `uncompiled_deferred_assets_atto`;
+- `not_issued_assets_atto`; and
+- `post_policy_assets_atto`, equal to base assets minus not-issued assets.
+
+This prevents excluded contract stake from leaving replacement vault assets or
+shares and prevents later-stage stake from entering the initial deployment.
+
+The files under `generated/initial-stage/` materialize only
+`migration_stage = initial` and `issuance_treatment = issue`. They contain
+wallet destinations, per-validator share beneficiaries, validator assets and
+governors, unresolved items, and a hash-bound summary.
 
 `unresolved-routing.csv` is the generated subset whose destination status is
 not `ready`. It is never a routing input and must not be edited.

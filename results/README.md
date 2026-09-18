@@ -43,7 +43,7 @@ The withheld set includes:
 - direct wallet-airdrop and per-validator vault-share ledgers;
 - inclusive and strict threshold CSVs;
 - preliminary code-bearing review output;
-- final automatic, genuine-contract recovery, and policy-routed outputs;
+- final automatic, reviewed-contract, and policy-routed base outputs;
 - contract-account classifications and destination evidence;
 - explicit non-issuance/manual routes, compiled sparse wallet/vault
   exceptions, validator-governor exceptions, and the unresolved work queue;
@@ -57,9 +57,10 @@ comparison data.
 
 Pre-routing category and `base-*` files are entitlement inputs. The generated
 routing files under `routing/local/generated/` contain exceptions only and are
-usable in a later deployment build only when their summary reports
-`status: ready`. A complete wallet distribution or Merkle input must be
-materialized and verified separately.
+not themselves a deployment build. Stage-specific release uses
+`stage_readiness`; the initial-only wallet, share, and vault plans under
+`generated/initial-stage/` must also report `status: ready`. Global `status`
+remains the conservative all-stage gate.
 
 The public cutoff blocks, hashes, and state roots remain in
 `manifests/snapshot-2026-09-10.json`. The selected policy remains documented in

@@ -37,11 +37,13 @@ total_claim_atto
 The WONE contract's matching shard-0 native reserve is not issued to the
 contract. The qualified-holder portion is classified as `redistributed`; the
 remaining below-threshold/excluded backing is `not_issuing` and retained in the
-Year 2025 Supply Reserve.
+2050 premint reserve.
 
-The threshold controls prioritization. Validator vaults retain backing for
-active principal belonging to below-threshold accounts so those shares can be
-claimed in a later batch or portal.
+Threshold membership is determined from the snapshot qualification total
+before non-issuance deductions or routing adjustments. The threshold controls
+migration eligibility and staging; it is not retested against a smaller net
+allocation. Validator vaults retain backing for active principal belonging to
+deferred accounts until their stage is authorized.
 
 The historical `$1` experiment depended on a time-specific market price and was
 not selected for migration. It is retained only in the as-run audit history.
@@ -89,12 +91,18 @@ qualifying non-Gate exclusion set, and `apply-eligibility-policy.py` consumes it
 through `--exclude-addresses-file`. This moves those qualifying rows into the
 policy-routed category without changing their balances.
 
+The `excluded_address` routing category is not a non-issuance decision.
+Exchange/manual rows that otherwise satisfy the initial wallet activity policy
+remain in the initial reporting cohort, while their approved destinations and
+readiness checks remain authoritative.
+
 The generated manual exchange routes also name positive current migration
-claims below the automatic threshold. The route engine deliberately loads
-those deferred native claims and sends their wallet/vault entitlement to the
-configured aggregate exchange destination. A below-threshold WONE balance that
-is not part of `total_claim_atto` remains outside that transfer and is reported
-as residual value. Missing inventories or destinations are holds.
+claims below the automatic threshold. The route engine loads those deferred
+native claims but records them as `manual_review`; a configured destination
+does not silently activate them in the initial stage. A below-threshold WONE
+balance that is not part of `total_claim_atto` remains outside that route and
+is reported as residual value. Missing inventories, destinations, or stage
+approval are holds.
 
 Exchange-submitted balances establish ownership and provide a reconciliation
 check. They never replace the cutoff-pinned claim ledger. Raw inventories,
@@ -126,6 +134,30 @@ WONE reserve
 source offset paired with WONE amounts already added to qualified-holder
 wallet rows.
 
+## Initial and later stages
+
+Migration stage is recorded separately from account classification,
+issuance treatment, destination, and destination readiness. `migration_stage`
+is `initial`, `next_stage`, or `deferred` only when an allocation remains;
+`issuance_treatment` records `issue` or `not_issued`:
+
+1. The initial stage contains positive eligible **wallet** allocations with
+   indexed activity in the six calendar months before the cutoff, inclusive of
+   `2026-03-10T14:00:00Z`.
+2. Reviewed multisigs, the two reviewed LayerZero bridge-collateral contracts,
+   and reviewed 1wallet allocations are eligible but reserved for the next
+   stage regardless of activity.
+3. SmartVault and all other reviewed genuine-contract allocations are not
+   issued and remain in the 2050 premint reserve.
+4. Wallets outside the six-month window remain deferred; absence of indexed
+   activity is not proof of abandonment.
+
+The 1wallet category uses next-stage recovery-multisig handling, but no
+destination is considered ready without cutoff ownership/recovery evidence.
+SmartVault is a separate wallet family and does not share that treatment.
+The initial reporting cohort is not an unconditional same-address deployment
+manifest.
+
 ## Code-bearing and validator accounts
 
 The gross threshold results include accounts with non-empty code. Their
@@ -145,13 +177,14 @@ The policy therefore uses two stages:
    claim account, then produce the prioritized code-bearing review set;
 2. classify verified validator-wrapper accounts into the eligible
    key-controlled category while retaining explicit validator routing evidence;
-   genuine contracts remain in class-specific manual recovery.
+   genuine contracts then follow the reviewed stage and non-issuance policy
+   above.
 
 An EVM contract does not normally control the same address on Ethereum with a
 private key. Do not simply send ERC-20 tokens to a genuine contract address
 without a recovery design.
 
-## Not-issued incident amounts
+## Not-issued amounts
 
 The non-issuance review covers selected burn/inaccessible addresses,
 blacklisted direct extra-mint recipients, and positive perpetrator addresses
@@ -178,12 +211,20 @@ validator-vault shares. The base category files are not distribution outputs.
 See `routing/README.md`.
 
 `not-issuing` is not an address and receives nothing. The gross claim remains
-in the audit ledger, while final issued supply excludes the exact not-issued
-wallet and vault amounts.
+in the audit ledger, while the migration allocation excludes the exact
+not-issued wallet and vault amounts.
+The amount remains unallocated within the fixed 26.271 billion ONE premint
+(`12.6 billion + 441 million × 31 years`); this policy neither changes ERC-20
+total supply nor creates a burn or treasury transfer.
 
 The retained WONE reserve remainder follows this definition. The WONE amount
 paired with current holder airdrops does not: it is `redistributed`, because a
 replacement asset is created for those holders.
+
+Reviewed SmartVault and other non-approved genuine-contract allocations also
+follow this definition. An `ALL` contract route consumes both direct-wallet and
+staked-to-vault components after any higher-priority exact deduction, so no
+replacement vault asset or share survives the exclusion.
 
 ## Retired-shard receipts
 
@@ -200,6 +241,8 @@ The final release metadata must state:
 - cutoff blocks, hashes, and roots;
 - threshold denomination and exact atto value;
 - inclusive `>=`;
+- six-month initial wallet stage and later-stage treatment;
+- separate `migration_stage`, `issuance_treatment`, destination, and readiness;
 - contract-account treatment;
 - exchange automatic-exclusion, manual-routing, and Gate-exception treatment;
 - non-issuance address inventory and policy;

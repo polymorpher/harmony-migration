@@ -108,8 +108,8 @@ unchanged.
 
 The September 15 policy update kept those exact audited amounts and partial
 remainders, but changed their outcome from treasury delivery to terminal
-`not_issuing`. The gross audit ledger remains unchanged; final issued supply is
-reduced by the not-issued amount.
+`not_issuing`. The gross audit ledger and fixed premint remain unchanged; the
+migration allocation is reduced by the not-issued amount.
 
 The September 16 wallet-theft review added four existing cutoff accounts to
 the perpetrator-related inventory: two explicitly named alleged perpetrators
@@ -125,8 +125,8 @@ carry code because their RLP validator wrapper is stored in that field.
 
 The maintained policy now uses code presence only to create a preliminary
 review set. Independently verified validator-wrapper accounts return to
-key-controlled automatic routing; genuine contracts remain in class-specific
-recovery.
+key-controlled wallet classification; genuine contracts follow a separate
+reviewed stage/non-issuance policy.
 
 Observed contract populations and balances remain under the numerical embargo.
 
@@ -155,8 +155,8 @@ from the shard-0 archival node and reconciled the result exactly to both WONE
 The current inclusive threshold now uses native total claim plus WONE balance.
 Qualified rows receive their WONE amount in the direct wallet component. The
 matching WONE source reserve is classified as `redistributed`, while the
-below-threshold/excluded remainder is `not_issuing` and retained in the Year
-2025 Supply Reserve.
+below-threshold/excluded remainder is `not_issuing` and retained in the 2050
+premint reserve.
 
 The WONE contract's self-held WONE is excluded from recipient delivery.
 LayerZero's NativeOFT contracts remain a separate native-ONE reconciliation;
@@ -178,7 +178,26 @@ holds. Per-exchange memos and a complete Gate airdropped/not-airdropped audit
 were generated from existing cutoff and activity artifacts rather than a new
 chain scan.
 
-## 13. Preservation
+## 13. Migration-stage and reviewed-contract policy
+
+The September 17 policy fixed threshold membership before deductions and
+limited the initial stage to positive eligible wallets with six-month indexed
+activity. Exchange/manual routing remained a destination category rather than
+non-issuance.
+
+Reviewed multisig, LayerZero collateral, and 1wallet allocations moved to the
+next stage regardless of activity. The 1wallet group uses recovery-multisig
+handling without an unverified address. SmartVault and all other reviewed
+genuine contracts became terminal non-issuance across wallet and vault-share
+components.
+
+The former blanket contract-recovery-custody route was retired. A generated
+address-level policy now records stage separately from `not_issued` and
+`redistributed` treatment. Stage-scoped readiness prevents unresolved
+next-stage destinations from being misreported as initial-stage blockers, and
+an independent materializer expands only initial issued wallet/vault rows.
+
+## 14. Preservation
 
 All irreplaceable generated outputs, source snapshots, manifests, and runtime
 evidence were copied off the original machines and checksum-verified before

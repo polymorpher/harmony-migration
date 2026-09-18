@@ -39,9 +39,15 @@
   shard-0 and shard-1 activity scans into the prioritized claim CSV
 - `toolkit/scripts/claims/extend-account-activity.py` — reuse a verified
   baseline activity ledger and merge an incremental WONE-candidate scan
-- `toolkit/scripts/claims/summarize-claim-activity.py` — calculate cumulative
-  prioritized-claim totals for cutoff-relative activity windows and render
-  the embargoed activity finding
+- `toolkit/scripts/claims/summarize-claim-activity.py` — calculate raw
+  all-address threshold totals for cutoff-relative activity windows; these are
+  context, not the initial-stage population
+- `toolkit/scripts/claims/build-migration-stage-policy.py` — apply exact
+  deductions, separate wallets from genuine contracts, assign migration stage,
+  and render the exact wallet-only activity reconciliation
+- `toolkit/scripts/claims/verify-migration-stage-policy.py` — independently
+  re-sum stage, issuance treatment, wallet/vault components, activity,
+  contract groups, and compiled routing closure
 - `toolkit/scripts/claims/vault-share-ledger-rpc.py` — independent historical
   RPC export of per-validator active delegation
 - `toolkit/scripts/claims/verify-vault-delegations.py` — byte-for-byte database
@@ -167,12 +173,18 @@ See `docs/contract-account-review.md`.
 - `toolkit/scripts/routing/build-wallet-theft-inventory-report.py` and
   `build-non-issuance-report.py` — render the embargoed incident and routing
   findings
-- `toolkit/scripts/routing/build-contract-treasury-routes.py` — route every
-  reviewed non-multisig contract to a specific Safe or multisig holding
-  address for later verified claims
+- `toolkit/scripts/routing/build-contract-policy-routes.py` — hold reviewed
+  multisig and 1wallet allocations for the next stage and mark SmartVault and
+  other reviewed genuine-contract allocations as not issued
+- `toolkit/scripts/routing/build-contract-treasury-routes.py` — fail-fast
+  compatibility stub for the superseded blanket custody policy
 - `toolkit/scripts/routing/apply-routes.py` — merge non-issuance and manual
   routes, split partial routes across wallet/vault delivery, verify implicit
-  defaults, and emit sparse routing, governor, and unresolved exceptions
+  defaults, and emit sparse routing, per-stage readiness, governor, vault-stage,
+  and unresolved outputs
+- `toolkit/scripts/routing/materialize-initial-stage.py` — expand implicit
+  delivery and produce verified initial-only wallet, vault-share, and
+  validator-vault plans without deferred or next-stage allocations
 - `routing/` — public schema/examples plus ignored real routing files
 
 ## Embargo and publication tooling
@@ -184,7 +196,7 @@ See `docs/contract-account-review.md`.
   because it embeds expected output identities
 - `toolkit/scripts/claims/verify-wone-allocation.py` — independently verify the
   complete WONE holder overlay, threshold subset, reserve split, NativeOFT
-  separation, and shard-1 contract recovery
+  separation, and shard-1 reviewed-contract non-issuance
 - `scripts/check-numerical-embargo.py` — rejects publishable result values and
   private finding and exchange-input paths
 - `scripts/check-public-package.py` — rejects private machine paths, binary

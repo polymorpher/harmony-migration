@@ -88,9 +88,9 @@ The native ledger remains separately reproducible. Adding WONE to qualified
 holder rows creates an expanded routing input, so the WONE contract's shard-0
 native reserve is removed exactly once at the source: the amount paired with
 current holder airdrops is `redistributed`, and the below-threshold/excluded
-remainder is `not_issuing` and retained in the Year 2025 Supply Reserve.
-Same-address shard-1 ONE is not WONE backing and remains ordinary contract
-recovery.
+remainder is `not_issuing` and retained in the 2050 premint reserve.
+Same-address shard-1 ONE is not WONE backing and is included in reviewed
+contract non-issuance.
 
 Active stake/delegation is included in the total-claim threshold but is not sent to
 the account as a direct ERC-20 airdrop. It funds the corresponding validator's
@@ -99,6 +99,12 @@ ERC-4626 vault, and the delegator receives a share entitlement.
 Validator lifetime `BlockReward` is not an additional claim. It is cumulative
 historical metadata and would double-count rewards already represented in
 delegation state.
+
+The inclusive threshold is evaluated on snapshot
+`qualification_total_atto` before deductions. A separate stage policy then
+applies the six-month activity window only to wallets, holds approved reviewed
+contracts for the next stage regardless of activity, and excludes the
+remaining reviewed contracts from both token and vault-share issuance.
 
 ## Primary state calculation
 
@@ -174,8 +180,9 @@ threshold set is first split by explicit policy and code presence. Code-bearing
 rows are then classified to distinguish key-controlled validator-wrapper
 accounts from genuine EVM contracts. The final outputs carry direct wallet
 airdrop and staked-to-vault amounts separately for automatic key-controlled
-claims, class-specific contract recovery, and policy-routed claims. The gross
-native claim remains auditable. Terminal `not_issuing` amounts and
+claims, next-stage reviewed contracts, terminal reviewed-contract
+non-issuance, and policy-routed claims. The gross native claim remains
+auditable. Terminal `not_issuing` amounts and
 `redistributed` source offsets are excluded from final token and vault-share
 creation; the latter offset is paired with the WONE already present in holder
 wallet rows.
@@ -184,11 +191,11 @@ Exchange handling is a later ownership and destination overlay. Private raw
 inventories are normalized to canonical EVM and Harmony addresses, checked for
 duplicates and cross-exchange overlap, and joined to the already-generated
 cutoff, WONE, activity, and policy ledgers. Gate keeps the ordinary threshold
-and same-address behavior. Qualifying non-Gate wallets are removed from the
-implicit automatic class, while explicit aggregate routes can load positive
-below-threshold native claims for manual exchange delivery. Submitted balances
-are reconciled but never substitute for chain state, and a blank aggregate
-destination is a hold.
+and same-address destination behavior but remains subject to the wallet stage.
+Qualifying non-Gate wallets are removed from the implicit automatic class,
+while explicit aggregate routes can load positive below-threshold native
+claims only as `manual_review`. Submitted balances are reconciled but never
+substitute for chain state, and a blank aggregate destination is a hold.
 
 Incident evidence preserves separate roles for explicitly reported
 perpetrators, transaction-linked theft recipients, and reported victims.

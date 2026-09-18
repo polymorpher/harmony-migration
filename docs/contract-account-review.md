@@ -8,7 +8,7 @@ breakdowns are held under the numerical embargo in
 `results/2026-09-11/`, and `artifacts/contract-review-<date>/`.
 
 The threshold uses each row's `qualification_total`: native total claim,
-including active stake/delegation, plus cutoff WONE. Contract recovery records
+including active stake/delegation, plus cutoff WONE. Contract policy records
 `wallet_airdrop`, including qualified WONE, and `staked_to_vault` separately;
 active delegation is represented through
 validator-vault shares rather than being sent as direct ERC-20 ONE.
@@ -89,6 +89,26 @@ Known limitations:
 - ERC-1155 and non-sequential-id collections cannot have holders enumerated
   from state (`eth_getLogs` is limited to 1,024 blocks per query on public
   nodes).
+
+## Migration policy applied after classification
+
+Classification is evidence, not a destination or stage. The confirmed policy
+uses address-based joins against `contract-review-policy.csv`:
+
+- Safe multisigs, the two reviewed LayerZero collateral contracts, and
+  reviewed 1wallet allocations are eligible in the next stage regardless of
+  activity;
+- 1wallet uses recovery-multisig handling, but no destination is ready without
+  cutoff ownership/recovery evidence;
+- SmartVault is a separate family and is not issued;
+- every other reviewed genuine-contract allocation is not issued;
+- validator wrappers remain wallet accounts and can enter the six-month
+  initial wallet stage.
+
+Non-issuance consumes both direct-wallet and staked-vault components. Contract
+rows never enter the wallet activity table. The review does not classify the
+below-threshold code-bearing population and does not infer abandonment from
+code or inactivity.
 
 ## Reproduction
 

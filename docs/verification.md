@@ -43,13 +43,20 @@ A full independent run should:
    overrides;
 9. apply and verify the final destination split;
 10. normalize exchange inputs, generate the non-Gate exclusion/manual-route
-    overlay and Gate split audit, and verify it against existing cutoff data;
+    overlay and stage-aware Gate split audit, and verify it against existing
+    cutoff data;
 11. build validator-vault deposits plus priority and deferred share ledgers;
-12. apply explicit redistribution, non-issuance, treasury, exchange, and other
-    manual routes across wallet and vault delivery;
-13. verify the sparse routing and governor exception sets, requiring every
-    unresolved destination to appear in the generated hold queue; and
-14. record deterministic counts, totals, and hashes before receiving the
+12. generate and independently reconcile the wallet-only initial stage,
+    next-stage reviewed contracts, deferred wallets, and reviewed-contract
+    non-issuance;
+13. apply explicit redistribution, non-issuance, exchange, contract-policy,
+    and other manual routes across wallet and vault delivery;
+14. verify the sparse routing, governor exceptions, and complete validator-vault
+    stage partition, requiring every
+    unresolved destination to appear in the generated hold queue;
+15. independently materialize initial-only wallet, vault-share, and
+    validator-vault plans and match them to initial-stage readiness; and
+16. record deterministic counts, totals, and hashes before receiving the
    original results.
 
 ## State checks
@@ -133,9 +140,10 @@ The prioritized activity enrichment additionally checks:
 - cumulative calendar-month totals close against the exact candidate ledger.
 
 The scanner does not use the retiring Explorer website or REST API. Activity
-is contextual evidence only. Internal EVM traces and validator consensus
-signatures are not scanned, so these fields are not used to change eligibility
-or routing. Cross-shard recipient entries are not treated as proof that the
+does not change snapshot threshold membership or prove control. Internal EVM
+traces and validator consensus signatures are not scanned. The six-month
+window selects only the initial wallet stage; genuine contracts never enter
+those rows. Cross-shard recipient entries are not treated as proof that the
 destination receipt was applied, and failed/reverted transactions remain
 activity because they are present in the top-level index.
 
@@ -153,16 +161,22 @@ The selected inclusive eligibility split is independently checked to ensure:
   match;
 - ownership, Safe thresholds, recovery settings, proxies, guardians, and
   holder evidence all share the recorded cutoff block hash and state root;
-- eligibility and routing consume deterministic
+- classification, staging, and routing consume deterministic
   `contract-review-policy.csv` and `validator-policy-accounts.csv`; mutable
-  activity context is excluded from release-comparison inputs;
-- genuine contracts remain in manual review;
+  latest-state context is excluded from release-comparison inputs;
+- genuine contracts partition exactly into reviewed next-stage and not-issued
+  sets, while verified validator wrappers remain wallets;
+- `migration_stage` and `issuance_treatment` remain separate, and every issued
+  wallet/vault component closes independently;
 - selected inaccessible/dead and qualifying non-Gate exchange rows are handled
   by policy;
 - category wallet, vault, total-claim amounts and output hashes match the
   policy summary;
 - per-validator vault deposits equal all active delegation principal;
 - priority and deferred shares are disjoint and complete;
+- each validator vault partitions into initial, next-stage, qualified-deferred,
+  manual-review, uncompiled-deferred, and not-issued assets; post-policy assets
+  equal base assets minus not-issued assets;
 - explicit route amounts close exactly across wallet and vault components;
 - WONE redistributed source equals WONE added to qualified-holder rows, and
   redistributed plus retained not-issued WONE equals the native reserve;
@@ -174,6 +188,12 @@ The selected inclusive eligibility split is independently checked to ensure:
   separate;
 - no held destination silently falls back to the original address.
 
+`verify-migration-stage-policy.py` independently re-sums the address-level
+stage file and compiled routing. `materialize-initial-stage.py` then proves
+that its outputs contain only the initial issued allocation, expands implicit
+same-address delivery, and matches wallet, share, vault, hold, governor, and
+policy-gate totals to `stage_readiness.initial`.
+
 The private exchange overlay additionally verifies:
 
 - each raw spreadsheet/CSV has no formulas, hidden sheets, macros, malformed
@@ -184,9 +204,10 @@ The private exchange overlay additionally verifies:
 - every qualifying non-Gate source is in the policy-routed category and no
   Gate source is excluded merely because it appears in the Gate inventory;
 - every positive current non-Gate claim has exactly one priority-300 manual
-  route, including explicitly activated deferred native claims;
-- Gate airdropped and not-airdropped lists partition its complete inventory,
-  and its airdrop plus residual qualification value closes exactly;
+  route, while below-threshold native claims remain `manual_review`;
+- Gate initial-stage and outside-initial lists partition its complete
+  inventory, and its initial allocation plus residual qualification value
+  closes exactly;
 - prior activity data is reused only where it was collected, while other rows
   are labeled `not_collected`; and
 - missing inventories or destinations remain holds and cannot produce a silent
@@ -238,7 +259,8 @@ python3 toolkit/scripts/claims/verify-wone-allocation.py
 
 The Python verifier independently recomputes WONE holder completeness, the
 native-to-WONE claim overlay, the exact inclusive-threshold subset, the reserve
-split, separate NativeOFT holds, and same-address shard-1 contract recovery.
+split, separate next-stage NativeOFT holds, and shard-1 WONE-source
+reviewed-contract non-issuance.
 Its deterministic JSON output is retained with the private result package and
 is exercised by local `make verify-private` workflows.
 

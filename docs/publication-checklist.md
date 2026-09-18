@@ -15,7 +15,8 @@ Before publishing the migration allocation:
      at the cutoff, including below-threshold claims;
    - validator-wrapper accounts are independently proved key-controlled and
      recorded as explicit code-bearing same-address exceptions;
-   - genuine contracts remain in class-specific recovery;
+   - genuine contracts follow the reviewed next-stage/non-issuance partition
+     and do not enter wallet activity rows;
    - every contract destination has documented evidence and no category is
      silently sent to its old Harmony contract address.
 4. Publish the burn-aware non-issuance ledger. Confirm that extra-mint
@@ -27,14 +28,22 @@ Before publishing the migration allocation:
    perpetrators from transaction-linked recipients and that reported victim
    wallets are not routed to non-issuance.
 5. Apply every reviewed route input under `routing/local/`. Regenerate, but
-   never manually edit, the sparse exception and unresolved outputs. Require
-   the routing summary to report `status: ready`, with no inactive route,
-   unresolved wallet amount, vault-share amount, or validator governor.
+   never manually edit, the sparse exception and unresolved outputs. For an
+   initial release, require `stage_readiness.initial` and the independently
+   materialized initial-stage summary to report `status: ready`, with no
+   initial held destination, governor, or scoped policy gate. Retain global
+   `status` as the conservative all-stage gate.
    Confirm that expanded claims equal issuable plus not-issued plus
    redistributed source amounts exactly.
-   Confirm that `contract-recovery-custody` maps to a specific Safe or multisig
-   holding address, separate from general treasury, and that verified claimants
-   are paid only from its existing balance.
+   Confirm that migration-stage policy covers the threshold population exactly,
+   the initial stage contains only six-month-active wallets, and destination
+   readiness cannot override a deferred or next-stage assignment.
+   Confirm that SmartVault and every other excluded reviewed contract has both
+   wallet-token and vault-share remainders marked `not_issuing`.
+   Confirm that multisig and 1wallet destinations remain held until cutoff
+   ownership/recovery evidence is verified.
+   Confirm that generated multisig holds have no common fillable destination;
+   every approved Safe route is address-specific and precedes priority 500.
    Confirm that every qualifying non-Gate exchange wallet is absent from the
    implicit automatic category, every positive current non-Gate exchange claim
    has exactly one manual route, and blank exchange destinations remain holds.
@@ -48,9 +57,11 @@ Before publishing the migration allocation:
 7. Reconcile the WONE holder ledger to `totalSupply()` and the native reserve.
    Confirm that the qualified-holder amount is added once to wallet rows and
    offset once as `redistributed`, while the remainder is `not_issuing` and
-   retained in the Year 2025 Supply Reserve.
+   retained in the 2050 premint reserve. Confirm that WONE held by an excluded
+   contract is not backed out a second time.
 8. Separately reconcile each LayerZero NativeOFT reserve against remote supply
-   and messages in flight at pinned blocks before approving its custody route.
+   and messages in flight at pinned blocks before approving its next-stage
+   destination.
 9. State that retired-shard receipts are excluded unless additional proof is
    obtained.
 10. Run the strict claim verifier and exact cutoff verifier.

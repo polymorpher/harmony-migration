@@ -30,7 +30,7 @@ deferred claims are also exceptions.
 Place manual additions in separate files under `routing/local/`, for example:
 
 - `not-issuing.csv`
-- `contracts-to-treasury.csv`
+- `contract-policy.csv`
 - `multisigs.csv`
 - `lost-wallets.csv`
 - `frozen-wallets.csv`
@@ -41,9 +41,17 @@ Place manual additions in separate files under `routing/local/`, for example:
 - `destinations.csv`
 - `exchange-destinations.csv` — generated private aggregate destinations
 - `policy-decisions.csv`
+- `artifacts/migration-policy-20260917/migration-stage-policy.csv` — generated
+  classification-independent stage input
 - `generated/routing-exceptions.csv` — sparse wallet and vault-share exceptions
 - `generated/validator-governor-exceptions.csv` — sparse vault-governor
   exceptions, kept separate from validator wallet delivery
+- `generated/validator-vault-stages.csv` — complete validator-vault assets
+  partitioned into initial, next-stage, deferred, not-issued, and post-policy
+  totals
+- `generated/initial-stage/` — materialized initial wallet destinations,
+  vault-share beneficiaries, validator assets/governors, unresolved gates, and
+  verification summary
 - `generated/unresolved-routing.csv` — generated hold queue; never edit it
 - `generated/routing-summary.json` — conservation and release-gate summary
 
@@ -60,44 +68,64 @@ validates reviewed wallet-theft additions against the global cutoff ledger,
 and writes `non-issuance-inventory.csv`. Reported victim wallets remain a
 separate review population and are not routed to non-issuance.
 
-`build-non-issuance-routes.py` converts each positive
-`not_issued_atto` amount into `not-issuing.csv`. Existing partial-row
-remainders continue to the ordinary destination.
+`build-non-issuance-routes.py` combines the existing reviewed inventory and
+the historical retained-cap inventory. It converts each positive
+`not_issued_atto` or `retained_cap_atto` amount into `not-issuing.csv`,
+rejecting overlap. Existing partial-row remainders continue under the separate
+stage and destination policies.
 
 `build-wone-routes.py` reads the immutable `bridge-reserves.base.csv` and the
 verified WONE qualification summary, then writes `bridge-reserves.csv` with
 two additional exact source routes:
 the amount paired with current qualified-holder WONE airdrops is
 `redistributed`, while the below-threshold/excluded remainder is
-`not_issuing` and retained in the Year 2025 Supply Reserve. Their sum must
+`not_issuing` and retained in the 2050 premint reserve. Their sum must
 equal the WONE contract's shard-0 native reserve. Same-address shard-1 ONE is
-not backing and falls through to contract recovery.
+not backing and falls through to reviewed-contract non-issuance.
 
-`build-contract-treasury-routes.py` writes every reviewed non-multisig
-contract as an `ALL` route to `contract-recovery-custody`. That destination is
-one Ethereum Safe or multisig that holds the funds until a verified claimant
-is paid. It is separate from the general treasury. Operators may sign for the
-holding address, but they may not spend that ONE as ordinary treasury money.
-The builder always uses this destination; it cannot send those rows to
-`treasury`. A later edit that points a generated row at `treasury` is rejected
-by `apply-routes.py`. Reviewed multisigs are omitted on purpose: add a row to
-`multisigs.csv` only after the replacement Ethereum Safe address has been
-supplied and verified. Higher-priority entries in `bridge-reserves.csv` take
-reserve-backed contract claims before these holding-address rows are used.
+`build-migration-stage-policy.py` generates the address-level stage policy
+after applying exact deductions without retesting the snapshot threshold.
+It distinguishes initial wallets, deferred wallets, next-stage reviewed
+contracts, and terminal reviewed-contract non-issuance while recording
+`migration_stage` separately from `issuance_treatment`.
+
+`build-contract-policy-routes.py` consumes that stage policy. It writes:
+
+- `ALL` next-stage holds for reviewed multisigs and 1wallet allocations;
+- `ALL` terminal non-issuance routes for SmartVault and all other reviewed
+  genuine contracts;
+- no duplicate LayerZero route, because the two dedicated next-stage
+  `SHARD0_LIQUID` holds already live in `bridge-reserves.csv`.
+
+Generated multisig holds intentionally have no common destination ID. Add a
+separate per-address row to `multisigs.csv`, with priority below `500`, only
+after its replacement Safe owner set and threshold are verified. Filling one
+symbolic destination must never redirect all 96 multisigs.
+
+Higher-priority incident and WONE routes apply first. The contract policy then
+consumes every remaining direct-wallet and staked-vault component. No generic
+contract-recovery-custody destination remains.
 
 `build-exchange-accounting.py` writes `exchanges.csv` with one `ALL`,
 `wallet_first_pro_rata_vault` route for each positive current non-Gate exchange
 claim and writes `exchange-destinations.csv` separately. Qualifying non-Gate
 wallets are also removed from the implicit automatic category. Gate is omitted
-from both files and stays under the ordinary inclusive same-address policy.
+from both files and stays under the ordinary inclusive same-address
+destination policy, subject to the wallet stage.
 Exchange routes use priority `300`: reviewed incident/non-issuance routes apply
 first, while later reserve or generic contract handling cannot silently take
-an exchange-routed remainder.
+an exchange-routed remainder. The route does not override
+`migration_stage`; below-threshold routes remain `manual_review` until
+separately approved.
 
 The routing command accepts both `--routes` and `--destinations` repeatedly.
 Files are merged by `priority`, then `route_id`; file order is irrelevant, and
 destination identifiers must remain globally unique. Use `--replace` when
 regenerating the exception outputs after an approved input change.
+`--migration-stages` is required and must cover the complete inclusive
+threshold set exactly. Explicitly routed below-threshold claims remain
+`manual_review` until their stage is reconciled; a ready destination alone
+does not move them into the initial stage.
 
 ## Route input columns
 
@@ -124,8 +152,8 @@ positions, using exact integer largest-remainder allocation.
 LayerZero reserve-contract routes use `SHARD0_LIQUID` so same-address value on
 another shard is not mislabeled as contract backing. WONE uses two exact
 amounts generated from its verified holder summary. Any source remainder
-proceeds to the next applicable route, normally generic contract-recovery
-custody.
+proceeds to the next applicable route. Under the reviewed policy, the WONE
+address's non-backing shard-1 remainder is terminal non-issuance.
 
 ## Generated output contracts
 
@@ -135,6 +163,10 @@ contain:
 - `component` — `wallet_airdrop` or `vault_shares`;
 - source and optional validator address/secure-key fields;
 - `source_category` and `source_code_bearing`;
+- `migration_stage` — `initial`, `next_stage`, `deferred`, or the explicit
+  below-threshold state `manual_review`; terminal rows may retain an associated
+  stage but never invent one;
+- `issuance_treatment` — `issue`, `not_issued`, or `redistributed`;
 - `amount_atto` and `exception_type`;
 - route priority, destination, status, reason, and evidence.
 
@@ -143,7 +175,7 @@ contain:
 excluded, or explicitly routed deferred claims. An ordinary code-less EOA with
 no explicit route is absent.
 
-Generated contract-recovery route rows also carry the cutoff block number,
+Generated reviewed-contract policy rows also carry the cutoff block number,
 block hash, and state root used to classify the contract. Routing rejects a
 missing, mixed, or mismatched cutoff identity and requires it to match the
 validator-classification CSV from the same contract-review run.
@@ -160,13 +192,19 @@ an additional policy decision.
 
 `routing-summary.json` proves that explicit routes plus implicit defaults
 preserve the complete wallet and staked-to-vault totals. It records hashes for
-the three generated CSVs, unresolved totals, not-issued, redistributed, and
-remaining issuable totals, the WONE reserve split, inactive routes, and pending
-policy decisions.
+the generated CSVs, unresolved totals, not-issued, redistributed, and
+remaining all-stage totals, per-stage totals and readiness, the WONE reserve
+split, inactive routes, pending stage review, and pending policy decisions.
+`stage_readiness` scopes held amounts, governor holds, and policy gates to each
+stage. The global status is conservative; an unresolved next-stage destination
+does not by itself change `initial_stage_status`.
 
-These files do not constitute a complete deployment allocation. A later
-deployment build must materialize and verify the final wallet/Merkle input from
-the base entitlements plus the approved sparse exceptions.
+`materialize-initial-stage.py` expands implicit code-less wallet delivery,
+applies explicit initial destinations, subtracts terminal wallet/vault
+non-issuance, and filters out next-stage, deferred, and manual-review rows. It
+also builds the initial validator-vault asset and share plans and verifies them
+against `stage_readiness.initial`. Its output remains held while any initial
+destination, governor, or stage-scoped policy gate is unresolved.
 
 ## Destination input columns
 
@@ -204,6 +242,14 @@ to the validator's key-controlled address, while a validator address with an
 explicit claim route defaults to governor hold until `validator-governors.csv`
 supplies an approved destination.
 
+`validator-vault-stages.csv` starts from each base vault's full active
+principal. It records represented initial, next-stage, qualified-deferred,
+manual-review, and not-issued assets plus the uncompiled below-threshold
+deferred remainder. `post_policy_assets_atto` equals base assets minus
+not-issued assets. Only `initial_assets_atto` belongs to the initial stage;
+next-stage or deferred shares cannot be released merely because their
+validator vault exists.
+
 ## Policy-decision gate
 
 `policy-decisions.csv` records non-address decisions that can still make a
@@ -219,11 +265,11 @@ A resolved row must state the decision. Any pending row keeps the generated
 routing summary on hold.
 
 The file must include `rollback-exploit-proceeds`,
-`contract-recovery-custody`, `wone-holder-redistribution`, and
-`layerzero-nativeoft-reconciliation`, as created by
-`init-local-routing.py`. Missing required decisions reject the input, including
-an empty or header-only file. Additional decisions are allowed and also keep
-routing on hold while pending.
+`initial-wallet-activity-stage`, `reviewed-contract-migration-policy`,
+`wone-holder-redistribution`, and `layerzero-nativeoft-reconciliation`, as
+created by `init-local-routing.py`. Missing required decisions reject the
+input, including an empty or header-only file. Additional decisions are
+allowed and also keep routing on hold while pending.
 
 The WONE policy is resolved: add WONE to the current inclusive threshold and
 wallet amount, offset the matching source reserve as `redistributed`, and mark
@@ -231,8 +277,9 @@ the remaining reserve `not_issuing`. `build-wone-routes.py` derives both exact
 amounts from the verified holder overlay; no destination address is used.
 
 LayerZero NativeOFT contracts are separate because they directly hold native
-ONE. Their decision remains pending until remote supply and messages in flight
-are reconciled and a custody destination is approved.
+ONE. Their next-stage eligibility is resolved. The remaining pending gate is
+destination readiness: remote supply and messages in flight must be reconciled
+before a destination is approved.
 
 ## Safety
 
@@ -246,11 +293,11 @@ are reconciled and a custody destination is approved.
 - Ordinary code-less EOAs alone use an implicit same-address default.
 - Every verified validator wrapper is recorded as a code-bearing same-address
   exception with the validator classification file as evidence.
-- Genuine contracts default to hold unless an explicit recovery route exists.
-- After any higher-priority incident or reserve route, ordinary
-  non-multisig contracts go to the contract holding address. The builder
-  cannot send those generated rows to the general treasury. Later claimant
-  payments come from that existing balance; they are not a second issuance.
+- Genuine contracts never enter an activity-derived initial-stage row.
+- After higher-priority exact incident or reserve routes, excluded reviewed
+  contracts send every remainder to terminal non-issuance. Reviewed multisig
+  and 1wallet remainders stay held for the next stage, while LayerZero uses
+  its dedicated next-stage hold.
 - Any unconsumed remainder for an ordinary EOA is implicit; any unconsumed
   validator remainder remains an explicit validator exception.
 - Routing requests may not exceed the source's remaining total claim.

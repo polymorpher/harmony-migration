@@ -376,8 +376,9 @@ python3 toolkit/scripts/claims/enrich-claim-activity.py \
   --summary "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity-summary.json"
 ```
 
-Build the embargoed cumulative 3, 6, 12, 24, 36, and 48 calendar-month
-analysis:
+Build the embargoed raw all-address cumulative 3, 6, 12, 24, 36, and 48
+calendar-month context. It includes genuine contracts and is not the initial
+migration population:
 
 ```sh
 python3 toolkit/scripts/claims/summarize-claim-activity.py \
@@ -391,6 +392,9 @@ python3 toolkit/scripts/claims/summarize-claim-activity.py \
 The activity fields are reporting context only. Activity extraction does not
 inspect internal EVM traces or validator consensus signatures, and an empty
 activity time does not prove that an account was never used.
+The wallet-only initial-stage windows are generated later by
+`build-migration-stage-policy.py`, after contract identity and exact
+non-issuance inputs are available.
 
 Create the preliminary code-bearing review set:
 
@@ -420,6 +424,8 @@ step requires the ignored private `exchanges/` directory and is not available
 in the public source package:
 
 ```sh
+python3 toolkit/scripts/routing/init-local-routing.py  # once, in a new clone
+
 python3 toolkit/scripts/exchanges/normalize-exchange-wallets.py \
   --policy exchanges/exchange-policy.json \
   --raw-dir exchanges/wallets-raw \
@@ -477,8 +483,48 @@ python3 toolkit/scripts/claims/verify-eligibility-policy.py \
   --output "$OUT/claims/migration-claims-policy.verify.json"
 ```
 
-Rebuild the exchange reports with the verified final categories. This replaces
-the bootstrap Gate disposition with the final automatic/not-airdropped split:
+Build the reviewed non-issuance inventory, then generate the stage policy from
+the final category split. The stage builder verifies source hashes, applies
+deductions after snapshot qualification, and keeps stage separate from
+issuance treatment:
+
+```sh
+python3 toolkit/scripts/routing/merge-wallet-theft-inventory.py \
+  --historical-inventory artifacts/supply-reconciliation-20260911/treasury-reclaim-inventory.csv \
+  --historical-perpetrators artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-cutoff.csv \
+  --additions artifacts/supply-reconciliation-20260911/wallet-theft-inventory-additions-20260916.csv \
+  --victims artifacts/supply-reconciliation-20260911/wallet-theft-victim-inventory-20260916.csv \
+  --all-claims "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
+  --perpetrator-output artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-related-cutoff.csv \
+  --perpetrator-summary artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-related-cutoff-summary.json \
+  --victim-summary artifacts/supply-reconciliation-20260911/wallet-theft-victim-inventory-summary.json \
+  --non-issuance-output artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
+  --non-issuance-summary artifacts/supply-reconciliation-20260911/non-issuance-inventory-summary.json
+
+python3 toolkit/scripts/claims/build-migration-stage-policy.py \
+  --qualified-activity "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity.csv" \
+  --activity-summary artifacts/claim-accounting-20260911/priority-claim-activity-summary.json \
+  --migration-summary "$OUT/claims/all-address-migration-claims-cutoff-summary.json" \
+  --contract-review artifacts/contract-review-20260911/out/contract-review-policy.csv \
+  --existing-non-issuance artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
+  --historical-retention ../harmony-supply-audit/artifacts/historical-hacks-investigation-20260916/not-issued-retained-initial-addresses.csv \
+  --manual-wallets artifacts/exchange-accounting-20260917/qualified-non-gate-exclusions.csv \
+  --output artifacts/migration-policy-20260917/migration-stage-policy.csv \
+  --summary artifacts/migration-policy-20260917/migration-stage-summary.json \
+  --report artifacts/migration-policy-20260917/MIGRATION_STAGE_POLICY_2026-09-17.md
+
+python3 toolkit/scripts/contract-review/build-report.py \
+  --output-dir artifacts/contract-review-20260911/out \
+  --claims "$OUT/claims/migration-claims-code-bearing-complete.csv" \
+  --all-claims "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
+  --cutoff-block 93623067 \
+  --migration-stage-summary artifacts/migration-policy-20260917/migration-stage-summary.json \
+  --report artifacts/contract-review-20260911/CONTRACT_ACCOUNT_REVIEW_2026-09-11.md
+```
+
+Rebuild the exchange reports with the verified final categories and stage
+policy. This replaces the bootstrap Gate disposition with the initial-stage
+and outside-initial split:
 
 ```sh
 python3 toolkit/scripts/exchanges/build-exchange-accounting.py \
@@ -491,6 +537,7 @@ python3 toolkit/scripts/exchanges/build-exchange-accounting.py \
   --automatic-claims "$OUT/claims/migration-claims-automatic.csv" \
   --contract-claims "$OUT/claims/migration-claims-genuine-contract-review.csv" \
   --excluded-claims "$OUT/claims/migration-claims-excluded.csv" \
+  --migration-stages artifacts/migration-policy-20260917/migration-stage-policy.csv \
   --output-dir artifacts/exchange-accounting-20260917 \
   --routes-output routing/local/exchanges.csv \
   --destinations-output routing/local/exchange-destinations.csv \
@@ -542,22 +589,9 @@ them with locally reviewed manual routes, and apply them to both delivery
 paths:
 
 ```sh
-python3 toolkit/scripts/routing/init-local-routing.py  # once, in a new clone
-
-python3 toolkit/scripts/routing/merge-wallet-theft-inventory.py \
-  --historical-inventory artifacts/supply-reconciliation-20260911/treasury-reclaim-inventory.csv \
-  --historical-perpetrators artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-cutoff.csv \
-  --additions artifacts/supply-reconciliation-20260911/wallet-theft-inventory-additions-20260916.csv \
-  --victims artifacts/supply-reconciliation-20260911/wallet-theft-victim-inventory-20260916.csv \
-  --all-claims "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
-  --perpetrator-output artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-related-cutoff.csv \
-  --perpetrator-summary artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-related-cutoff-summary.json \
-  --victim-summary artifacts/supply-reconciliation-20260911/wallet-theft-victim-inventory-summary.json \
-  --non-issuance-output artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
-  --non-issuance-summary artifacts/supply-reconciliation-20260911/non-issuance-inventory-summary.json
-
 python3 toolkit/scripts/routing/build-non-issuance-routes.py \
   --inventory artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
+  --inventory ../harmony-supply-audit/artifacts/historical-hacks-investigation-20260916/not-issued-retained-initial-addresses.csv \
   --output routing/local/not-issuing.csv \
   --summary routing/local/not-issuing-summary.json
 
@@ -568,10 +602,11 @@ python3 toolkit/scripts/routing/build-wone-routes.py \
   --summary routing/local/bridge-reserves-summary.json \
   --replace
 
-python3 toolkit/scripts/routing/build-contract-treasury-routes.py \
+python3 toolkit/scripts/routing/build-contract-policy-routes.py \
   --contracts artifacts/contract-review-20260911/out/contract-review-policy.csv \
-  --output routing/local/contracts-to-treasury.csv \
-  --summary routing/local/contracts-to-treasury-summary.json
+  --stage-policy artifacts/migration-policy-20260917/migration-stage-policy.csv \
+  --output routing/local/contract-policy.csv \
+  --summary routing/local/contract-policy-summary.json
 
 python3 toolkit/scripts/routing/apply-routes.py \
   --all-claims "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
@@ -582,6 +617,7 @@ python3 toolkit/scripts/routing/apply-routes.py \
   --deferred-shares "$OUT/claims/base-deferred-vault-shares.csv" \
   --base-vault-deposits "$OUT/claims/base-validator-vault-deposits.csv" \
   --validator-accounts artifacts/contract-review-20260911/out/validator-policy-accounts.csv \
+  --migration-stages artifacts/migration-policy-20260917/migration-stage-policy.csv \
   --routes routing/local/manual.csv \
   --routes routing/local/multisigs.csv \
   --routes routing/local/lost-wallets.csv \
@@ -589,13 +625,14 @@ python3 toolkit/scripts/routing/apply-routes.py \
   --routes routing/local/bridge-reserves.csv \
   --routes routing/local/not-issuing.csv \
   --routes routing/local/exchanges.csv \
-  --routes routing/local/contracts-to-treasury.csv \
+  --routes routing/local/contract-policy.csv \
   --destinations routing/local/destinations.csv \
   --destinations routing/local/exchange-destinations.csv \
   --governors routing/local/validator-governors.csv \
   --policy-decisions routing/local/policy-decisions.csv \
   --exceptions-output routing/local/generated/routing-exceptions.csv \
   --governor-exceptions-output routing/local/generated/validator-governor-exceptions.csv \
+  --vault-stage-output routing/local/generated/validator-vault-stages.csv \
   --unresolved-output routing/local/generated/unresolved-routing.csv \
   --summary routing/local/generated/routing-summary.json \
   --replace
@@ -610,6 +647,39 @@ python3 toolkit/scripts/exchanges/verify-exchange-routing.py \
   --output artifacts/exchange-accounting-20260917/routing-verification.json \
   --replace
 
+python3 toolkit/scripts/claims/verify-migration-stage-policy.py \
+  --stage-policy artifacts/migration-policy-20260917/migration-stage-policy.csv \
+  --stage-summary artifacts/migration-policy-20260917/migration-stage-summary.json \
+  --routing-summary routing/local/generated/routing-summary.json \
+  --output artifacts/migration-policy-20260917/migration-stage.verify.json \
+  --replace
+
+python3 toolkit/scripts/routing/materialize-initial-stage.py \
+  --stage-policy artifacts/migration-policy-20260917/migration-stage-policy.csv \
+  --base-priority-shares "$OUT/claims/base-priority-vault-shares.csv" \
+  --routing-exceptions routing/local/generated/routing-exceptions.csv \
+  --routing-summary routing/local/generated/routing-summary.json \
+  --vault-stages routing/local/generated/validator-vault-stages.csv \
+  --governor-exceptions routing/local/generated/validator-governor-exceptions.csv \
+  --wallet-output routing/local/generated/initial-stage/wallet-allocations.csv \
+  --shares-output routing/local/generated/initial-stage/vault-shares.csv \
+  --vault-output routing/local/generated/initial-stage/validator-vaults.csv \
+  --unresolved-output routing/local/generated/initial-stage/unresolved.csv \
+  --summary routing/local/generated/initial-stage/summary.json \
+  --report artifacts/migration-policy-20260917/INITIAL_STAGE_MATERIALIZATION_2026-09-17.md \
+  --replace
+
+python3 toolkit/scripts/claims/build-entitlement-report.py \
+  --claims-summary "$OUT/claims/all-address-migration-claims-cutoff-summary.json" \
+  --all-metadata-summary "$OUT/claims/all-address-native-claims-cutoff-metadata-summary.json" \
+  --all-metadata-ledger "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
+  --vault-rpc-summary "$OUT/state/staked-to-vault-by-delegation-rpc-summary.json" \
+  --vault-allocation-summary "$OUT/claims/base-delivery-summary.json" \
+  --policy-summary "$OUT/claims/migration-claims-policy-summary.json" \
+  --routing-summary routing/local/generated/routing-summary.json \
+  --output artifacts/claim-accounting-20260911/MIGRATION_CLAIM_DELIVERY_2026-09-11.md \
+  --replace
+
 python3 toolkit/scripts/routing/build-wallet-theft-inventory-report.py \
   --perpetrator-summary artifacts/supply-reconciliation-20260911/reported-wallet-theft-perpetrator-related-cutoff-summary.json \
   --victim-summary artifacts/supply-reconciliation-20260911/wallet-theft-victim-inventory-summary.json \
@@ -620,6 +690,7 @@ python3 toolkit/scripts/routing/build-wallet-theft-inventory-report.py \
 python3 toolkit/scripts/routing/build-non-issuance-report.py \
   --inventory-summary artifacts/supply-reconciliation-20260911/non-issuance-inventory-summary.json \
   --route-summary routing/local/not-issuing-summary.json \
+  --contract-policy-summary routing/local/contract-policy-summary.json \
   --routing-summary routing/local/generated/routing-summary.json \
   --output artifacts/supply-reconciliation-20260911/NON_ISSUANCE_POLICY_2026-09-16.md
 
@@ -640,11 +711,13 @@ python3 toolkit/scripts/claims/build-wone-report.py \
 ```
 
 The generated directory contains sparse routing exceptions, separate
-validator-governor exceptions, the unresolved work queue, and the conservation
-summary. It deliberately does not repeat ordinary code-less EOA same-address
-delivery. These files are not a deployment allocation; construct and verify
-the complete wallet/Merkle input only after `routing-summary.json` reports
-`status: ready`. See `routing/README.md` for the file contracts.
+validator-governor exceptions, the unresolved work queue, per-validator stage
+assets, and a materialized initial-stage plan. The sparse file deliberately
+does not repeat ordinary code-less EOA same-address delivery; the materializer
+adds those rows and filters every non-initial or non-issued allocation.
+Release the initial plan only when `stage_readiness.initial` and the
+materializer summary both report `status: ready`. The global routing status is
+the conservative all-stage gate. See `routing/README.md` for the file contracts.
 
 The deployment build must exclude every row with
 `destination_status: not_issuing` or `redistributed`. A redistributed row is a
