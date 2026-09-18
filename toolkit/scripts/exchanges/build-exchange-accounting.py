@@ -58,6 +58,8 @@ AUDIT_FIELDS = (
     "total_claim_atto",
     "qualification_status",
     "policy_category",
+    "migration_stage",
+    "issuance_treatment",
     "delivery_policy",
     "configured_destination",
     "configured_destination_status",
@@ -112,6 +114,8 @@ GATE_LIST_FIELDS = (
     "planned_total_entitlement_atto",
     "remaining_not_airdropped_atto",
     "qualification_status",
+    "migration_stage",
+    "issuance_treatment",
     "planned_delivery_status",
     "last_activity_time_utc",
     "activity_status",
@@ -162,6 +166,7 @@ def parse_args():
     parser.add_argument("--automatic-claims")
     parser.add_argument("--contract-claims")
     parser.add_argument("--excluded-claims")
+    parser.add_argument("--migration-stages")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--routes-output", required=True)
     parser.add_argument("--destinations-output", required=True)
@@ -394,6 +399,45 @@ def load_categories(paths, wanted):
     return categories
 
 
+def load_migration_stages(path, wanted):
+    stages = {}
+    with open(path, newline="") as source:
+        reader = csv.DictReader(source)
+        required = {
+            "address",
+            "migration_stage",
+            "issuance_treatment",
+            "migration_allocation_atto",
+        }
+        if not required <= set(reader.fieldnames or ()):
+            raise ValueError(f"{path}: missing migration-stage fields")
+        for line, row in enumerate(reader, start=2):
+            address = normalize_address(row["address"], f"{path}:{line}")
+            if address not in wanted:
+                continue
+            if address in stages:
+                raise ValueError(f"{path}:{line}: duplicate migration stage")
+            stage = row["migration_stage"]
+            if stage not in {"", "initial", "next_stage", "deferred"}:
+                raise ValueError(f"{path}:{line}: invalid migration stage")
+            treatment = row["issuance_treatment"]
+            if treatment not in {"issue", "not_issued"}:
+                raise ValueError(f"{path}:{line}: invalid issuance treatment")
+            allocation = int(row["migration_allocation_atto"])
+            if allocation < 0:
+                raise ValueError(f"{path}:{line}: negative stage allocation")
+            if treatment == "issue" and (not stage or allocation <= 0):
+                raise ValueError(f"{path}:{line}: invalid issued allocation")
+            if treatment == "not_issued" and (stage or allocation):
+                raise ValueError(f"{path}:{line}: invalid not-issued allocation")
+            stages[address] = {
+                "stage": stage,
+                "treatment": treatment,
+                "allocation": allocation,
+            }
+    return stages
+
+
 def parse_utc(value):
     if not value.endswith("Z"):
         raise ValueError(f"UTC timestamp must end in Z: {value}")
@@ -483,9 +527,11 @@ def build_audit_row(
     wone,
     activity,
     category,
+    stage_record,
     threshold,
     cutoff,
     categories_complete=True,
+    stages_complete=False,
 ):
     config = exchange["config"]
     values = claim_values(claim, wone)
@@ -500,6 +546,41 @@ def build_audit_row(
             f"below-threshold exchange address has policy category: "
             f"{normalized['address_hex']}"
         )
+    if qualifies and stages_complete and stage_record is None:
+        raise ValueError(
+            f"qualified exchange address missing migration stage: "
+            f"{normalized['address_hex']}"
+        )
+    migration_stage = (
+        stage_record["stage"]
+        if stage_record is not None
+        else "manual_review"
+        if (
+            not qualifies
+            and config["delivery_policy"] == "manual_current_claim"
+            and values["total_claim"] > 0
+        )
+        else "below_threshold"
+        if not qualifies
+        else "stage_pending"
+    )
+    issuance_treatment = (
+        stage_record["treatment"]
+        if stage_record is not None
+        else "issue"
+    )
+    target_allocation = (
+        stage_record["allocation"]
+        if stage_record is not None
+        else values["total_claim"]
+    )
+    deduction = values["total_claim"] - target_allocation
+    if deduction < 0:
+        raise ValueError("stage allocation exceeds exchange claim")
+    target_wallet = max(values["wallet_airdrop"] - deduction, 0)
+    target_staked = target_allocation - target_wallet
+    if target_staked < 0 or target_staked > values["staked_to_vault"]:
+        raise ValueError("stage allocation does not split across components")
     activity_record = activity or {field: "" for field in ACTIVITY_FIELDS}
     if activity_record["last_activity_time_utc"]:
         activity_status = "found"
@@ -522,17 +603,25 @@ def build_audit_row(
         elif not categories_complete:
             planned_status = "policy_category_pending"
         elif category == "automatic":
-            planned_wallet = values["wallet_airdrop"]
-            planned_staked = values["staked_to_vault"]
-            planned_status = "automatic_same_address"
+            if issuance_treatment == "not_issued":
+                planned_status = "not_issued"
+            elif stages_complete and migration_stage != "initial":
+                planned_status = f"{migration_stage}_stage_not_initial"
+            else:
+                planned_wallet = target_wallet
+                planned_staked = target_staked
+                planned_status = "automatic_same_address"
         elif category == "contract_review":
             planned_status = "contract_review_hold"
         else:
             planned_status = "higher_priority_policy_route"
     else:
-        planned_wallet = values["wallet_airdrop"]
-        planned_staked = values["staked_to_vault"]
-        if not planned_wallet and not planned_staked:
+        if issuance_treatment == "issue":
+            planned_wallet = target_wallet
+            planned_staked = target_staked
+        if issuance_treatment == "not_issued":
+            planned_status = "not_issued"
+        elif not planned_wallet and not planned_staked:
             planned_status = (
                 "wone_below_threshold_not_in_current_claim"
                 if wone
@@ -544,7 +633,7 @@ def build_audit_row(
             planned_status = "manual_destination_hold"
     planned_total = planned_wallet + planned_staked
     if planned_total != (
-        values["total_claim"]
+        target_allocation
         if planned_status
         in {
             "automatic_same_address",
@@ -574,6 +663,8 @@ def build_audit_row(
             "qualified" if qualifies else "below_threshold"
         ),
         "policy_category": category or "",
+        "migration_stage": migration_stage,
+        "issuance_treatment": issuance_treatment,
         "delivery_policy": delivery_policy,
         "configured_destination": normalized["configured_destination"],
         "configured_destination_status": destination_status,
@@ -696,7 +787,7 @@ def summarize_exchange(exchange, rows):
     ):
         memo_status = "hold_missing_destination"
     elif exchange["config"]["delivery_policy"] == "automatic_threshold":
-        memo_status = "automatic_threshold_policy"
+        memo_status = "initial_wallet_stage_policy"
     else:
         memo_status = "ready_for_exchange_review"
     return {
@@ -750,6 +841,7 @@ def summarize_exchange(exchange, rows):
         "totals": serializable_components(totals),
         "activity": grouped_stats(rows, "activity_status"),
         "activity_age": grouped_stats(rows, "activity_age_bucket"),
+        "migration_stages": grouped_stats(rows, "migration_stage"),
         "balance_buckets": grouped_stats(balance_rows, "balance_bucket"),
         "planned_delivery_statuses": grouped_stats(
             rows, "planned_delivery_status"
@@ -939,22 +1031,23 @@ def render_gate_report(summary, output_dir, cutoff_text):
     totals = summary["totals"]
     airdropped_path = output_dir / "gate-airdropped.csv"
     not_airdropped_path = output_dir / "gate-not-airdropped.csv"
-    return f"""# Gate automatic-airdrop audit
+    return f"""# Gate initial-stage same-address audit
 
 Gate did not request aggregate rerouting. Its submitted wallets therefore
-remain under the ordinary inclusive threshold and account-policy rules.
+remain under the ordinary inclusive threshold, account-policy, and six-month
+wallet-stage rules.
 
 - Cutoff: `{cutoff_text}`
 - Submitted Gate wallets: {summary['wallet_rows']:,}
-- Wallets in the automatic same-address batch:
+- Wallets in the initial same-address batch:
   {summary['automatic_airdrop_rows']:,}
-- Automatic ERC-20 ONE airdrop:
+- Initial ERC-20 ONE allocation:
   **{one_display(totals['planned_wallet_airdrop_atto'])} ONE**
 - Validator-vault share principal:
   {one_display(totals['planned_staked_to_vault_atto'])} ONE
-- Total automatic ONE-equivalent entitlement:
+- Total initial ONE-equivalent allocation:
   {one_display(totals['planned_total_entitlement_atto'])} ONE
-- Wallets not in the current automatic batch:
+- Wallets outside the current initial batch:
   {summary['wallet_rows'] - summary['automatic_airdrop_rows']:,}
 - Combined native ONE plus WONE value not airdropped:
   **{one_display(totals['remaining_not_airdropped_atto'])} ONE**
@@ -969,10 +1062,10 @@ remain under the ordinary inclusive threshold and account-policy rules.
 
 Address lists:
 
-- `{airdropped_path.name}` — wallets receiving a current automatic airdrop;
+- `{airdropped_path.name}` — wallets in the current initial same-address stage;
   SHA-256 `{file_sha256(airdropped_path)}`.
-- `{not_airdropped_path.name}` — wallets not receiving a current automatic
-  airdrop, including zero/no-cutoff-claim rows; SHA-256
+- `{not_airdropped_path.name}` — wallets outside the current initial stage,
+  including deferred and zero/no-cutoff-claim rows; SHA-256
   `{file_sha256(not_airdropped_path)}`.
 
 The detailed `audits/gate.csv` file retains cutoff components, policy category,
@@ -1012,11 +1105,14 @@ This private finding applies exchange-provided wallet inventories to the
 cutoff-pinned migration ledger without re-deriving chain state.
 
 - Cutoff: `{cutoff_text}`
-- Gate: ordinary same-address automatic processing at the inclusive threshold.
+- Gate: ordinary same-address destination policy, subject to the wallet-only
+  migration stage.
 - Other exchanges: excluded from automatic same-address delivery and routed
-  manually to their configured aggregate destination.
+  manually to their configured aggregate destination without overriding stage.
 - A blank destination produces a hold; it never falls back to a source wallet.
 - Exchange-submitted balances are checked but never replace chain accounting.
+- The totals below describe current routed entitlements across stages, not the
+  initial migration population.
 
 {markdown_table(
         (
@@ -1026,7 +1122,7 @@ cutoff-pinned migration ledger without re-deriving chain state.
             'Threshold wallets',
             'ERC-20 ONE',
             'Vault principal',
-            'Total entitlement',
+            'Current routed entitlement',
             'Remaining ONE/WONE value',
         ),
         rows,
@@ -1084,6 +1180,12 @@ def main():
         if categories_complete
         else {}
     )
+    stages_complete = bool(args.migration_stages)
+    stages = (
+        load_migration_stages(args.migration_stages, wanted)
+        if stages_complete
+        else {}
+    )
     output_dir = Path(args.output_dir)
     audits_dir = output_dir / "audits"
     memos_dir = output_dir / "memos"
@@ -1109,9 +1211,11 @@ def main():
                 holders.get(address, 0),
                 activity.get(address),
                 categories.get(address),
+                stages.get(address),
                 threshold,
                 cutoff,
                 categories_complete,
+                stages_complete,
             )
             rows.append(row)
             if (
@@ -1143,8 +1247,8 @@ def main():
                             f"{exchange_id}.csv"
                         ),
                         "notes": (
-                            "manual current-claim delivery; may explicitly "
-                            "activate a threshold-deferred native claim"
+                            "manual destination route; migration stage remains "
+                            "separately gated"
                         ),
                     }
                 )
@@ -1331,6 +1435,12 @@ def main():
         "wone_holders_sha256": file_sha256(args.wone_holders),
         "activity": args.activity,
         "activity_sha256": file_sha256(args.activity),
+        "migration_stages": args.migration_stages,
+        "migration_stages_sha256": (
+            file_sha256(args.migration_stages)
+            if args.migration_stages
+            else None
+        ),
         "qualified_non_gate_exclusions": len(exclusions),
         "manual_routes": len(routes),
         "gate_airdropped_rows": len(gate_airdropped),

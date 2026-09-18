@@ -181,6 +181,7 @@ class ExchangeAccountingPolicyTest(unittest.TestCase):
             wone,
             None,
             None,
+            None,
             threshold,
             self.module.parse_utc("2026-09-10T14:00:00Z"),
         )
@@ -217,6 +218,7 @@ class ExchangeAccountingPolicyTest(unittest.TestCase):
                 "last_activity_type": "",
             },
             "automatic",
+            None,
             threshold,
             self.module.parse_utc("2026-09-10T14:00:00Z"),
         )
@@ -229,6 +231,43 @@ class ExchangeAccountingPolicyTest(unittest.TestCase):
         self.assertEqual(
             row["planned_total_entitlement_atto"], str(threshold)
         )
+
+    def test_gate_stage_prevents_deferred_wallet_from_initial_delivery(self):
+        threshold = 1000 * 10**18
+        claim = self.claim(threshold)
+        exchange = {
+            "config": {
+                "id": "gate",
+                "delivery_policy": "automatic_threshold",
+            }
+        }
+        row = self.module.build_audit_row(
+            exchange,
+            self.normalized("not_required_same_address"),
+            claim,
+            0,
+            {
+                "last_activity_time_utc": "2025-01-01T00:00:00Z",
+                "last_activity_block": "1",
+                "last_activity_shard": "0",
+                "last_activity_type": "regular",
+            },
+            "automatic",
+            {
+                "stage": "deferred",
+                "treatment": "issue",
+                "allocation": threshold,
+            },
+            threshold,
+            self.module.parse_utc("2026-09-10T14:00:00Z"),
+            stages_complete=True,
+        )
+        self.assertEqual(row["migration_stage"], "deferred")
+        self.assertEqual(
+            row["planned_delivery_status"],
+            "deferred_stage_not_initial",
+        )
+        self.assertEqual(row["planned_total_entitlement_atto"], "0")
 
     def test_manual_audit_separates_erc20_and_vault_principal(self):
         threshold = 1000 * 10**18
@@ -261,6 +300,7 @@ class ExchangeAccountingPolicyTest(unittest.TestCase):
                 "last_activity_type": "",
             },
             "excluded_address",
+            None,
             threshold,
             self.module.parse_utc("2026-09-10T14:00:00Z"),
         )

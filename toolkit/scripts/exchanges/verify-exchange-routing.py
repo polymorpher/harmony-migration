@@ -65,6 +65,8 @@ def load_expected(policy, audits_dir):
             reader = csv.DictReader(source)
             required = {
                 "address_hex",
+                "migration_stage",
+                "issuance_treatment",
                 "planned_total_entitlement_atto",
                 "delivery_policy",
             }
@@ -77,7 +79,11 @@ def load_expected(policy, audits_dir):
                 amount = int(row["planned_total_entitlement_atto"])
                 if amount < 0:
                     raise ValueError(f"{path}:{line}: negative planned amount")
-                sources[address] = amount
+                sources[address] = {
+                    "amount": amount,
+                    "stage": row["migration_stage"],
+                    "treatment": row["issuance_treatment"],
+                }
                 if exchange_id == "gate":
                     gate_addresses.add(address)
         expected[exchange_id] = {
@@ -108,8 +114,10 @@ def load_routes(path, policy, expected, gate_addresses):
                 raise ValueError(f"{path}:{line}: invalid exchange route")
             address = row["source_address"].lower()
             planned = record["sources"].get(address)
-            if planned is None or planned <= 0:
+            if planned is None or planned["amount"] <= 0:
                 raise ValueError(f"{path}:{line}: source has no planned amount")
+            if planned["treatment"] != "issue":
+                raise ValueError(f"{path}:{line}: routed source is not issued")
             if address in gate_addresses:
                 raise ValueError(f"{path}:{line}: Gate source was rerouted")
             if (
@@ -126,14 +134,15 @@ def load_routes(path, policy, expected, gate_addresses):
             routes[route_id] = {
                 "exchange_id": exchange_id,
                 "address": address,
-                "planned": planned,
+                "planned": planned["amount"],
+                "stage": planned["stage"],
             }
     expected_pairs = {
         (exchange_id, address)
         for exchange_id, record in expected.items()
         if record["config"]["delivery_policy"] == "manual_current_claim"
-        for address, amount in record["sources"].items()
-        if amount > 0
+        for address, planned in record["sources"].items()
+        if planned["amount"] > 0
     }
     actual_pairs = {
         (row["exchange_id"], row["address"]) for row in routes.values()
@@ -148,6 +157,8 @@ def load_routes(path, policy, expected, gate_addresses):
 def load_compiled(path, routes):
     amounts = defaultdict(int)
     statuses = defaultdict(set)
+    stages = defaultdict(set)
+    treatments = defaultdict(set)
     unknown = []
     with open(path, newline="") as source:
         reader = csv.DictReader(source)
@@ -163,6 +174,8 @@ def load_compiled(path, routes):
                 raise ValueError(f"{path}:{line}: non-positive compiled amount")
             amounts[route_id] += amount
             statuses[route_id].add(row["destination_status"])
+            stages[route_id].add(row["migration_stage"])
+            treatments[route_id].add(row["issuance_treatment"])
     if unknown:
         raise ValueError(f"unknown compiled exchange routes: {unknown[:10]}")
     missing = set(routes) - set(amounts)
@@ -178,7 +191,11 @@ def load_compiled(path, routes):
             )
         if statuses[route_id] - {"ready", "hold"}:
             raise ValueError(f"{route_id}: invalid compiled destination status")
-    return amounts, statuses
+        if stages[route_id] != {route["stage"]}:
+            raise ValueError(f"{route_id}: compiled migration stage mismatch")
+        if treatments[route_id] != {"issue"}:
+            raise ValueError(f"{route_id}: compiled issuance treatment mismatch")
+    return amounts, statuses, stages
 
 
 def main():
@@ -186,7 +203,7 @@ def main():
     policy = load_policy(args.policy)
     expected, gate_addresses = load_expected(policy, args.audits_dir)
     routes = load_routes(args.routes, policy, expected, gate_addresses)
-    amounts, statuses = load_compiled(args.routing_exceptions, routes)
+    amounts, statuses, stages = load_compiled(args.routing_exceptions, routes)
     with open(args.exchange_summary, encoding="utf-8") as source:
         exchange_summary = json.load(source)
     if exchange_summary.get("schema_version") != 1:
@@ -225,6 +242,13 @@ def main():
                     status
                     for route_id in exchange_routes
                     for status in statuses[route_id]
+                }
+            ),
+            "migration_stages": sorted(
+                {
+                    stage
+                    for route_id in exchange_routes
+                    for stage in stages[route_id]
                 }
             ),
         }
