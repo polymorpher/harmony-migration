@@ -25,6 +25,10 @@ def parse_args():
     parser.add_argument("--rpc", default="https://a.api.s0.t.hmny.io")
     parser.add_argument("--cutoff-block", type=int, default=93623067)
     parser.add_argument("--all-claims", help="optional full cutoff ledger CSV (all addresses); adds context on code-bearing accounts below the threshold")
+    parser.add_argument(
+        "--migration-stage-summary",
+        help="optional confirmed stage-policy summary to append",
+    )
     parser.add_argument("--threshold-one", type=int, default=1000)
     return parser.parse_args()
 
@@ -236,7 +240,7 @@ def main():
         f"{one(v_agg['wallet'])} is direct wallet airdrop and "
         f"{one(v_agg['vault'])} is staked to validator vaults. "
         f"Detection: `hmyv2_getValidatorInformation` succeeds and the code RLP-decodes to a wrapper whose address equals the account "
-        f"(all {len(validators)} match; all {len(contracts)} real contracts fail both tests). Recommendation: move them from manual contract recovery to the automatic claim category while keeping wallet and vault delivery separate.\n"
+        f"(all {len(validators)} match; all {len(contracts)} real contracts fail both tests). The implemented policy keeps them in the wallet category while preserving separate wallet and vault delivery.\n"
     )
     ms_agg = agg(multisig, "is_multisig")["all"]
     L.append(
@@ -263,6 +267,48 @@ def main():
         f"as to *what* they are (staking-precompile delegation pools, NFT marketplaces, presales, payment splitters, games, escrows) but their operator is not attributed; "
         f"their total claim is {one(sum(D(r['total_claim_one']) for r in patterns))} ONE.\n"
     )
+    if args.migration_stage_summary:
+        with open(args.migration_stage_summary, encoding="utf-8") as source:
+            stage = json.load(source)
+        if stage.get("status") != "passed":
+            raise ValueError("migration stage summary did not pass")
+        groups = stage["contracts"]["groups"]
+        L.append("## Current migration policy\n")
+        L.append(
+            "Classification evidence is unchanged, but blanket contract "
+            "recovery is superseded. Reviewed multisigs, the two LayerZero "
+            "collateral contracts, and 1wallet allocations are held for the "
+            "next stage regardless of activity. SmartVault and all remaining "
+            "reviewed genuine contracts are not issued; both wallet-token and "
+            "staked-vault components are omitted. Destination readiness "
+            "remains separate from stage.\n"
+        )
+        policy_rows = [
+            ["Safe multisigs", groups["multisig"]["addresses"], groups["multisig"]["allocation_one"], "next stage", "issue after per-address destination approval"],
+            ["LayerZero bridge collateral", groups["layerzero_bridge_collateral"]["addresses"], groups["layerzero_bridge_collateral"]["allocation_one"], "next stage", "issue after reconciliation"],
+            ["1wallet", groups["onewallet"]["addresses"], groups["onewallet"]["allocation_one"], "next stage", "issue after recovery destination approval"],
+            ["SmartVault", groups["smartvault"]["addresses"], groups["smartvault"]["not_issued_one"], "—", "not issued"],
+            ["Other reviewed genuine contracts", groups["other_reviewed_contract"]["addresses"], groups["other_reviewed_contract"]["not_issued_one"], "—", "not issued"],
+        ]
+        L.append(
+            table(
+                [
+                    "policy group",
+                    "addresses",
+                    "net allocation ONE",
+                    "migration stage",
+                    "issuance treatment",
+                ],
+                policy_rows,
+            )
+        )
+        L.append(
+            "\nThe exact address-level stage source is "
+            "`artifacts/migration-policy-20260917/"
+            "migration-stage-policy.csv`. Contract activity does not select "
+            "the initial wallet stage, and the below-threshold code-bearing "
+            "population remains unclassified and deferred.\n"
+        )
 
     # primary category table
     L.append("## Statistics by primary category (mutually exclusive)\n")

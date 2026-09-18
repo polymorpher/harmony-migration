@@ -1,7 +1,7 @@
 destination_id,destination_address,status,notes
 treasury,,hold,fill the approved Ethereum treasury address before distribution
 not-issuing,,not_issuing,terminal outcome: do not create or distribute tokens for the routed amount
-contract-recovery-custody,,hold,specific Safe or multisig address that holds contract funds for verified claimants; separate from general treasury
+onewallet-recovery-multisig,,hold,next-stage recovery multisig with cutoff ownership evidence
 wone-holder-redistribution,,redistributed,terminal source offset paired exactly with WONE added to current qualified-holder airdrops
 layerzero-nativeoft-custody,,hold,fill only after NativeOFT reconciliation and custody approval
 exchange-example,,hold,fill only after the exchange destination is independently confirmed

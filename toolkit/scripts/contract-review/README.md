@@ -21,7 +21,7 @@ python3 toolkit/scripts/contract-review/fetch-contract-facts.py   --input $IN --
 python3 toolkit/scripts/contract-review/selector-census.py        --facts $OUT/facts.json --rpc $RPC --state-block $STATE_BLOCK --output $OUT/selectors.json
 python3 toolkit/scripts/contract-review/enrich-contract-facts.py  --facts $OUT/facts.json --selectors $OUT/selectors.json --rpc $RPC --state-block $STATE_BLOCK --output $OUT/extra.json
 python3 toolkit/scripts/contract-review/classify-contracts.py     --facts $OUT/facts.json --claims $IN --extra $OUT/extra.json --selectors $OUT/selectors.json --output-dir $OUT/out
-python3 toolkit/scripts/contract-review/build-report.py           --output-dir $OUT/out --claims $IN --cutoff-block $STATE_BLOCK --report $OUT/CONTRACT_ACCOUNT_REVIEW.md
+python3 toolkit/scripts/contract-review/build-report.py           --output-dir $OUT/out --claims $IN --cutoff-block $STATE_BLOCK --migration-stage-summary artifacts/migration-policy-20260917/migration-stage-summary.json --report $OUT/CONTRACT_ACCOUNT_REVIEW.md
 ```
 
 ## What each stage does
@@ -37,8 +37,8 @@ python3 toolkit/scripts/contract-review/build-report.py           --output-dir $
 The preliminary review file intentionally includes validator-wrapper accounts,
 whose RLP state is stored in the account code field. After classification, pass
 `$OUT/out/validator-policy-accounts.csv` to the final eligibility-policy
-command as `--automatic-code-addresses`; genuine contracts remain in manual
-review.
+command as `--automatic-code-addresses`; genuine contracts feed the separate
+reviewed migration-stage policy.
 
 The cutoff block is also the policy-state block. Ownership, Safe thresholds,
 recovery settings, proxy implementations, guardians, and holder censuses are

@@ -138,13 +138,12 @@ def main():
                 ),
             },
             {
-                "destination_id": "contract-recovery-custody",
+                "destination_id": "onewallet-recovery-multisig",
                 "destination_address": "",
                 "status": "hold",
                 "notes": (
-                    "specific Safe or multisig address that holds contract "
-                    "funds for verified claimants; separate from general "
-                    "treasury"
+                    "next-stage 1wallet recovery multisig; preserve cutoff "
+                    "ownership and recovery evidence before filling"
                 ),
             },
             {
@@ -187,19 +186,32 @@ def main():
                 ),
             },
             {
-                "decision_id": "contract-recovery-custody",
+                "decision_id": "initial-wallet-activity-stage",
                 "status": "resolved",
                 "decision": (
-                    "send generic non-multisig contract funds to a specific "
-                    "Safe or multisig holding address that is separate from "
-                    "general treasury"
+                    "place positive eligible wallets with activity in the "
+                    "six calendar months before cutoff in the initial stage"
                 ),
                 "evidence": (
-                    "docs/claim-routing.md#explicit-routing-files"
+                    "docs/eligibility-policy.md#initial-and-later-stages"
                 ),
                 "notes": (
-                    "verified claimants are paid from that existing balance; "
-                    "no additional ONE is created"
+                    "account classification and destination readiness remain "
+                    "separate from migration stage"
+                ),
+            },
+            {
+                "decision_id": "reviewed-contract-migration-policy",
+                "status": "resolved",
+                "decision": (
+                    "hold reviewed multisig, LayerZero, and 1wallet "
+                    "allocations for the next stage; do not issue SmartVault "
+                    "or other reviewed genuine-contract allocations"
+                ),
+                "evidence": "docs/claim-routing.md#reviewed-contract-policy",
+                "notes": (
+                    "next-stage eligibility does not imply a verified "
+                    "destination"
                 ),
             },
             {
