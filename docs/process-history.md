@@ -146,7 +146,39 @@ The maintained output now separates:
 
 The delivery split does not change the total claim.
 
-## 11. Preservation
+## 11. WONE holder qualification
+
+The September 17 update enumerated every positive WONE holder at the cutoff
+from the shard-0 archival node and reconciled the result exactly to both WONE
+`totalSupply()` and the WONE contract's native reserve.
+
+The current inclusive threshold now uses native total claim plus WONE balance.
+Qualified rows receive their WONE amount in the direct wallet component. The
+matching WONE source reserve is classified as `redistributed`, while the
+below-threshold/excluded remainder is `not_issuing` and retained in the Year
+2025 Supply Reserve.
+
+The WONE contract's self-held WONE is excluded from recipient delivery.
+LayerZero's NativeOFT contracts remain a separate native-ONE reconciliation;
+they do not hold WONE in this ledger.
+
+## 12. Exchange delivery policy
+
+The September 17 exchange update normalized the private inventories received
+from Binance.US, Gate, MEXC, and OKX, while retaining Binance and KuCoin as
+explicitly incomplete inputs. Address conversion, duplicate/overlap checks,
+exact submitted-balance reconciliation, and supplied signature verification
+were performed before any delivery policy was generated.
+
+Gate did not request aggregate rerouting and remains under the ordinary
+inclusive threshold. Qualifying wallets reported by other exchanges were
+removed from implicit same-address delivery; their positive current migration
+claims were converted to manual aggregate routes. Missing destinations remain
+holds. Per-exchange memos and a complete Gate airdropped/not-airdropped audit
+were generated from existing cutoff and activity artifacts rather than a new
+chain scan.
+
+## 13. Preservation
 
 All irreplaceable generated outputs, source snapshots, manifests, and runtime
 evidence were copied off the original machines and checksum-verified before

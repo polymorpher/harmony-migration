@@ -4,11 +4,18 @@ We will take a snapshot of the blockchain, find out how much ONE is in your wall
 
 The cutoff time (asset migration snapshot time) is Thursday, September 10, 2026, at 7 a.m. Pacific Time (14:00 UTC).
 
-Wallets with at least 1,000 ONE in total claim will be prioritized. Your liquid ONE, active delegation or validator stake, pending undelegation, unclaimed staking rewards, and pending cross-shard transfers will be summed for this calculation.
+Wallets with at least 1,000 ONE in combined qualification value will be prioritized. Your liquid ONE, active delegation or validator stake, pending undelegation, unclaimed staking rewards, pending cross-shard transfers, and WONE held on Harmony will be summed for this calculation.
 
 Wallets with below 1,000 ONE may claim from a claim portal at a later time, or wait for another batch of airdrop when it makes economic sense to do so - there is no scheduled time for that at this time.
 
-If you own some ONE at an exchange, there is nothing you need to do. Your exchange will receive the airdrop automatically. Some exchanges also work with us directly to ensure the process go smoothly.
+If you own ONE through an exchange, there is normally nothing you need to do.
+We are coordinating directly with participating exchanges. Exchange-controlled
+wallets that requested consolidation will be excluded from the ordinary
+same-address automatic airdrop and transferred manually to the exchange's
+confirmed Ethereum destination. Gate did not request consolidation, so its
+wallets continue through the ordinary at-least-1,000-ONE automatic policy.
+Your exchange remains responsible for crediting your account; contact it for
+its customer timeline.
 
 There are more complex scenarios, such as:
 1. you delegated some ONE to a validator
@@ -37,7 +44,7 @@ A claim contract will be made available on the chain where the asset originated,
 
 ### I own WONE on other chains
 
-A claim contract on Ethereum will be made available for you to claim the new ERC-20 ONE at a 1:1 ratio. It will be funded from the ONE migrated once from the Harmony WONE contract into a dedicated reserve multisig; claims transfer that existing reserve and do not create additional ONE. We will most likely use the pre-hack snapshot on those chains to determine your WONE balance, since there are still 2.412 billion forged WONE remaining on BSC and 12.9 million forged WONE on Ethereum following the 8/11/2026 forge-mint incident. We are still looking into whether we can use a more up-to-date snapshot and surgically remove the hacker's balances and transfers. If we can, we will use that instead.
+A claim contract on Ethereum will be made available for you to claim the new ERC-20 ONE at a 1:1 ratio. It will be funded from the separately reconciled Harmony-side LayerZero NativeOFT reserve for that route, not from the Harmony WONE contract reserve; claims transfer that existing reserve and do not create additional ONE. We will most likely use the pre-hack snapshot on those chains to determine your WONE balance, since there are still 2.412 billion forged WONE remaining on BSC and 12.9 million forged WONE on Ethereum following the 8/11/2026 forge-mint incident. We are still looking into whether we can use a more up-to-date snapshot and surgically remove the hacker's balances and transfers. If we can, we will use that instead.
 
 ### My assets are in a smart-contract wallet
 

@@ -13,6 +13,18 @@
 - `toolkit/scripts/claims/actual-supply-ledger.py` — component merge
 - `toolkit/scripts/claims/format-all-claims.py` — total-claim, wallet-airdrop,
   and staked-to-vault formatting
+- `toolkit/cmd/wone-holders` — replay cutoff-pinned WONE deposit, withdrawal,
+  and transfer logs from an archival node and require exact supply/reserve
+  closure
+- `toolkit/scripts/claims/build-wone-new-holder-metadata.py` — resolve cutoff
+  code and nonce for WONE-only threshold candidates
+- `toolkit/scripts/claims/apply-wone-qualification.py` — add qualified WONE to
+  wallet rows while preserving native claim fields and reserve conservation
+- `toolkit/scripts/claims/build-wone-report.py` — render the integrated WONE
+  holder, qualification, reserve-split, and routing finding
+- `toolkit/scripts/claims/build-pre-wone-archive-manifest.py` — map immutable
+  pre-WONE captures back to their original paths without resolving against
+  overwritten post-WONE files
 - `toolkit/scripts/claims/filter-claims-by-one.py` — generic ONE threshold
 - `toolkit/scripts/claims/enrich-claim-metadata-rpc.py` — complete missing
   cutoff code metadata before contract classification
@@ -25,6 +37,8 @@
   Harmony RPC when its local database is unavailable
 - `toolkit/scripts/claims/enrich-claim-activity.py` — merge the independent
   shard-0 and shard-1 activity scans into the prioritized claim CSV
+- `toolkit/scripts/claims/extend-account-activity.py` — reuse a verified
+  baseline activity ledger and merge an incremental WONE-candidate scan
 - `toolkit/scripts/claims/summarize-claim-activity.py` — calculate cumulative
   prioritized-claim totals for cutoff-relative activity windows and render
   the embargoed activity finding
@@ -40,6 +54,23 @@
   category split with verified validator-account overrides
 - `toolkit/scripts/claims/verify-eligibility-policy.py` — independent category
   and validator-override verification
+
+## Exchange accounting
+
+- `toolkit/scripts/exchanges/normalize-exchange-wallets.py` — deterministic
+  CSV/XLSX ingestion, address normalization, overlap checks, exact balance
+  parsing, and MEXC EIP-191 signer verification
+- `toolkit/scripts/exchanges/build-exchange-accounting.py` — reuse the cutoff
+  claim, WONE, activity, and policy ledgers to build exchange memos, address
+  audits, Gate split lists, non-Gate eligibility exclusions, and manual route
+  inputs
+- `toolkit/scripts/exchanges/verify-exchange-routing.py` — independently require
+  every memo amount and positive manual source to match the compiled exchange
+  routing exceptions, while proving Gate has no exchange route
+
+The runtime configuration, raw/normalized inventories, destinations, and
+operator README under `exchanges/` are private and intentionally absent from
+the public source package.
 
 ## Address recovery
 
@@ -128,6 +159,8 @@ See `docs/contract-account-review.md`.
 - `toolkit/scripts/routing/build-non-issuance-routes.py` — convert the current
   reviewed non-issuance inventory into terminal routes without changing
   partial-row remainders
+- `toolkit/scripts/routing/build-wone-routes.py` — split the WONE source
+  reserve into exact redistributed and retained-not-issued routes
 - `toolkit/scripts/routing/merge-wallet-theft-inventory.py` — validate reviewed
   perpetrator additions and separate victim positions against the global claim
   ledger, then build the current non-issuance inventory
@@ -146,10 +179,14 @@ See `docs/contract-account-review.md`.
 
 - `scripts/check-python-version.py` — enforces the supported Python 3.12+
   workflow before Make targets run
-- `toolkit/cmd/cutoff-final-verifier` — ignored exact artifact-bundle verifier;
-  restored with the result package because it embeds expected output identities
+- `toolkit/cmd/cutoff-final-verifier` — ignored exact native cutoff and
+  historical USD-difference bundle verifier; restored with the result package
+  because it embeds expected output identities
+- `toolkit/scripts/claims/verify-wone-allocation.py` — independently verify the
+  complete WONE holder overlay, threshold subset, reserve split, NativeOFT
+  separation, and shard-1 contract recovery
 - `scripts/check-numerical-embargo.py` — rejects publishable result values and
-  private finding paths
+  private finding and exchange-input paths
 - `scripts/check-public-package.py` — rejects private machine paths, binary
   data, and oversized generated files
 - `scripts/prepare-private-embargo.py` — refreshes ignored narrative and compact

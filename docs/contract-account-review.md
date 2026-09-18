@@ -7,9 +7,10 @@ breakdowns are held under the numerical embargo in
 `docs/findings/destination-mapping/contract-account-review.md`,
 `results/2026-09-11/`, and `artifacts/contract-review-<date>/`.
 
-The threshold uses each row's `total_claim`, including active
-stake/delegation. Contract recovery records `wallet_airdrop` and
-`staked_to_vault` separately; active delegation is represented through
+The threshold uses each row's `qualification_total`: native total claim,
+including active stake/delegation, plus cutoff WONE. Contract recovery records
+`wallet_airdrop`, including qualified WONE, and `staked_to_vault` separately;
+active delegation is represented through
 validator-vault shares rather than being sent as direct ERC-20 ONE.
 
 The liquid state export does not carry code metadata for staking-only accounts.
@@ -37,6 +38,12 @@ the genuine-contract review category. The classifier writes the deterministic
 override set to `validator-policy-accounts.csv` and contextual details to
 `validator-accounts.csv`. It locates the `CreateValidator` transaction in the
 canonical block identified by the wrapper's `creation-height`.
+
+That validator classification does not defeat a higher-priority explicit
+policy route. For example, if an exchange inventory ever contains a verified
+validator account, the exchange exclusion suppresses its same-address
+automatic override and the routing engine also holds its vault governor until
+an approved replacement is provided.
 
 ## Classification of real contracts
 

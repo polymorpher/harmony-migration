@@ -8,10 +8,14 @@ The locally calculated numerical outputs are temporarily withheld. This
 includes:
 
 - total-claim, direct wallet-airdrop, staked-to-vault, and vault-share totals;
+- WONE holder counts, balances, qualification impact, redistributed amount,
+  and retained reserve remainder;
 - result population and routing-category counts;
 - per-address balances and claim mappings;
 - contract-classification counts and monetary breakdowns;
 - cutoff-relative account-activity counts and claim-value breakdowns;
+- exchange wallet inventories, ownership clusters, submitted balances,
+  signatures, destinations, per-exchange memos, and address-level outcomes;
 - non-issuance, treasury-routing, and incident-recovery amounts;
 - generated CSV hashes and expected verification outputs;
 - detailed finding reports and machine-readable result files.
@@ -44,6 +48,8 @@ recovery, contract classification, or routing analysis were not completed.
   evidence;
 - `routing/local/` — real treasury, frozen-wallet, lost-wallet, multisig, and
   validator-governor destinations;
+- `exchanges/` — private operational policy, submissions, normalized ownership
+  ledgers, destinations, and operator notes;
 - `embargoed/` — restoration and provenance notes;
 - `manifests/results.sha256` and the dated release manifest — identities of
   ignored private results;

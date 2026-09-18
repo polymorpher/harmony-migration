@@ -9,6 +9,10 @@ It contains:
 - cutoff state and staking exports;
 - complete total-claim, direct wallet-airdrop, staked-to-vault, and
   difference CSVs;
+- archival WONE holder, combined-threshold, redistribution, and retained
+  reserve evidence;
+- exchange normalization provenance, per-exchange memos, address audits,
+  Gate airdropped/not-airdropped lists, and generated policy/route inputs;
 - address-preimage recovery evidence;
 - contract-classification facts, reports, and category CSVs;
 - historical treasury-routing and current non-issuance calculations;

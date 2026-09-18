@@ -20,13 +20,15 @@ Exact block hashes and state roots are in
 ## Public eligibility threshold
 
 The selected threshold is `>= 1,000 ONE`, applied to
-`total_claim_atto`: liquid balances, active delegation or validator
+`qualification_total_atto`: the native total claim plus cutoff WONE balance.
+The native claim includes liquid balances, active delegation or validator
 stake, pending undelegation, unclaimed staking rewards, and supported pending
 cross-shard receipts.
 
 Total claim is not the same as direct wallet airdrop. Active stake/delegation
 is moved to the corresponding validator's ERC-4626 vault and represented by
-vault shares. The direct wallet airdrop excludes that staked amount.
+vault shares. The direct wallet airdrop excludes that staked amount and
+includes WONE for rows in the current qualifying batch.
 
 The inclusive result is split into ordinary EOAs, verified validator-wrapper
 accounts that are also key-controlled, genuine contracts requiring
@@ -35,6 +37,20 @@ capped by their exact unreturned extra mint, so some claim rows must be
 split between terminal non-issuance and the ordinary destination. The gross
 claim ledger stays unchanged, but not-issued amounts are excluded from final
 token and vault-share creation.
+
+Exchange-provided wallet inventories add a separate delivery overlay. Gate
+remains under the ordinary inclusive threshold and same-address rules because
+it did not request rerouting. Qualifying wallets reported by other exchanges
+are removed from the implicit automatic category, and their positive current
+migration claims—including threshold-deferred native claims—are routed
+manually to a confirmed aggregate exchange destination. A missing destination
+is a hold and never falls back to the source wallet.
+
+WONE uses a separate conservation overlay. The source reserve paired with
+qualified-holder WONE is terminal `redistributed`; the remaining
+below-threshold/excluded reserve is `not_issuing` and retained in the Year 2025
+Supply Reserve. This prevents the WONE contract and its holders from both
+receiving the same backing.
 
 Wallet-theft evidence keeps explicitly reported perpetrators,
 transaction-linked theft recipients, and reported victim wallets as separate
@@ -48,8 +64,9 @@ first public results article. See
 ## Distribution status
 
 The public source package is ready for independent review. It is **not itself a
-distribution file**. Non-issuance, treasury, contract recovery, lost-wallet,
-frozen-wallet, and validator-governor decisions live in ignored routing files.
+distribution file**. Non-issuance, treasury, contract recovery, exchange,
+lost-wallet, frozen-wallet, and validator-governor decisions live in ignored
+routing files.
 
 The ignored routing workspace under `routing/local/` contains reviewed sparse
 exceptions, a generated unresolved work queue, and a conservation summary.
@@ -102,6 +119,8 @@ reproduction.
 - `results/2026-09-11/` — ignored compact result package during the embargo
 - `artifacts/` — ignored claim-accounting, contract-review, and evidence files
 - `routing/` — public schema/examples and ignored real destination routes
+- `exchanges/` — ignored private exchange policy, raw submissions, normalized
+  inventories, destinations, and operator notes
 - `repro/as-run/` — ignored exact operator scripts retained locally
 - `repro/source-snapshots/` — source snapshots for earlier accounting phases
 - `user-faq.md` — end-user migration FAQ
@@ -114,6 +133,10 @@ controls. Public reviewers should follow `docs/reproduce.md` instead.
 Consensus state, canonical blocks, signed transactions, staking wrappers, and
 cross-shard receipt records are primary sources. Explorer balances are not
 used.
+
+Exchange submissions are authoritative only for the exchange's source-wallet
+inventory and requested destination. Their stated balances are compared
+against, but never substituted for, cutoff consensus state.
 
 Every recovered address must satisfy:
 

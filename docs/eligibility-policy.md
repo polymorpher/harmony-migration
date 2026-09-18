@@ -1,8 +1,8 @@
 # Eligibility policy
 
-The accounting toolkit produces a total claim with separate direct-wallet and
-staked-to-vault components. Eligibility policy is a separate step and must not
-change the underlying state calculation.
+The accounting toolkit preserves the native claim and then applies a separate
+WONE qualification overlay with direct-wallet and staked-to-vault components.
+The overlay does not change the underlying native state calculation.
 
 ## Selected denomination
 
@@ -12,19 +12,32 @@ The public threshold is denominated in ONE, not USD:
 1,000 ONE = 1,000,000,000,000,000,000,000 atto-ONE
 ```
 
-It applies to `total_claim_atto`, after liquid, active
-stake/delegation, pending undelegation, unclaimed reward, and supported
-cross-shard components are combined by secure key.
+It applies to `qualification_total_atto`:
 
-The direct `wallet_airdrop_atto` excludes active stake/delegation. That active
-amount is `staked_to_vault_atto` and is represented by shares in the
-corresponding validator vault:
+```text
+qualification_total_atto
+= native_total_claim_atto + wone_balance_atto
+```
+
+The native total combines liquid, active stake/delegation, pending
+undelegation, unclaimed reward, and supported cross-shard components by secure
+key. WONE comes from the separately verified cutoff holder ledger.
+
+The direct `wallet_airdrop_atto` includes the complete WONE balance for a
+current qualifying row and excludes active stake/delegation. That active amount
+is `staked_to_vault_atto` and is represented by shares in the corresponding
+validator vault:
 
 ```text
 total_claim_atto
 = wallet_airdrop_atto
 + staked_to_vault_atto
 ```
+
+The WONE contract's matching shard-0 native reserve is not issued to the
+contract. The qualified-holder portion is classified as `redistributed`; the
+remaining below-threshold/excluded backing is `not_issuing` and retained in the
+Year 2025 Supply Reserve.
 
 The threshold controls prioritization. Validator vaults retain backing for
 active principal belonging to below-threshold accounts so those shares can be
@@ -35,7 +48,7 @@ not selected for migration. It is retained only in the as-run audit history.
 
 ## Equality policy
 
-The selected policy is inclusive: accounts whose total claim is exactly
+The selected policy is inclusive: accounts whose qualification total is exactly
 `1,000 ONE` are included. A strict `> 1,000 ONE` result is retained locally as
 a comparison artifact.
 
@@ -61,6 +74,57 @@ python3 toolkit/scripts/claims/filter-claims-by-one.py \
   --minimum-one 1000 \
   --comparison gt
 ```
+
+## Exchange delivery overlay
+
+Exchange ownership and destination requests change delivery, not the cutoff
+claim calculation. Gate requested no aggregate reroute, so every Gate source
+wallet remains under the ordinary inclusive threshold and account
+classification. Only a qualifying Gate wallet in the automatic category uses
+same-address delivery.
+
+Other exchange-provided source wallets do not use the implicit automatic
+same-address path. `build-exchange-accounting.py` produces the complete
+qualifying non-Gate exclusion set, and `apply-eligibility-policy.py` consumes it
+through `--exclude-addresses-file`. This moves those qualifying rows into the
+policy-routed category without changing their balances.
+
+The generated manual exchange routes also name positive current migration
+claims below the automatic threshold. The route engine deliberately loads
+those deferred native claims and sends their wallet/vault entitlement to the
+configured aggregate exchange destination. A below-threshold WONE balance that
+is not part of `total_claim_atto` remains outside that transfer and is reported
+as residual value. Missing inventories or destinations are holds.
+
+Exchange-submitted balances establish ownership and provide a reconciliation
+check. They never replace the cutoff-pinned claim ledger. Raw inventories,
+normalized address files, memos, destinations, and address-level audits remain
+private under the numerical embargo. The operational configuration under
+`exchanges/` is private as well; this section records the public policy
+semantics without exposing exchange files.
+
+## WONE holder treatment
+
+Every positive WONE balance is enumerated from cutoff-pinned archival-node
+events and reconciled to both WONE `totalSupply()` and the WONE contract's
+native reserve. LayerZero's Harmony NativeOFT contracts hold native ONE
+directly and have no WONE balance in this ledger.
+
+`apply-wone-qualification.py` verifies the full holder file but adds
+`wone_airdrop_atto` only for the current inclusive threshold set. It also
+excludes the WONE contract's own self-held WONE from recipient delivery.
+
+The source reserve closes as:
+
+```text
+WONE reserve
+= redistributed qualified-holder WONE
++ retained not-issued remainder
+```
+
+`redistributed` is not an address or a second issuance. It is the terminal
+source offset paired with WONE amounts already added to qualified-holder
+wallet rows.
 
 ## Code-bearing and validator accounts
 
@@ -117,6 +181,10 @@ See `routing/README.md`.
 in the audit ledger, while final issued supply excludes the exact not-issued
 wallet and vault amounts.
 
+The retained WONE reserve remainder follows this definition. The WONE amount
+paired with current holder airdrops does not: it is `redistributed`, because a
+replacement asset is created for those holders.
+
 ## Retired-shard receipts
 
 Historical receipts to retired shards 2 and 3 remain outside the primary claim
@@ -133,6 +201,7 @@ The final release metadata must state:
 - threshold denomination and exact atto value;
 - inclusive `>=`;
 - contract-account treatment;
+- exchange automatic-exclusion, manual-routing, and Gate-exception treatment;
 - non-issuance address inventory and policy;
 - retired-shard receipt treatment;
 - output row count, total amount, and SHA-256.

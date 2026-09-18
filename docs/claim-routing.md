@@ -20,14 +20,18 @@ remove deferred delegators' backing from the vault.
 
 Apply routing decisions in this order:
 
-1. enforce the inclusive `>= 1,000 ONE` eligibility threshold;
+1. classify the inclusive `>= 1,000 ONE` automatic batch while retaining
+   below-threshold claims as deferred;
 2. apply explicitly approved non-issuance, treasury, and incident-recovery
    rules;
-3. identify Harmony validator-wrapper accounts and treat them as
+3. exclude qualifying non-Gate exchange wallets from the implicit automatic
+   path and apply exchange aggregate routes, including explicitly named
+   positive deferred native claims; Gate remains under the ordinary threshold;
+4. identify Harmony validator-wrapper accounts and treat them as
    key-controlled accounts;
-4. apply an implicit same-address rule only to ordinary code-less EOAs and
+5. apply an implicit same-address rule only to ordinary code-less EOAs and
    assign each `staked_to_vault` entry through its validator vault;
-5. classify genuine contract accounts and route them through a class-specific
+6. classify genuine contract accounts and route them through a class-specific
    recovery process.
 
 The higher-priority rule wins. For example, detecting a validator wrapper does
@@ -117,16 +121,28 @@ The gross cutoff claim ledger remains unchanged for audit. Final issued supply
 is `gross claim - not-issued amount`; this is an intentional supply reduction,
 not an unresolved destination or transfer to treasury.
 
+That equation describes the native incident overlay. The expanded WONE routing
+input additionally subtracts a `redistributed` source offset paired with WONE
+already added to holder rows.
+
 ## Explicit routing files
 
 Real routes live under the ignored `routing/local/` directory. Separate CSVs
 may be maintained for non-issuance, treasury, bridge reserves, multisigs, lost
-wallets, frozen wallets, and other manual decisions. See `routing/README.md`
-for the schema and precedence.
+wallets, frozen wallets, exchanges, and other manual decisions. Exchange routes
+and destinations are generated separately as `exchanges.csv` and
+`exchange-destinations.csv`; `apply-routes.py` accepts multiple destination
+files. See `routing/README.md` for the schema and precedence.
 
 Routes are applied to direct wallet tokens first and then proportionally across
 the source's validator-vault positions when necessary. A missing destination
 becomes a hold; it never falls back to the original address.
+
+The exchange route builder uses the cutoff ledger for payout amounts and the
+exchange submission only for membership, destination authorization, and
+reconciliation. Gate receives no generated exchange route. Its qualifying
+ordinary wallets remain implicit same-address deliveries, while its complete
+airdrop/not-airdrop address split is retained in the private Gate audit.
 
 Generated routing is sparse:
 
@@ -170,22 +186,31 @@ owner set and threshold is supplied.
 These are release gates in `routing/local/policy-decisions.csv`; a pending
 decision keeps the routing summary on hold even if every address is populated.
 
-### WONE reserve custody
+### WONE holder redistribution
 
-The native ONE in the WONE contract is reserve backing for WONE. It is not
-the treasury's own spendable money. It is migrated once to a dedicated reserve
-multisig, separate from the general treasury. A later claim portal pays eligible
-WONE and bridged-WONE claimants by transferring ONE from that finite reserve.
-It does not mint or allocate additional ONE for those claims.
+The native ONE in the WONE contract is reserve backing for WONE. It is not the
+treasury's own spendable money and it is not a beneficial claim of the retiring
+contract.
 
-The WONE contract therefore receives a higher-priority
-`wone-reserve-custody` route instead of generic contract-recovery custody.
-That route consumes only `SHARD0_LIQUID`, the component held by the actual WONE
-contract. Same-address value on another shard is not WONE backing and falls
-through to generic contract-recovery custody. The destination remains held
-until the approved multisig address is supplied. Aggregate portal payments may
-not exceed the amount transferred to that reserve, and each entitlement must
-be claimable only once.
+Cutoff WONE is included directly in the current qualification total and wallet
+airdrop. The source reserve is then split exactly:
+
+```text
+WONE shard-0 native reserve
+= qualified-holder redistribution
++ retained not-issued remainder
+```
+
+The first route has terminal status `redistributed`. It has no destination
+address because the corresponding ONE is already present in qualified-holder
+wallet rows. The second route is terminal `not_issuing`; no replacement token
+is created for the below-threshold/excluded remainder, which remains in the
+Year 2025 Supply Reserve.
+
+`build-wone-routes.py` derives both exact amounts from the verified holder
+overlay. The WONE contract's self-held WONE is excluded as a circular system
+balance. Same-address value on shard 1 is not WONE backing and falls through
+to generic contract-recovery custody.
 
 ### LayerZero NativeOFT reconciliation
 
@@ -211,7 +236,11 @@ The public classifier and evidence schema are documented in:
 - `toolkit/scripts/claims/verify-vault-delegations.py`;
 - `toolkit/scripts/claims/build-vault-share-allocation.py`;
 - `toolkit/scripts/routing/build-non-issuance-routes.py`;
+- `toolkit/scripts/routing/build-wone-routes.py`;
 - `toolkit/scripts/routing/build-contract-treasury-routes.py`;
+- `toolkit/scripts/exchanges/normalize-exchange-wallets.py`;
+- `toolkit/scripts/exchanges/build-exchange-accounting.py`;
+- `toolkit/scripts/exchanges/verify-exchange-routing.py`;
 - `toolkit/scripts/routing/apply-routes.py`.
 
 Exact address mappings, category counts, balances, and destination candidates

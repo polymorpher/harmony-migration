@@ -33,18 +33,23 @@ A full independent run should:
 2. export both aggregate staking claims and per-validator active delegations;
 3. reconcile pending cross-shard receipts;
 4. recover and cryptographically verify every address preimage;
-5. assemble and strictly verify total-claim, wallet-airdrop, and
+5. assemble and strictly verify native total-claim, wallet-airdrop, and
    staked-to-vault fields;
-6. apply the inclusive threshold;
-7. resolve blank code metadata for the complete claim population at the
+6. enumerate cutoff WONE holders, reconcile them to `totalSupply()` and the
+   native reserve, then apply the WONE qualification overlay;
+7. apply the inclusive combined native-plus-WONE threshold;
+8. resolve blank code metadata for the complete claim population at the
    cutoff, classify every prioritized code-bearing row, and prove validator
    overrides;
-8. apply and verify the final destination split;
-9. build validator-vault deposits plus priority and deferred share ledgers; and
-10. apply explicit treasury and manual routes across wallet and vault delivery;
-11. verify the sparse routing and governor exception sets, requiring every
+9. apply and verify the final destination split;
+10. normalize exchange inputs, generate the non-Gate exclusion/manual-route
+    overlay and Gate split audit, and verify it against existing cutoff data;
+11. build validator-vault deposits plus priority and deferred share ledgers;
+12. apply explicit redistribution, non-issuance, treasury, exchange, and other
+    manual routes across wallet and vault delivery;
+13. verify the sparse routing and governor exception sets, requiring every
     unresolved destination to appear in the generated hold queue; and
-12. record deterministic counts, totals, and hashes before receiving the
+14. record deterministic counts, totals, and hashes before receiving the
    original results.
 
 ## State checks
@@ -89,8 +94,11 @@ The strict verifiers check:
 - zero unresolved addresses;
 - non-negative integer components;
 - shard liquid arithmetic;
-- `wallet_airdrop = liquid + pending undelegation + unclaimed reward + pending
-  cross-shard`;
+- `native_wallet_airdrop = liquid + pending undelegation + unclaimed reward +
+  pending cross-shard`;
+- `qualification_total = native_total_claim + wone_balance`;
+- `wone_airdrop = wone_balance` only for the inclusive current batch;
+- `wallet_airdrop = native_wallet_airdrop + wone_airdrop`;
 - `staked_to_vault = active stake/delegation`;
 - `total_claim = wallet_airdrop + staked_to_vault`;
 - exact 18-decimal ONE rendering;
@@ -109,12 +117,16 @@ database read failure. Absence may represent a pending receipt; any `Has`,
 The prioritized activity enrichment additionally checks:
 
 - every `>= 1,000 ONE` candidate has exactly one activity record;
-- the local explorer-node indexes are read in descending block/index order for
-  shard-0 and shard-1 regular transactions and shard-0 staking transactions;
-- each selected block exists in the canonical chain database and is at or
-  before the corresponding cutoff;
-- stale fork entries in an explorer-node index are skipped rather than
-  accepted as account activity;
+- a hybrid activity file reports exact database-derived and RPC-derived row
+  counts whose sum equals the candidate population;
+- database-derived rows read the local explorer-node indexes in descending
+  block/index order and verify selected blocks against the canonical chain
+  database;
+- RPC-derived rows request descending history from the archival node's
+  built-in transaction index and compare each result with canonical block
+  hashes;
+- each selected block is at or before the corresponding cutoff, and stale fork
+  entries from either index path are skipped rather than accepted as activity;
 - the selected transaction block is at or before its shard cutoff and its
   timestamp is at or before `2026-09-10T14:00:00Z`;
 - activity evidence is either complete or entirely blank; and
@@ -145,12 +157,15 @@ The selected inclusive eligibility split is independently checked to ensure:
   `contract-review-policy.csv` and `validator-policy-accounts.csv`; mutable
   activity context is excluded from release-comparison inputs;
 - genuine contracts remain in manual review;
-- selected inaccessible/dead rows are handled by policy;
+- selected inaccessible/dead and qualifying non-Gate exchange rows are handled
+  by policy;
 - category wallet, vault, total-claim amounts and output hashes match the
   policy summary;
 - per-validator vault deposits equal all active delegation principal;
 - priority and deferred shares are disjoint and complete;
 - explicit route amounts close exactly across wallet and vault components;
+- WONE redistributed source equals WONE added to qualified-holder rows, and
+  redistributed plus retained not-issued WONE equals the native reserve;
 - ordinary code-less EOA same-address delivery is implicit and absent from the
   exception output;
 - every verified validator account appears as an explicit code-bearing
@@ -158,6 +173,24 @@ The selected inclusive eligibility split is independently checked to ensure:
 - validator wallet exceptions and validator-vault governor exceptions remain
   separate;
 - no held destination silently falls back to the original address.
+
+The private exchange overlay additionally verifies:
+
+- each raw spreadsheet/CSV has no formulas, hidden sheets, macros, malformed
+  addresses, duplicates, or unadjudicated cross-exchange overlap;
+- each standardized address has an immutable source-row and source-file hash;
+- exact balance parsing is unit-aware, and MEXC signed rows recover to the
+  submitted source address and configured destination;
+- every qualifying non-Gate source is in the policy-routed category and no
+  Gate source is excluded merely because it appears in the Gate inventory;
+- every positive current non-Gate claim has exactly one priority-300 manual
+  route, including explicitly activated deferred native claims;
+- Gate airdropped and not-airdropped lists partition its complete inventory,
+  and its airdrop plus residual qualification value closes exactly;
+- prior activity data is reused only where it was collected, while other rows
+  are labeled `not_collected`; and
+- missing inventories or destinations remain holds and cannot produce a silent
+  same-address fallback.
 
 The incident non-issuance overlay must additionally verify:
 
@@ -175,8 +208,8 @@ The incident non-issuance overlay must additionally verify:
 - no token is created for a not-issued wallet row, and every not-issued staked
   row reduces both its validator-vault deposit and share mint by the same
   amount; and
-- issuable plus not-issued wallet and vault amounts sum back to the unchanged
-  gross entitlements.
+- issuable plus not-issued plus redistributed source amounts sum back to the
+  expanded routing input.
 
 ## Expected primary result
 
@@ -199,10 +232,18 @@ bin/migration-claims-verify \
   -expected-shard1-block 95882100 \
   -expected-price-reference-shard0-block 93448483 \
   -expected-price-usd-per-one 0.00074801
+
+python3 toolkit/scripts/claims/verify-wone-allocation.py
 ```
 
-The exact artifact-bundle verifier embeds expected result identities and is
-therefore held with the private result package. It is exercised by local
-`make verify-private` workflows and will be published with the results.
+The Python verifier independently recomputes WONE holder completeness, the
+native-to-WONE claim overlay, the exact inclusive-threshold subset, the reserve
+split, separate NativeOFT holds, and same-address shard-1 contract recovery.
+Its deterministic JSON output is retained with the private result package and
+is exercised by local `make verify-private` workflows.
+
+The older `cutoff-final-verifier` command embeds expected identities for the
+immutable native cutoff and historical USD-difference bundle. It remains with
+the private artifacts, but it is not the post-WONE verifier.
 
 Explorer balances are not part of any verification path.

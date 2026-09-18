@@ -58,7 +58,10 @@ python3 -m py_compile \
   toolkit/scripts/census/*.py \
   toolkit/scripts/claims/*.py \
   toolkit/scripts/cutoff/*.py \
-  toolkit/scripts/forensics/*.py
+  toolkit/scripts/contract-review/*.py \
+  toolkit/scripts/routing/*.py \
+  toolkit/scripts/forensics/*.py \
+  scripts/*.py
 ```
 
 Compiled commands are written to `bin/`.
@@ -190,13 +193,13 @@ python3 toolkit/scripts/claims/actual-supply-ledger.py \
   --summary-output "$OUT/claims/actual-supply-ledger-cutoff-summary.json"
 ```
 
-Format the public all-claims CSV:
+Format the native all-claims CSV:
 
 ```sh
 python3 toolkit/scripts/claims/format-all-claims.py \
   --input "$OUT/claims/actual-supply-ledger-cutoff.csv" \
-  --output "$OUT/claims/all-address-migration-claims-cutoff.csv" \
-  --summary "$OUT/claims/all-address-migration-claims-cutoff-summary.json" \
+  --output "$OUT/claims/all-address-native-claims-cutoff.csv" \
+  --summary "$OUT/claims/all-address-native-claims-cutoff-summary.json" \
   --shard0-block 93623067 \
   --shard1-block 95882100 \
   --price-reference-shard0-block 93448483 \
@@ -214,16 +217,77 @@ portal:
 export SHARD0_RPC='https://your-shard0-archival-rpc.example'
 
 python3 toolkit/scripts/claims/enrich-claim-metadata-rpc.py \
-  --input "$OUT/claims/all-address-migration-claims-cutoff.csv" \
+  --input "$OUT/claims/all-address-native-claims-cutoff.csv" \
   --rpc "$SHARD0_RPC" \
   --block 93623067 \
+  --output "$OUT/claims/all-address-native-claims-cutoff-metadata.csv" \
+  --summary "$OUT/claims/all-address-native-claims-cutoff-metadata-summary.json"
+```
+
+Keep these native files as the database-derived accounting record.
+
+Enumerate WONE from the shard-0 archival node and require exact closure to both
+WONE `totalSupply()` and the native reserve:
+
+```sh
+mkdir -p "$OUT/wone"
+
+bin/wone-holders \
+  -rpc "$SHARD0_RPC" \
+  -cutoff-block 93623067 \
+  -cutoff-hash 0x23572e11f6ef9afe4c27ab3102f15b99fd7277ae5f685ccaef0ae571fe7ee0b6 \
+  -cutoff-state-root 0x5e1927beb00c17c341d02483fbe81a884cc45af1ecfb673366e685aca4632ec3 \
+  -code-hash 0x940523b11cbb49f28cdb9798f3031179bc9ef4a309dfd82e21281c61aacc3bd8 \
+  -output "$OUT/wone/wone-holders-cutoff.csv" \
+  -summary "$OUT/wone/wone-holders-cutoff-summary.json"
+```
+
+Resolve cutoff metadata for WONE-only addresses that can meet the threshold,
+then apply the same verified overlay to the plain and metadata-complete native
+ledgers:
+
+```sh
+python3 toolkit/scripts/claims/build-wone-new-holder-metadata.py \
+  --native-claims "$OUT/claims/all-address-native-claims-cutoff.csv" \
+  --wone-holders "$OUT/wone/wone-holders-cutoff.csv" \
+  --rpc "$SHARD0_RPC" \
+  --block 93623067 \
+  --block-hash 0x23572e11f6ef9afe4c27ab3102f15b99fd7277ae5f685ccaef0ae571fe7ee0b6 \
+  --state-root 0x5e1927beb00c17c341d02483fbe81a884cc45af1ecfb673366e685aca4632ec3 \
+  --minimum-one 1000 \
+  --output "$OUT/wone/wone-only-qualified-metadata.csv" \
+  --summary "$OUT/wone/wone-only-qualified-metadata-summary.json"
+
+python3 toolkit/scripts/claims/apply-wone-qualification.py \
+  --native-claims "$OUT/claims/all-address-native-claims-cutoff.csv" \
+  --wone-holders "$OUT/wone/wone-holders-cutoff.csv" \
+  --wone-summary "$OUT/wone/wone-holders-cutoff-summary.json" \
+  --new-holder-metadata "$OUT/wone/wone-only-qualified-metadata.csv" \
+  --minimum-one 1000 \
+  --exclude-address 0x000000000000000000000000000000000000dEaD \
+  --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD \
+  --exclude-address 0x5b18a4e73f9a4fe337a072516b317863ad3046aa \
+  --exclude-address 0x905582f21fb9855c809d5b8933272a292dfbb138 \
+  --output "$OUT/claims/all-address-migration-claims-cutoff.csv" \
+  --summary "$OUT/claims/all-address-migration-claims-cutoff-summary.json"
+
+python3 toolkit/scripts/claims/apply-wone-qualification.py \
+  --native-claims "$OUT/claims/all-address-native-claims-cutoff-metadata.csv" \
+  --wone-holders "$OUT/wone/wone-holders-cutoff.csv" \
+  --wone-summary "$OUT/wone/wone-holders-cutoff-summary.json" \
+  --new-holder-metadata "$OUT/wone/wone-only-qualified-metadata.csv" \
+  --minimum-one 1000 \
+  --exclude-address 0x000000000000000000000000000000000000dEaD \
+  --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD \
+  --exclude-address 0x5b18a4e73f9a4fe337a072516b317863ad3046aa \
+  --exclude-address 0x905582f21fb9855c809d5b8933272a292dfbb138 \
   --output "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
   --summary "$OUT/claims/all-address-migration-claims-cutoff-metadata-summary.json"
 ```
 
-Keep the original all-address file as the database-derived accounting record.
-Use its metadata-complete companion for every destination-classification
-batch.
+The WONE contract is automatically excluded as a recipient. The overlay adds
+WONE only to the current qualifying wallet rows and records the exact reserve
+amount left not issued.
 
 ## 10. Apply the 1,000 ONE policy
 
@@ -349,6 +413,34 @@ CSV as its input. The review must produce
 `validator-policy-accounts.csv` from the two independent validator-wrapper
 checks.
 
+Normalize the private exchange submissions and bootstrap the non-Gate
+exclusion/manual-route inputs. This first report pass intentionally omits final
+policy categories; it is replaced after the final split. This operator-only
+step requires the ignored private `exchanges/` directory and is not available
+in the public source package:
+
+```sh
+python3 toolkit/scripts/exchanges/normalize-exchange-wallets.py \
+  --policy exchanges/exchange-policy.json \
+  --raw-dir exchanges/wallets-raw \
+  --destinations-dir exchanges/destinations \
+  --output-dir exchanges/wallets-standardized \
+  --summary exchanges/wallets-standardized/summary.json \
+  --replace
+
+python3 toolkit/scripts/exchanges/build-exchange-accounting.py \
+  --policy exchanges/exchange-policy.json \
+  --normalized-dir exchanges/wallets-standardized \
+  --normalization-summary exchanges/wallets-standardized/summary.json \
+  --claims "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
+  --wone-holders artifacts/wone-holder-accounting-20260917/wone-holders-cutoff-excluding-layerzero.csv \
+  --activity "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity.csv" \
+  --output-dir artifacts/exchange-accounting-20260917 \
+  --routes-output routing/local/exchanges.csv \
+  --destinations-output routing/local/exchange-destinations.csv \
+  --replace
+```
+
 Apply the final destination split. Verified validator-wrapper accounts are
 allowed in the automatic output; other code-bearing rows remain in genuine
 contract review:
@@ -364,7 +456,8 @@ python3 toolkit/scripts/claims/apply-eligibility-policy.py \
   --minimum-one 1000 \
   --comparison ge \
   --exclude-address 0x000000000000000000000000000000000000dEaD \
-  --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD
+  --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD \
+  --exclude-addresses-file artifacts/exchange-accounting-20260917/qualified-non-gate-exclusions.csv
 ```
 
 Verify that the final files are disjoint, cover the threshold set exactly, and
@@ -377,8 +470,31 @@ python3 toolkit/scripts/claims/verify-eligibility-policy.py \
   --contract-review "$OUT/claims/migration-claims-genuine-contract-review.csv" \
   --excluded-address "$OUT/claims/migration-claims-excluded.csv" \
   --automatic-code-addresses "$OUT/contract-review/out/validator-policy-accounts.csv" \
+  --exclude-address 0x000000000000000000000000000000000000dEaD \
+  --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD \
+  --exclude-addresses-file artifacts/exchange-accounting-20260917/qualified-non-gate-exclusions.csv \
   --policy-summary "$OUT/claims/migration-claims-policy-summary.json" \
   --output "$OUT/claims/migration-claims-policy.verify.json"
+```
+
+Rebuild the exchange reports with the verified final categories. This replaces
+the bootstrap Gate disposition with the final automatic/not-airdropped split:
+
+```sh
+python3 toolkit/scripts/exchanges/build-exchange-accounting.py \
+  --policy exchanges/exchange-policy.json \
+  --normalized-dir exchanges/wallets-standardized \
+  --normalization-summary exchanges/wallets-standardized/summary.json \
+  --claims "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
+  --wone-holders artifacts/wone-holder-accounting-20260917/wone-holders-cutoff-excluding-layerzero.csv \
+  --activity "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity.csv" \
+  --automatic-claims "$OUT/claims/migration-claims-automatic.csv" \
+  --contract-claims "$OUT/claims/migration-claims-genuine-contract-review.csv" \
+  --excluded-claims "$OUT/claims/migration-claims-excluded.csv" \
+  --output-dir artifacts/exchange-accounting-20260917 \
+  --routes-output routing/local/exchanges.csv \
+  --destinations-output routing/local/exchange-destinations.csv \
+  --replace
 ```
 
 As an independent check of the database-derived per-validator delegation file,
@@ -445,6 +561,13 @@ python3 toolkit/scripts/routing/build-non-issuance-routes.py \
   --output routing/local/not-issuing.csv \
   --summary routing/local/not-issuing-summary.json
 
+python3 toolkit/scripts/routing/build-wone-routes.py \
+  --wone-summary "$OUT/claims/all-address-migration-claims-cutoff-summary.json" \
+  --input routing/local/bridge-reserves.base.csv \
+  --output routing/local/bridge-reserves.csv \
+  --summary routing/local/bridge-reserves-summary.json \
+  --replace
+
 python3 toolkit/scripts/routing/build-contract-treasury-routes.py \
   --contracts artifacts/contract-review-20260911/out/contract-review-policy.csv \
   --output routing/local/contracts-to-treasury.csv \
@@ -465,14 +588,26 @@ python3 toolkit/scripts/routing/apply-routes.py \
   --routes routing/local/frozen-wallets.csv \
   --routes routing/local/bridge-reserves.csv \
   --routes routing/local/not-issuing.csv \
+  --routes routing/local/exchanges.csv \
   --routes routing/local/contracts-to-treasury.csv \
   --destinations routing/local/destinations.csv \
+  --destinations routing/local/exchange-destinations.csv \
   --governors routing/local/validator-governors.csv \
   --policy-decisions routing/local/policy-decisions.csv \
   --exceptions-output routing/local/generated/routing-exceptions.csv \
   --governor-exceptions-output routing/local/generated/validator-governor-exceptions.csv \
   --unresolved-output routing/local/generated/unresolved-routing.csv \
   --summary routing/local/generated/routing-summary.json \
+  --replace
+
+python3 toolkit/scripts/exchanges/verify-exchange-routing.py \
+  --policy exchanges/exchange-policy.json \
+  --exchange-summary artifacts/exchange-accounting-20260917/summary.json \
+  --audits-dir artifacts/exchange-accounting-20260917/audits \
+  --routes routing/local/exchanges.csv \
+  --routing-exceptions routing/local/generated/routing-exceptions.csv \
+  --routing-summary routing/local/generated/routing-summary.json \
+  --output artifacts/exchange-accounting-20260917/routing-verification.json \
   --replace
 
 python3 toolkit/scripts/routing/build-wallet-theft-inventory-report.py \
@@ -487,6 +622,21 @@ python3 toolkit/scripts/routing/build-non-issuance-report.py \
   --route-summary routing/local/not-issuing-summary.json \
   --routing-summary routing/local/generated/routing-summary.json \
   --output artifacts/supply-reconciliation-20260911/NON_ISSUANCE_POLICY_2026-09-16.md
+
+python3 toolkit/scripts/claims/verify-wone-allocation.py \
+  --output artifacts/wone-holder-accounting-20260917/wone-allocation-final-verify.json \
+  --replace
+
+python3 toolkit/scripts/claims/build-wone-report.py \
+  --holder-scan artifacts/wone-holder-accounting-20260917/wone-holders-cutoff-summary.json \
+  --overlay-summary "$OUT/claims/all-address-migration-claims-cutoff-summary.json" \
+  --threshold-summary "$OUT/claims/migration-claims-at-least-1000-one-summary.json" \
+  --policy-summary artifacts/contract-review-20260911/out/policy-summary.json \
+  --prior-policy-summary artifacts/wone-holder-accounting-20260917/pre-wone/contract-review/out/policy-summary.json \
+  --routing-summary routing/local/generated/routing-summary.json \
+  --verification-summary artifacts/wone-holder-accounting-20260917/wone-allocation-final-verify.json \
+  --output artifacts/wone-holder-accounting-20260917/WONE_MIGRATION_INTEGRATION_2026-09-17.md \
+  --replace
 ```
 
 The generated directory contains sparse routing exceptions, separate
@@ -497,11 +647,13 @@ the complete wallet/Merkle input only after `routing-summary.json` reports
 `status: ready`. See `routing/README.md` for the file contracts.
 
 The deployment build must exclude every row with
-`destination_status: not_issuing`. For a not-issued staked row, subtract the
-same amount from both the validator's vault deposit and share mint. Verify that
-issued wallet and vault totals equal the routing summary's `issuable_*` totals,
-and that issued plus not-issued amounts close to the unchanged gross claim
-ledger.
+`destination_status: not_issuing` or `redistributed`. A redistributed row is a
+source offset already represented in WONE holder wallet rows, not a second
+destination. For a not-issued staked row, subtract the same amount from both
+the validator's vault deposit and share mint. Verify that issued wallet and
+vault totals equal the routing summary's `issuable_*` totals, and that issued
+plus not-issued plus redistributed source amounts close to the expanded routing
+input.
 
 See `docs/eligibility-policy.md`, `docs/claim-routing.md`, and
 `docs/contract-account-review.md` before publication.
@@ -544,12 +696,25 @@ The scripts in `toolkit/scripts/cutoff/` provide additional independent checks:
 - signed difference arithmetic;
 - component and aggregate reconciliation.
 
-When the exact released artifact bundle is downloaded under `artifacts/`, run:
+When the exact released native artifact bundle is downloaded under
+`artifacts/`, run its historical cutoff verifier:
 
 ```sh
 bin/cutoff-final-verifier \
   -artifact-root artifacts/cutoff-20260910 \
   -old-artifact-root artifacts/migration-claims-20260909
+
+python3 toolkit/scripts/claims/build-pre-wone-archive-manifest.py \
+  --archive-root artifacts/wone-holder-accounting-20260917/pre-wone \
+  --output artifacts/wone-holder-accounting-20260917/pre-wone-manifest.json \
+  --check
+
+python3 toolkit/scripts/claims/verify-wone-allocation.py \
+  --check-output artifacts/wone-holder-accounting-20260917/wone-allocation-final-verify.json
 ```
 
-Expected counts and hashes are documented under `results/` and `manifests/`.
+The Go command verifies the immutable native cutoff and historical
+USD-difference files. The Python commands verify the preserved native-only
+archive map and independently recompute the complete post-WONE qualification
+and reserve-routing checks. Expected counts and hashes are documented under
+`results/` and `manifests/`.

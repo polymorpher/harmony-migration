@@ -33,7 +33,7 @@ reproduction.
 
 ## Claim components
 
-For each secure key, the accounting ledger records:
+The immutable native accounting ledger records:
 
 1. liquid shard-0 account balance;
 2. liquid shard-1 account balance;
@@ -42,7 +42,7 @@ For each secure key, the accounting ledger records:
 5. unclaimed staking reward;
 6. supported pending cross-shard receipts.
 
-The total claim is:
+The native claim is:
 
 ```text
 liquid_shard0
@@ -53,15 +53,29 @@ liquid_shard0
 + pending_cross_shard
 ```
 
-The destination split is:
+Migration qualification then joins the verified cutoff WONE holder ledger by
+address. The selected threshold field is:
 
 ```text
-wallet_airdrop
+qualification_total
+= native_total_claim + wone_balance
+```
+
+For a row that meets the inclusive threshold, its complete WONE balance enters
+the current wallet airdrop. Otherwise `wone_airdrop` is zero for this
+migration. The destination split is:
+
+```text
+native_wallet_airdrop
 = liquid_shard0
 + liquid_shard1
 + pending_undelegation
 + unclaimed_staking_reward
 + pending_cross_shard
+
+wallet_airdrop
+= native_wallet_airdrop
++ wone_airdrop
 
 staked_to_vault
 = active_staked_or_delegated
@@ -69,6 +83,14 @@ staked_to_vault
 total_claim
 = wallet_airdrop + staked_to_vault
 ```
+
+The native ledger remains separately reproducible. Adding WONE to qualified
+holder rows creates an expanded routing input, so the WONE contract's shard-0
+native reserve is removed exactly once at the source: the amount paired with
+current holder airdrops is `redistributed`, and the below-threshold/excluded
+remainder is `not_issuing` and retained in the Year 2025 Supply Reserve.
+Same-address shard-1 ONE is not WONE backing and remains ordinary contract
+recovery.
 
 Active stake/delegation is included in the total-claim threshold but is not sent to
 the account as a direct ERC-20 airdrop. It funds the corresponding validator's
@@ -110,7 +132,8 @@ independent reproduction.
 
 ### Merge
 
-`scripts/claims/actual-supply-ledger.py` performs a sorted merge by secure key.
+`toolkit/scripts/claims/actual-supply-ledger.py` performs a sorted merge by
+secure key.
 It rejects negative values, inconsistent addresses, invalid component totals,
 and unsorted inputs.
 
@@ -138,20 +161,34 @@ has complete preimages can skip this phase.
 ## Eligibility filtering
 
 Eligibility is applied only after all claim components have been merged.
-`scripts/claims/filter-claims-by-one.py` compares the integer
-`total_claim_atto` against an exact ONE-denominated threshold.
+`toolkit/scripts/claims/filter-claims-by-one.py` compares the integer
+`qualification_total_atto` against an exact ONE-denominated threshold. Without
+a WONE overlay this field is equivalent to native `total_claim_atto`.
 
 The historical `$1` filter is not part of the public method. It depended on an
 external price and was not selected for migration.
 
-The selected comparison is `total_claim_atto >= 1,000 ONE`. The
+The selected comparison is
+`native_total_claim_atto + wone_balance_atto >= 1,000 ONE`. The
 threshold set is first split by explicit policy and code presence. Code-bearing
 rows are then classified to distinguish key-controlled validator-wrapper
 accounts from genuine EVM contracts. The final outputs carry direct wallet
 airdrop and staked-to-vault amounts separately for automatic key-controlled
 claims, class-specific contract recovery, and policy-routed claims. The gross
-claim remains auditable, while terminal `not_issuing` amounts are excluded from
-final token and vault-share creation.
+native claim remains auditable. Terminal `not_issuing` amounts and
+`redistributed` source offsets are excluded from final token and vault-share
+creation; the latter offset is paired with the WONE already present in holder
+wallet rows.
+
+Exchange handling is a later ownership and destination overlay. Private raw
+inventories are normalized to canonical EVM and Harmony addresses, checked for
+duplicates and cross-exchange overlap, and joined to the already-generated
+cutoff, WONE, activity, and policy ledgers. Gate keeps the ordinary threshold
+and same-address behavior. Qualifying non-Gate wallets are removed from the
+implicit automatic class, while explicit aggregate routes can load positive
+below-threshold native claims for manual exchange delivery. Submitted balances
+are reconciled but never substitute for chain state, and a blank aggregate
+destination is a hold.
 
 Incident evidence preserves separate roles for explicitly reported
 perpetrators, transaction-linked theft recipients, and reported victims.
@@ -159,7 +196,7 @@ Victim classification alone never creates a non-issuance route.
 
 ## Difference calculation
 
-`scripts/cutoff/migration-claims-diff.py` performs a sorted union of the
+`toolkit/scripts/cutoff/migration-claims-diff.py` performs a sorted union of the
 original and cutoff claim ledgers. For every changed key it records:
 
 - old, final, and signed delta values for every component;

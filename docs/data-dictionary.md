@@ -40,12 +40,20 @@ Components:
 - `unclaimed_staking_reward` — reward currently claimable in staking state.
 - `pending_cross_shard` — supported outgoing receipts not consumed by the
   destination at its cutoff.
-- `wallet_airdrop` — liquid total, pending undelegation, unclaimed reward, and
-  supported pending cross-shard value; excludes active stake/delegation.
+- `native_wallet_airdrop` — liquid total, pending undelegation, unclaimed
+  reward, and supported pending cross-shard value; excludes active
+  stake/delegation.
+- `wone_balance` — cutoff WONE balance used for qualification.
+- `wone_airdrop` — WONE balance added to the current wallet amount only when
+  the inclusive qualification threshold is met.
+- `wallet_airdrop` — `native_wallet_airdrop + wone_airdrop`.
 - `staked_to_vault` — active stake/delegation moved to validator ERC-4626
   vaults and represented to delegators as vault shares.
-- `total_claim` — `wallet_airdrop + staked_to_vault`; this is the amount used
-  for the threshold and the total amount delivered across wallets and vaults.
+- `native_total_claim` — native wallet amount plus `staked_to_vault`.
+- `qualification_total` — `native_total_claim + wone_balance`; this is the
+  threshold field.
+- `total_claim` — `wallet_airdrop + staked_to_vault`; this is the current
+  migration amount delivered across wallets and vaults before source routing.
 
 `wallet_airdrop_usd` and `total_usd` are their corresponding display
 valuations.
@@ -68,7 +76,9 @@ enriched with historical `eth_getCode` and `eth_getTransactionCount` at the
 cutoff block. The resulting
 `all-address-migration-claims-cutoff-metadata.csv` companion explicitly
 resolves every blank shard-0 code field to either the empty-code hash or its
-actual code hash, including below-threshold rows reserved for a later portal.
+actual code hash, including native below-threshold rows. WONE-only addresses
+are added to this current-migration ledger only when they meet the combined
+threshold; the complete holder census remains a separate artifact.
 
 Contract review emits `contract-review-policy.csv` and
 `validator-policy-accounts.csv` as the deterministic cutoff-pinned inputs to
@@ -95,9 +105,11 @@ appends:
 
 A qualifying activity is a direct regular transaction involving the address
 on shard 0 or shard 1, or a shard-0 staking transaction involving that
-address. The scanner reads the archival node's local per-address
+address. The shard-0 baseline reads the archival node's local per-address
 explorer-node index and verifies each selected block against the canonical
-chain database. It does not use the retiring Explorer website or REST API.
+chain database. Incremental WONE rows and shard-1 rows use the archival node's
+built-in transaction-history RPC when the corresponding local database is not
+available. Neither path uses the retiring Explorer website or REST API.
 Internal EVM calls and validator consensus signatures are not counted. Blank
 activity fields mean that no qualifying indexed transaction was found; they do
 not prove that the account was never used.
@@ -111,6 +123,15 @@ than the newly created address.
 
 Activity is capped at the cutoff and is reporting context only. It does not
 change claim amounts, eligibility, or routing.
+
+When a candidate-set extension reuses an earlier direct-database scan and
+fetches only new rows through archival RPC, the combined activity summary is
+classified `hybrid`. Its `provenance_breakdown` records exact row,
+activity-found, and activity-not-found counts separately for
+`database-derived` and `RPC-derived` inputs. Each classification bucket has a
+`sources` list with the exact contributing row counts, summary paths, and
+hashes; this also preserves both source summaries when multiple increments use
+the same classification.
 
 ## Difference CSVs
 
@@ -139,23 +160,28 @@ in its summary JSON.
 
 ## Threshold result
 
-The selected filter is `total_claim_atto >= 1,000 ONE`. Active
+The selected filter is
+`qualification_total_atto >= 1,000 ONE`. Active
 stake/delegation therefore helps an account qualify, even though it is excluded
-from the direct wallet airdrop.
+from the direct wallet airdrop; WONE also helps qualify and is then included in
+that wallet amount.
 
 The threshold result is split into:
 
 - automatic ordinary-EOA and verified validator-account claims;
 - genuine-contract manual review and class-specific recovery;
+- exchange and other policy-routed claims excluded from implicit same-address
+  delivery; and
 - non-issued burn, inaccessible, previously-blacklisted, and
   report-identified perpetrator or directly linked theft-recipient amounts.
 
 Reported victim wallets are a distinct incident-evidence category. They are not
 automatically classified as perpetrators or routed to `not-issuing`.
 
-The account-category CSVs carry both `wallet_airdrop_atto` and
-`staked_to_vault_atto`. A separate per-validator ledger maps each active
-delegation to its validator vault.
+The account-category CSVs carry `native_wallet_airdrop_atto`,
+`wone_airdrop_atto`, `wallet_airdrop_atto`, and `staked_to_vault_atto`. A
+separate per-validator ledger maps each active delegation to its validator
+vault.
 
 ## Validator-vault ledgers
 
@@ -181,6 +207,42 @@ Direct wallet distribution files use `wallet_airdrop_atto` only. They retain
 `total_claim_atto` and `staked_to_vault_atto` for audit but must not add the
 staked amount to the ERC-20 transfer amount.
 
+## Exchange accounting
+
+Private files under `exchanges/wallets-standardized/` use one row per submitted
+source wallet. Core fields are:
+
+- `exchange_id`, `source_file`, `source_sha256`, `source_sheet`, and
+  `source_row` — raw-input provenance;
+- `address_hex` and `address_one` — canonical equivalent account identities;
+- `submitted_balance_raw`, `submitted_balance_unit`, and
+  `submitted_balance_atto` — optional exchange-supplied reconciliation value;
+- `configured_destination` and `configured_destination_status` — requested
+  aggregate destination state; and
+- authorization type, destination, message/signature hashes, and verification
+  status where the submission contains signed evidence.
+
+The normalized files do not decide payout amounts. Address audits under
+`artifacts/exchange-accounting-20260917/audits/` join each submitted wallet to
+the cutoff claim, complete WONE census, existing prioritized activity record,
+and final eligibility category. They add:
+
+- `qualification_status` and `policy_category`;
+- `planned_delivery_status`, `planned_wallet_airdrop_atto`,
+  `planned_staked_to_vault_atto`, `planned_total_entitlement_atto`, and
+  `remaining_not_airdropped_atto`;
+- prior last-activity evidence or explicit `not_collected` coverage;
+- submitted-balance reconciliation and exact signed delta; and
+- all native wallet, WONE, vault, qualification, and current-claim components.
+
+For a manual exchange route, `planned_wallet_airdrop_atto` is the direct ERC-20
+ONE transfer amount, while `planned_staked_to_vault_atto` remains vault-share
+principal. Their sum, `planned_total_entitlement_atto`, equals current
+`total_claim_atto`. It can include a below-threshold native claim, but it does
+not fabricate WONE that remains outside the current claim. For Gate all three
+planned fields are nonzero only when the wallet passes the threshold and
+remains in the automatic category.
+
 ## Sparse routing outputs
 
 `routing-exceptions.csv` contains only delivery that cannot use the ordinary
@@ -197,10 +259,12 @@ code-less EOA implicit default:
 - route, destination, status, reason, and evidence fields.
 
 `destination_status = not_issuing` is a terminal outcome with no destination
-address. `routing-summary.json` records `not_issued_*` totals and the remaining
-`issuable_*` totals. Gross claims remain unchanged, and:
+address. `destination_status = redistributed` is also terminal and addressless,
+but it is paired with WONE already added to holder rows.
+`routing-summary.json` records `not_issued_*`, `redistributed_*`, and remaining
+`issuable_*` totals. The expanded routing input closes as:
 
-`gross claim = issuable amount + not-issued amount`.
+`expanded claim = issuable amount + not-issued amount + redistributed source`.
 
 `validator-governor-exceptions.csv` is separate because control of a validator
 vault is not delivery of the validator account's own claim. It contains
