@@ -102,6 +102,73 @@ class NonIssuanceRoutesTest(unittest.TestCase):
             self.assertEqual(result["routes"], 3)
             self.assertEqual(result["inventory_rows"], 4)
 
+    def test_merges_historical_retained_caps_without_overlap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = root / "existing.csv"
+            historical = root / "historical.csv"
+            with existing.open("w", newline="") as output:
+                writer = csv.DictWriter(
+                    output,
+                    fieldnames=("address_hex", "category", "not_issued_atto"),
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "address_hex": f"0x{1:040x}",
+                        "category": "burn_or_inaccessible",
+                        "not_issued_atto": "7",
+                    }
+                )
+            with historical.open("w", newline="") as output:
+                writer = csv.DictWriter(
+                    output,
+                    fieldnames=(
+                        "address_hex",
+                        "incident",
+                        "retained_cap_atto",
+                        "migration_treatment",
+                    ),
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "address_hex": f"0x{2:040x}",
+                        "incident": "april-2026",
+                        "retained_cap_atto": "11",
+                        "migration_treatment": "not_issued",
+                    }
+                )
+            routes = root / "routes.csv"
+            summary = root / "summary.json"
+            subprocess.run(
+                (
+                    sys.executable,
+                    str(SCRIPT),
+                    "--inventory",
+                    str(existing),
+                    "--inventory",
+                    str(historical),
+                    "--output",
+                    str(routes),
+                    "--summary",
+                    str(summary),
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            result = json.loads(summary.read_text())
+            self.assertEqual(result["not_issued_atto"], "18")
+            self.assertEqual(
+                result["categories"]["historical_incident_retained_cap"][
+                    "not_issued_atto"
+                ],
+                "11",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

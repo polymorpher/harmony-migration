@@ -44,8 +44,9 @@ def resolved_policy_decisions():
             "decision": "fixture decision",
         }
         for decision_id in (
-            "contract-recovery-custody",
+            "initial-wallet-activity-stage",
             "layerzero-nativeoft-reconciliation",
+            "reviewed-contract-migration-policy",
             "rollback-exploit-proceeds",
             "wone-holder-redistribution",
         )
@@ -204,18 +205,12 @@ class ExplicitRoutingTest(unittest.TestCase):
                 [
                     {
                         "destination_id": "treasury",
-                        "destination_address": "",
-                        "status": "hold",
-                        "notes": "",
-                    },
-                    {
-                        "destination_id": "recovery",
                         "destination_address": f"0x{20:040x}",
                         "status": "ready",
                         "notes": "",
                     },
                     {
-                        "destination_id": "contract-recovery-custody",
+                        "destination_id": "recovery",
                         "destination_address": f"0x{20:040x}",
                         "status": "ready",
                         "notes": "",
@@ -282,13 +277,11 @@ class ExplicitRoutingTest(unittest.TestCase):
                         "route_id": "contract-recovery",
                         "priority": "10",
                         "source_address": f"0x{2:040x}",
-                        "destination_id": "contract-recovery-custody",
+                        "destination_id": "",
                         "destination_address": "",
                         "amount_atto": "ALL",
                         "allocation_method": "wallet_first_pro_rata_vault",
-                        "reason": (
-                            "non_multisig_contract_recovery_custody"
-                        ),
+                        "reason": "next_stage_multisig_recovery",
                         "evidence": "",
                         "notes": "",
                         "policy_state_block": "10",
@@ -363,6 +356,57 @@ class ExplicitRoutingTest(unittest.TestCase):
                     }
                 ],
             )
+            migration_stages = root / "migration-stages.csv"
+            write_csv(
+                migration_stages,
+                (
+                    "address",
+                    "account_classification",
+                    "migration_stage",
+                    "issuance_treatment",
+                    "migration_wallet_allocation_atto",
+                    "migration_staked_to_vault_atto",
+                    "migration_allocation_atto",
+                ),
+                [
+                    {
+                        "address": address(1),
+                        "account_classification": "wallet",
+                        "migration_stage": "initial",
+                        "issuance_treatment": "issue",
+                        "migration_wallet_allocation_atto": "100",
+                        "migration_staked_to_vault_atto": "100",
+                        "migration_allocation_atto": "200",
+                    },
+                    {
+                        "address": address(2),
+                        "account_classification": "genuine_contract",
+                        "migration_stage": "next_stage",
+                        "issuance_treatment": "issue",
+                        "migration_wallet_allocation_atto": "50",
+                        "migration_staked_to_vault_atto": "50",
+                        "migration_allocation_atto": "100",
+                    },
+                    {
+                        "address": address(3),
+                        "account_classification": "wallet",
+                        "migration_stage": "",
+                        "issuance_treatment": "not_issued",
+                        "migration_wallet_allocation_atto": "0",
+                        "migration_staked_to_vault_atto": "0",
+                        "migration_allocation_atto": "0",
+                    },
+                    {
+                        "address": address(5),
+                        "account_classification": "validator_wallet",
+                        "migration_stage": "initial",
+                        "issuance_treatment": "issue",
+                        "migration_wallet_allocation_atto": "30",
+                        "migration_staked_to_vault_atto": "20",
+                        "migration_allocation_atto": "50",
+                    },
+                ],
+            )
             policy_decisions = root / "policy-decisions.csv"
             write_csv(
                 policy_decisions,
@@ -371,6 +415,7 @@ class ExplicitRoutingTest(unittest.TestCase):
             )
             exceptions = root / "routing-exceptions.csv"
             governor_exceptions = root / "governor-exceptions.csv"
+            vault_stages = root / "vault-stages.csv"
             unresolved = root / "unresolved.csv"
             summary = root / "summary.json"
             subprocess.run(
@@ -393,6 +438,8 @@ class ExplicitRoutingTest(unittest.TestCase):
                     str(base_vaults),
                     "--validator-accounts",
                     str(validator_accounts),
+                    "--migration-stages",
+                    str(migration_stages),
                     "--routes",
                     str(routes),
                     "--destinations",
@@ -405,6 +452,8 @@ class ExplicitRoutingTest(unittest.TestCase):
                     str(exceptions),
                     "--governor-exceptions-output",
                     str(governor_exceptions),
+                    "--vault-stage-output",
+                    str(vault_stages),
                     "--unresolved-output",
                     str(unresolved),
                     "--summary",
@@ -419,13 +468,43 @@ class ExplicitRoutingTest(unittest.TestCase):
             self.assertEqual(result["source_wallet_airdrop_atto"], "290")
             self.assertEqual(result["source_wone_airdrop_atto"], "20")
             self.assertEqual(result["source_staked_to_vault_atto"], "190")
-            self.assertEqual(result["unresolved_wallet_airdrop_atto"], "110")
-            self.assertEqual(result["unresolved_staked_to_vault_atto"], "70")
+            self.assertEqual(result["unresolved_wallet_airdrop_atto"], "50")
+            self.assertEqual(result["unresolved_staked_to_vault_atto"], "50")
             self.assertEqual(result["not_issued_wallet_airdrop_atto"], "80")
             self.assertEqual(result["not_issued_staked_to_vault_atto"], "0")
             self.assertEqual(result["not_issued_total_claim_atto"], "80")
             self.assertEqual(result["redistributed_total_claim_atto"], "20")
             self.assertEqual(result["issuable_total_claim_atto"], "380")
+            self.assertEqual(result["pending_stage_review_claims"], 1)
+            self.assertEqual(
+                result["stage_totals"]["initial"]["total_claim_atto"],
+                "250",
+            )
+            self.assertEqual(
+                result["stage_totals"]["next_stage"]["total_claim_atto"],
+                "100",
+            )
+            self.assertEqual(
+                result["issuance_treatment_totals"]["not_issued"][
+                    "total_claim_atto"
+                ],
+                "80",
+            )
+            self.assertEqual(
+                result["issuance_treatment_totals"]["redistributed"][
+                    "total_claim_atto"
+                ],
+                "20",
+            )
+            self.assertEqual(result["initial_stage_status"], "ready")
+            self.assertEqual(
+                result["stage_readiness"]["initial"]["blockers"], []
+            )
+            self.assertIn(
+                "stage_release_not_authorized",
+                result["stage_readiness"]["next_stage"]["blockers"],
+            )
+            self.assertEqual(result["status"], "hold")
             with exceptions.open(newline="") as handle:
                 rows = list(csv.DictReader(handle))
             treasury = [
@@ -465,6 +544,10 @@ class ExplicitRoutingTest(unittest.TestCase):
             self.assertEqual(
                 non_issued[0]["destination_status"], "not_issuing"
             )
+            self.assertEqual(non_issued[0]["migration_stage"], "")
+            self.assertEqual(
+                non_issued[0]["issuance_treatment"], "not_issued"
+            )
             with unresolved.open(newline="") as handle:
                 unresolved_rows = list(csv.DictReader(handle))
             self.assertFalse(
@@ -502,6 +585,27 @@ class ExplicitRoutingTest(unittest.TestCase):
                 )
             )
             self.assertEqual(result["validator_account_exceptions"], 1)
+            self.assertEqual(
+                result["vault_stage_totals"]["not_issued_assets_atto"],
+                "0",
+            )
+            with vault_stages.open(newline="") as handle:
+                vault_stage_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(vault_stage_rows), 2)
+            self.assertEqual(
+                sum(
+                    int(row["initial_assets_atto"])
+                    for row in vault_stage_rows
+                ),
+                120,
+            )
+            self.assertEqual(
+                sum(
+                    int(row["next_stage_assets_atto"])
+                    for row in vault_stage_rows
+                ),
+                50,
+            )
             with governor_exceptions.open(newline="") as handle:
                 governor_rows = list(csv.DictReader(handle))
             self.assertEqual(len(governor_rows), 1)
@@ -623,7 +727,8 @@ class PolicyDecisionGateTest(unittest.TestCase):
                 "redistributed",
             )
             self.assertIn("layerzero-nativeoft-custody", destinations)
-            self.assertIn("contract-recovery-custody", destinations)
+            self.assertNotIn("multisig-recovery", destinations)
+            self.assertIn("onewallet-recovery-multisig", destinations)
             self.assertIn("not-issuing", destinations)
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Convert the audited incident inventory into exact non-issuance routes."""
+"""Convert audited inventories into exact non-issuance routes."""
 
 import argparse
 import csv
@@ -22,10 +22,10 @@ FIELDS = (
     "notes",
 )
 DESTINATION_ID = "not-issuing"
-AMOUNT_FIELD = "not_issued_atto"
 ALLOWED_CATEGORIES = {
     "blacklisted_extra_mint_recipient",
     "burn_or_inaccessible",
+    "historical_incident_retained_cap",
     "report_linked_theft_recipient",
     "reported_wallet_theft_perpetrator",
 }
@@ -33,7 +33,16 @@ ALLOWED_CATEGORIES = {
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inventory", required=True)
+    parser.add_argument(
+        "--inventory",
+        action="append",
+        required=True,
+        help=(
+            "audited inventory; repeatable. Existing inventories use "
+            "not_issued_atto and retained historical inventories use "
+            "retained_cap_atto"
+        ),
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--replace", action="store_true")
@@ -63,63 +72,93 @@ def main():
     seen = set()
     total = 0
     categories = {}
-    with open(args.inventory, newline="") as source:
-        reader = csv.DictReader(source)
-        required = {"address_hex", "category", AMOUNT_FIELD}
-        missing = required - set(reader.fieldnames or ())
-        if missing:
-            raise ValueError(
-                f"inventory is missing fields: {sorted(missing)}"
-            )
-        for line, row in enumerate(reader, start=2):
-            amount = int(row[AMOUNT_FIELD])
-            if amount < 0:
-                raise ValueError(f"negative amount at line {line}")
-            address = row["address_hex"].lower()
-            if (
-                len(address) != 42
-                or not address.startswith("0x")
-                or any(
-                    character not in "0123456789abcdef"
-                    for character in address[2:]
-                )
-            ):
-                raise ValueError(f"invalid address at line {line}")
-            if address in seen:
+    inventory_records = []
+    for inventory in args.inventory:
+        inventory_rows = 0
+        inventory_routes = 0
+        inventory_total = 0
+        with open(inventory, newline="") as source:
+            reader = csv.DictReader(source)
+            fields = set(reader.fieldnames or ())
+            if "address_hex" not in fields:
+                raise ValueError(f"{inventory}: missing address_hex")
+            if {"category", "not_issued_atto"} <= fields:
+                amount_field = "not_issued_atto"
+                fixed_category = None
+            elif {"incident", "retained_cap_atto", "migration_treatment"} <= fields:
+                amount_field = "retained_cap_atto"
+                fixed_category = "historical_incident_retained_cap"
+            else:
                 raise ValueError(
-                    f"duplicate inventory address at line {line}"
+                    f"{inventory}: unsupported non-issuance inventory schema"
                 )
-            seen.add(address)
-            category = row["category"]
-            if category not in ALLOWED_CATEGORIES:
-                raise ValueError(
-                    f"unsupported category at line {line}: {category}"
+            for line, row in enumerate(reader, start=2):
+                amount = int(row[amount_field])
+                if amount < 0:
+                    raise ValueError(f"{inventory}:{line}: negative amount")
+                address = row["address_hex"].lower()
+                if (
+                    len(address) != 42
+                    or not address.startswith("0x")
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in address[2:]
+                    )
+                ):
+                    raise ValueError(f"{inventory}:{line}: invalid address")
+                if address in seen:
+                    raise ValueError(
+                        f"{inventory}:{line}: duplicate inventory address"
+                    )
+                seen.add(address)
+                category = fixed_category or row["category"]
+                if category not in ALLOWED_CATEGORIES:
+                    raise ValueError(
+                        f"{inventory}:{line}: unsupported category {category}"
+                    )
+                if fixed_category and row["migration_treatment"] != "not_issued":
+                    raise ValueError(
+                        f"{inventory}:{line}: retained cap is not not_issued"
+                    )
+                category_stats = categories.setdefault(
+                    category,
+                    {"inventory_rows": 0, "routes": 0, "amount_atto": 0},
                 )
-            category_stats = categories.setdefault(
-                category, {"inventory_rows": 0, "routes": 0, "amount_atto": 0}
-            )
-            category_stats["inventory_rows"] += 1
-            if amount == 0:
-                continue
-            category_stats["routes"] += 1
-            category_stats["amount_atto"] += amount
-            rows.append(
-                {
-                    "route_id": f"not-issuing-{category}-{address[2:]}",
-                    "priority": "100",
-                    "source_address": address,
-                    "destination_id": DESTINATION_ID,
-                    "destination_address": "",
-                    "amount_atto": str(amount),
-                    "allocation_method": "wallet_first_pro_rata_vault",
-                    "reason": f"not_issuing_{category}",
-                    "evidence": args.inventory,
-                    "notes": (
-                        "exact reviewed amount excluded from issuance"
-                    ),
-                }
-            )
-            total += amount
+                category_stats["inventory_rows"] += 1
+                inventory_rows += 1
+                if amount == 0:
+                    continue
+                category_stats["routes"] += 1
+                category_stats["amount_atto"] += amount
+                inventory_routes += 1
+                inventory_total += amount
+                rows.append(
+                    {
+                        "route_id": f"not-issuing-{category}-{address[2:]}",
+                        "priority": "100",
+                        "source_address": address,
+                        "destination_id": DESTINATION_ID,
+                        "destination_address": "",
+                        "amount_atto": str(amount),
+                        "allocation_method": "wallet_first_pro_rata_vault",
+                        "reason": f"not_issuing_{category}",
+                        "evidence": inventory,
+                        "notes": (
+                            "exact reviewed amount excluded from issuance"
+                        ),
+                    }
+                )
+                total += amount
+        inventory_records.append(
+            {
+                "path": inventory,
+                "sha256": file_sha256(inventory),
+                "amount_field": amount_field,
+                "inventory_rows": inventory_rows,
+                "routes": inventory_routes,
+                "not_issued_atto": str(inventory_total),
+            }
+        )
 
     rows.sort(key=lambda row: (int(row["priority"]), row["route_id"]))
     with open(args.output + ".partial", "x", newline="") as output:
@@ -138,9 +177,7 @@ def main():
             "do not issue the exact reviewed amounts; preserve every "
             "existing remainder at its ordinary destination"
         ),
-        "inventory": args.inventory,
-        "inventory_sha256": file_sha256(args.inventory),
-        "source_amount_field": AMOUNT_FIELD,
+        "inventories": inventory_records,
         "inventory_rows": len(seen),
         "routes": len(rows),
         "not_issued_atto": str(total),

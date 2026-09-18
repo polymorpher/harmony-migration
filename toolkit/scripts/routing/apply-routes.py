@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 
@@ -21,20 +21,39 @@ EMPTY_CODE_HASH = (
     "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
 )
 REQUIRED_POLICY_DECISIONS = {
-    "contract-recovery-custody",
+    "initial-wallet-activity-stage",
     "layerzero-nativeoft-reconciliation",
+    "reviewed-contract-migration-policy",
     "rollback-exploit-proceeds",
     "wone-holder-redistribution",
 }
 DESTINATION_STATUSES = {"ready", "hold", "not_issuing", "redistributed"}
 NOT_ISSUING_DESTINATION_ID = "not-issuing"
 REDISTRIBUTED_DESTINATION_ID = "wone-holder-redistribution"
+CONTRACT_POLICY_DESTINATIONS = {
+    "reviewed_contract_allocation_not_issued": "not-issuing",
+    "next_stage_multisig_recovery": "",
+    "next_stage_onewallet_recovery_multisig": (
+        "onewallet-recovery-multisig"
+    ),
+}
+POLICY_DECISION_STAGE_SCOPE = {
+    "layerzero-nativeoft-reconciliation": {"next_stage"},
+    "rollback-exploit-proceeds": {
+        "initial",
+        "next_stage",
+        "deferred",
+        "manual_review",
+    },
+}
 ROUTING_EXCEPTION_FIELDS = (
     "component",
     "source_secure_key",
     "source_address",
     "source_category",
     "source_code_bearing",
+    "migration_stage",
+    "issuance_treatment",
     "validator_secure_key",
     "validator_address",
     "amount_atto",
@@ -58,10 +77,24 @@ GOVERNOR_EXCEPTION_FIELDS = (
     "reason",
     "evidence",
 )
+VAULT_STAGE_FIELDS = (
+    "validator_address",
+    "validator_secure_key",
+    "base_vault_assets_atto",
+    "initial_assets_atto",
+    "next_stage_assets_atto",
+    "qualified_deferred_assets_atto",
+    "manual_review_assets_atto",
+    "uncompiled_deferred_assets_atto",
+    "not_issued_assets_atto",
+    "post_policy_assets_atto",
+)
 UNRESOLVED_FIELDS = (
     "component",
     "source_address",
     "source_category",
+    "migration_stage",
+    "issuance_treatment",
     "validator_address",
     "amount_atto",
     "exception_type",
@@ -84,6 +117,7 @@ def parse_args():
     parser.add_argument("--deferred-shares", required=True)
     parser.add_argument("--base-vault-deposits", required=True)
     parser.add_argument("--validator-accounts", required=True)
+    parser.add_argument("--migration-stages", required=True)
     parser.add_argument("--routes", action="append", default=[])
     parser.add_argument(
         "--destinations",
@@ -95,6 +129,7 @@ def parse_args():
     parser.add_argument("--policy-decisions", required=True)
     parser.add_argument("--exceptions-output", required=True)
     parser.add_argument("--governor-exceptions-output", required=True)
+    parser.add_argument("--vault-stage-output", required=True)
     parser.add_argument("--unresolved-output", required=True)
     parser.add_argument("--summary", required=True)
     parser.add_argument(
@@ -202,6 +237,66 @@ def load_claims(paths):
                 }
                 by_address[address] = key
     return claims, by_address
+
+
+def load_migration_stages(path):
+    stages = {}
+    with open(path, newline="") as source:
+        reader = csv.DictReader(source)
+        required = {
+            "address",
+            "account_classification",
+            "migration_stage",
+            "issuance_treatment",
+            "migration_wallet_allocation_atto",
+            "migration_staked_to_vault_atto",
+            "migration_allocation_atto",
+        }
+        missing = required - set(reader.fieldnames or ())
+        if missing:
+            raise ValueError(
+                f"{path}: missing migration-stage fields {sorted(missing)}"
+            )
+        for line, row in enumerate(reader, start=2):
+            address = lib.any_to_hex(row["address"])
+            if address in stages:
+                raise ValueError(
+                    f"{path}:{line}: duplicate migration-stage address"
+                )
+            stage = row["migration_stage"]
+            if stage not in {"", "initial", "next_stage", "deferred"}:
+                raise ValueError(
+                    f"{path}:{line}: invalid migration stage {stage!r}"
+                )
+            treatment = row["issuance_treatment"]
+            if treatment not in {"issue", "not_issued"}:
+                raise ValueError(
+                    f"{path}:{line}: invalid issuance treatment {treatment!r}"
+                )
+            allocation = int(row["migration_allocation_atto"])
+            wallet = int(row["migration_wallet_allocation_atto"])
+            staked = int(row["migration_staked_to_vault_atto"])
+            if min(allocation, wallet, staked) < 0 or wallet + staked != allocation:
+                raise ValueError(
+                    f"{path}:{line}: invalid migration allocation components"
+                )
+            if treatment == "issue" and (not stage or allocation <= 0):
+                raise ValueError(
+                    f"{path}:{line}: issued allocation has no stage or amount"
+                )
+            if treatment == "not_issued" and (stage or allocation):
+                raise ValueError(
+                    f"{path}:{line}: not-issued allocation has stage or amount"
+                )
+            stages[address] = {
+                "stage": stage,
+                "treatment": treatment,
+                "allocation": allocation,
+                "wallet": wallet,
+                "staked": staked,
+                "classification": row["account_classification"],
+            }
+    return stages
 
 
 def load_routed_deferred_claims(path, route_sources, claims, by_address):
@@ -586,6 +681,18 @@ def pro_rata(amount, positions):
     return result
 
 
+def route_stage(claim, route):
+    return claim["migration_stage"]
+
+
+def route_treatment(route):
+    if route["destination_status"] == "not_issuing":
+        return "not_issued"
+    if route["destination_status"] == "redistributed":
+        return "redistributed"
+    return "issue"
+
+
 def append_wallet(rows, claim, amount, route):
     if amount == 0:
         return
@@ -595,6 +702,8 @@ def append_wallet(rows, claim, amount, route):
             "source_address": lib.to_checksum(claim["address"]),
             "source_category": claim["routing_category"],
             "source_code_bearing": str(claim["code_bearing"]).lower(),
+            "migration_stage": route["migration_stage"],
+            "issuance_treatment": route["issuance_treatment"],
             "wallet_airdrop_atto": str(amount),
             "exception_type": route["exception_type"],
             "route_id": route["route_id"],
@@ -620,6 +729,8 @@ def append_shares(rows, allocations, route):
                 "source_code_bearing": str(
                     position["source_code_bearing"]
                 ).lower(),
+                "migration_stage": route["migration_stage"],
+                "issuance_treatment": route["issuance_treatment"],
                 "staked_to_vault_atto": str(amount),
                 "exception_type": route["exception_type"],
                 "route_id": route["route_id"],
@@ -638,6 +749,7 @@ def main():
     outputs = (
         args.exceptions_output,
         args.governor_exceptions_output,
+        args.vault_stage_output,
         args.unresolved_output,
         args.summary,
     )
@@ -654,43 +766,41 @@ def main():
             (args.excluded_claims, "excluded"),
         )
     )
+    migration_stages = load_migration_stages(args.migration_stages)
     destinations = load_destinations(args.destinations)
     pending_policy_decisions = load_policy_decisions(args.policy_decisions)
     routes = load_routes(args.routes, destinations)
-    custody_states = {
+    contract_policy_states = {
         tuple(route["policy_state"].values())
         for route in routes
-        if route["reason"]
-        == "non_multisig_contract_recovery_custody"
+        if route["reason"] in CONTRACT_POLICY_DESTINATIONS
         and route["policy_state"] is not None
     }
-    custody_without_state = [
+    contract_policy_without_state = [
         route["route_id"]
         for route in routes
-        if route["reason"]
-        == "non_multisig_contract_recovery_custody"
+        if route["reason"] in CONTRACT_POLICY_DESTINATIONS
         and route["policy_state"] is None
     ]
-    invalid_custody_destinations = [
+    invalid_contract_policy_destinations = [
         route["route_id"]
         for route in routes
-        if route["reason"]
-        == "non_multisig_contract_recovery_custody"
-        and route["destination_id"] != "contract-recovery-custody"
+        if route["reason"] in CONTRACT_POLICY_DESTINATIONS
+        and route["destination_id"]
+        != CONTRACT_POLICY_DESTINATIONS[route["reason"]]
     ]
-    if invalid_custody_destinations:
+    if invalid_contract_policy_destinations:
         raise ValueError(
-            "generated contract-holding routes must use "
-            "contract-recovery-custody, not treasury"
+            "generated reviewed-contract route uses the wrong destination"
         )
-    if custody_without_state or len(custody_states) > 1:
+    if contract_policy_without_state or len(contract_policy_states) > 1:
         raise ValueError(
-            "contract-holding routes must share one cutoff block, hash, "
+            "reviewed-contract routes must share one cutoff block, hash, "
             "and state root"
         )
     contract_policy_state = None
-    if custody_states:
-        block, block_hash, state_root = custody_states.pop()
+    if contract_policy_states:
+        block, block_hash, state_root = contract_policy_states.pop()
         contract_policy_state = {
             "block": block,
             "block_hash": block_hash,
@@ -698,7 +808,7 @@ def main():
         }
         if csv_policy_state(args.validator_accounts) != contract_policy_state:
             raise ValueError(
-                "contract-holding routes and validator accounts must use "
+                "reviewed-contract routes and validator accounts must use "
                 "the same cutoff block, hash, and state root"
             )
     load_routed_deferred_claims(
@@ -710,6 +820,18 @@ def main():
     validator_accounts = load_validator_accounts(
         args.validator_accounts, claims, by_address
     )
+    priority_addresses = {
+        claim["address"]
+        for claim in claims.values()
+        if claim["category"] != "deferred"
+    }
+    if set(migration_stages) != priority_addresses:
+        missing = sorted(priority_addresses - set(migration_stages))
+        extra = sorted(set(migration_stages) - priority_addresses)
+        raise ValueError(
+            "migration-stage policy does not equal threshold claim set: "
+            f"missing={missing}, extra={extra}"
+        )
     for claim in claims.values():
         if claim["category"] == "automatic":
             claim["routing_category"] = (
@@ -719,6 +841,19 @@ def main():
             )
         else:
             claim["routing_category"] = claim["category"]
+        stage = migration_stages.get(claim["address"])
+        if stage is None:
+            claim["migration_stage"] = "manual_review"
+            claim["issuance_treatment"] = "issue"
+            claim["expected_migration_allocation"] = None
+            claim["expected_migration_wallet"] = None
+            claim["expected_migration_staked"] = None
+        else:
+            claim["migration_stage"] = stage["stage"]
+            claim["issuance_treatment"] = stage["treatment"]
+            claim["expected_migration_allocation"] = stage["allocation"]
+            claim["expected_migration_wallet"] = stage["wallet"]
+            claim["expected_migration_staked"] = stage["staked"]
     routes_by_key = defaultdict(list)
     inactive_routes = []
     explicitly_routed_validators = set()
@@ -792,7 +927,10 @@ def main():
     for key in sorted(claims):
         claim = claims[key]
         wallet_remaining = claim["wallet"]
-        for route in routes_by_key.get(key, []):
+        for source_route in routes_by_key.get(key, []):
+            route = dict(source_route)
+            route["migration_stage"] = route_stage(claim, route)
+            route["issuance_treatment"] = route_treatment(route)
             vault_remaining = sum(
                 position["remaining"] for position in positions[key]
             )
@@ -857,6 +995,8 @@ def main():
             "destination_address": default_destination,
             "destination_status": default_status,
             "exception_type": exception_type,
+            "migration_stage": claim["migration_stage"],
+            "issuance_treatment": "issue",
             "reason": reason,
             "evidence": evidence,
         }
@@ -897,6 +1037,8 @@ def main():
                 "source_address": row["source_address"],
                 "source_category": row["source_category"],
                 "source_code_bearing": row["source_code_bearing"],
+                "migration_stage": row["migration_stage"],
+                "issuance_treatment": row["issuance_treatment"],
                 "validator_secure_key": "",
                 "validator_address": "",
                 "amount_atto": row["wallet_airdrop_atto"],
@@ -920,6 +1062,8 @@ def main():
                 "source_address": row["delegator_address"],
                 "source_category": row["source_category"],
                 "source_code_bearing": row["source_code_bearing"],
+                "migration_stage": row["migration_stage"],
+                "issuance_treatment": row["issuance_treatment"],
                 "validator_secure_key": row["validator_secure_key"],
                 "validator_address": row["validator_address"],
                 "amount_atto": row["staked_to_vault_atto"],
@@ -990,6 +1134,7 @@ def main():
 
     governor_exceptions = []
     seen_vaults = set()
+    base_vaults = {}
     with open(args.base_vault_deposits, newline="") as source:
         reader = csv.DictReader(source)
         for line, row in enumerate(reader, start=2):
@@ -999,7 +1144,16 @@ def main():
                 f"{args.base_vault_deposits}:{line} validator",
             )
             validator = lib.any_to_hex(row["validator_address"])
+            if validator in base_vaults:
+                raise ValueError(
+                    f"{args.base_vault_deposits}:{line}: duplicate validator"
+                )
             seen_vaults.add(validator)
+            base_vaults[validator] = {
+                "address": row["validator_address"],
+                "key": row["validator_secure_key"].lower(),
+                "assets": int(row["vault_assets_atto"]),
+            }
             governor = governor_overrides.get(validator)
             if governor is None:
                 hold = validator in explicitly_routed_validators
@@ -1039,6 +1193,8 @@ def main():
                         "component": "validator_governor",
                         "source_address": validator,
                         "source_category": "validator_account",
+                        "migration_stage": "manual_review",
+                        "issuance_treatment": "issue",
                         "validator_address": validator,
                         "amount_atto": row["vault_assets_atto"],
                         "exception_type": governor["exception_type"],
@@ -1067,6 +1223,61 @@ def main():
             row["route_id"],
         )
     )
+    represented_vault_stages = defaultdict(Counter)
+    for row in share_rows:
+        validator = lib.any_to_hex(row["validator_address"])
+        if validator not in base_vaults:
+            raise ValueError(
+                f"routed share references unknown validator {validator}"
+            )
+        bucket = (
+            "not_issued"
+            if row["issuance_treatment"] == "not_issued"
+            else row["migration_stage"]
+        )
+        if not bucket or row["issuance_treatment"] == "redistributed":
+            raise ValueError("invalid vault stage/treatment combination")
+        represented_vault_stages[validator][bucket] += int(
+            row["staked_to_vault_atto"]
+        )
+    vault_stage_rows = []
+    for validator, base in sorted(
+        base_vaults.items(), key=lambda item: item[1]["key"]
+    ):
+        stages = represented_vault_stages[validator]
+        represented = sum(stages.values())
+        uncompiled_deferred = base["assets"] - represented
+        if uncompiled_deferred < 0:
+            raise ValueError(
+                f"routed vault shares exceed base assets for {validator}"
+            )
+        not_issued = stages["not_issued"]
+        post_policy = base["assets"] - not_issued
+        if (
+            stages["initial"]
+            + stages["next_stage"]
+            + stages["deferred"]
+            + stages["manual_review"]
+            + uncompiled_deferred
+            != post_policy
+        ):
+            raise ValueError(
+                f"vault stage assets do not close for {validator}"
+            )
+        vault_stage_rows.append(
+            {
+                "validator_address": base["address"],
+                "validator_secure_key": base["key"],
+                "base_vault_assets_atto": str(base["assets"]),
+                "initial_assets_atto": str(stages["initial"]),
+                "next_stage_assets_atto": str(stages["next_stage"]),
+                "qualified_deferred_assets_atto": str(stages["deferred"]),
+                "manual_review_assets_atto": str(stages["manual_review"]),
+                "uncompiled_deferred_assets_atto": str(uncompiled_deferred),
+                "not_issued_assets_atto": str(not_issued),
+                "post_policy_assets_atto": str(post_policy),
+            }
+        )
 
     write_csv(
         args.exceptions_output,
@@ -1078,6 +1289,12 @@ def main():
         args.governor_exceptions_output,
         GOVERNOR_EXCEPTION_FIELDS,
         governor_exceptions,
+        replace=args.replace,
+    )
+    write_csv(
+        args.vault_stage_output,
+        VAULT_STAGE_FIELDS,
+        vault_stage_rows,
         replace=args.replace,
     )
     write_csv(
@@ -1163,10 +1380,17 @@ def main():
             > 0
         }
     )
-    if wone_recipient_not_issued:
+    invalid_wone_recipient_non_issuance = [
+        address
+        for address in wone_recipient_not_issued
+        if address not in migration_stages
+        or migration_stages[address]["classification"] != "genuine_contract"
+        or migration_stages[address]["treatment"] != "not_issued"
+    ]
+    if invalid_wone_recipient_non_issuance:
         raise ValueError(
             "component-aware WONE non-issuance is required for: "
-            + ", ".join(wone_recipient_not_issued)
+            + ", ".join(invalid_wone_recipient_non_issuance)
         )
     if redistributed_staked:
         raise ValueError("WONE redistribution cannot consume vault shares")
@@ -1175,6 +1399,198 @@ def main():
             "redistributed WONE reserve does not equal holder WONE airdrops"
         )
     wone_reserve_source = redistributed_wallet + wone_retained_not_issued
+    compiled_by_address = defaultdict(int)
+    compiled_wallet_by_address = defaultdict(int)
+    compiled_staked_by_address = defaultdict(int)
+    stage_wallet = Counter()
+    stage_staked = Counter()
+    ready_stage_wallet = Counter()
+    ready_stage_staked = Counter()
+    held_stage_wallet = Counter()
+    held_stage_staked = Counter()
+    treatment_wallet = Counter()
+    treatment_staked = Counter()
+    for row in wallet_rows:
+        amount = int(row["wallet_airdrop_atto"])
+        stage = row["migration_stage"]
+        treatment = row["issuance_treatment"]
+        if treatment != route_treatment(row):
+            raise ValueError("wallet issuance treatment contradicts destination")
+        treatment_wallet[treatment] += amount
+        if treatment == "issue":
+            if not stage:
+                raise ValueError("issued wallet row has no migration stage")
+            stage_wallet[stage] += amount
+            if row["destination_status"] == "ready":
+                ready_stage_wallet[stage] += amount
+            elif row["destination_status"] == "hold":
+                held_stage_wallet[stage] += amount
+            else:
+                raise ValueError("issued wallet row has terminal status")
+            address = lib.any_to_hex(row["source_address"])
+            compiled_by_address[address] += amount
+            compiled_wallet_by_address[address] += amount
+    for row in share_rows:
+        amount = int(row["staked_to_vault_atto"])
+        stage = row["migration_stage"]
+        treatment = row["issuance_treatment"]
+        if treatment != route_treatment(row):
+            raise ValueError("vault issuance treatment contradicts destination")
+        if treatment == "redistributed":
+            raise ValueError("redistribution cannot contain vault shares")
+        treatment_staked[treatment] += amount
+        if treatment == "issue":
+            if not stage:
+                raise ValueError("issued vault row has no migration stage")
+            stage_staked[stage] += amount
+            if row["destination_status"] == "ready":
+                ready_stage_staked[stage] += amount
+            elif row["destination_status"] == "hold":
+                held_stage_staked[stage] += amount
+            else:
+                raise ValueError("issued vault row has terminal status")
+            address = lib.any_to_hex(row["delegator_address"])
+            compiled_by_address[address] += amount
+            compiled_staked_by_address[address] += amount
+    stage_policy_mismatches = [
+        address
+        for address, stage in migration_stages.items()
+        if (
+            compiled_by_address[address] != stage["allocation"]
+            or compiled_wallet_by_address[address] != stage["wallet"]
+            or compiled_staked_by_address[address] != stage["staked"]
+        )
+    ]
+    if stage_policy_mismatches:
+        raise ValueError(
+            "compiled routing does not match migration-stage allocation for: "
+            + ", ".join(sorted(stage_policy_mismatches))
+        )
+    pending_stage_review_claims = sum(
+        claim["migration_stage"] == "manual_review"
+        and compiled_by_address[claim["address"]] > 0
+        for claim in claims.values()
+    )
+    all_stages = sorted(set(stage_wallet) | set(stage_staked))
+    stage_totals = {
+        stage: {
+            "wallet_airdrop_atto": str(stage_wallet[stage]),
+            "staked_to_vault_atto": str(stage_staked[stage]),
+            "total_claim_atto": str(
+                stage_wallet[stage] + stage_staked[stage]
+            ),
+            "ready_wallet_airdrop_atto": str(ready_stage_wallet[stage]),
+            "ready_staked_to_vault_atto": str(ready_stage_staked[stage]),
+            "ready_total_claim_atto": str(
+                ready_stage_wallet[stage] + ready_stage_staked[stage]
+            ),
+            "held_wallet_airdrop_atto": str(held_stage_wallet[stage]),
+            "held_staked_to_vault_atto": str(held_stage_staked[stage]),
+            "held_total_claim_atto": str(
+                held_stage_wallet[stage] + held_stage_staked[stage]
+            ),
+        }
+        for stage in all_stages
+    }
+    all_treatments = sorted(set(treatment_wallet) | set(treatment_staked))
+    issuance_treatment_totals = {
+        treatment: {
+            "wallet_airdrop_atto": str(treatment_wallet[treatment]),
+            "staked_to_vault_atto": str(treatment_staked[treatment]),
+            "total_claim_atto": str(
+                treatment_wallet[treatment] + treatment_staked[treatment]
+            ),
+        }
+        for treatment in all_treatments
+    }
+    if (
+        treatment_wallet["not_issued"] != not_issued_wallet
+        or treatment_staked["not_issued"] != not_issued_staked
+        or treatment_wallet["redistributed"] != redistributed_wallet
+        or treatment_staked["redistributed"] != redistributed_staked
+    ):
+        raise ValueError("issuance-treatment totals do not close")
+    vault_stage_totals = {
+        field: sum(int(row[field]) for row in vault_stage_rows)
+        for field in VAULT_STAGE_FIELDS
+        if field.endswith("_atto")
+    }
+    if (
+        vault_stage_totals["base_vault_assets_atto"]
+        - vault_stage_totals["not_issued_assets_atto"]
+        != vault_stage_totals["post_policy_assets_atto"]
+        or vault_stage_totals["not_issued_assets_atto"]
+        != not_issued_staked
+    ):
+        raise ValueError("compiled vault-stage totals do not close")
+    held_governor_assets = Counter()
+    vault_stage_by_validator = {
+        lib.any_to_hex(row["validator_address"]): row
+        for row in vault_stage_rows
+    }
+    for row in governor_exceptions:
+        if row["destination_status"] != "hold":
+            continue
+        stages = vault_stage_by_validator[
+            lib.any_to_hex(row["validator_address"])
+        ]
+        held_governor_assets["initial"] += int(
+            stages["initial_assets_atto"]
+        )
+        held_governor_assets["next_stage"] += int(
+            stages["next_stage_assets_atto"]
+        )
+        held_governor_assets["deferred"] += int(
+            stages["qualified_deferred_assets_atto"]
+        ) + int(stages["uncompiled_deferred_assets_atto"])
+        held_governor_assets["manual_review"] += int(
+            stages["manual_review_assets_atto"]
+        )
+    stage_policy_gates = defaultdict(list)
+    release_stages = {"initial"}
+    for decision in pending_policy_decisions:
+        scope = POLICY_DECISION_STAGE_SCOPE.get(
+            decision,
+            {"initial", "next_stage", "deferred", "manual_review"},
+        )
+        for stage in scope:
+            stage_policy_gates[stage].append(decision)
+    stage_readiness = {}
+    for stage in ("initial", "next_stage", "deferred", "manual_review"):
+        totals = stage_totals.get(
+            stage,
+            {
+                "wallet_airdrop_atto": "0",
+                "staked_to_vault_atto": "0",
+                "total_claim_atto": "0",
+                "ready_wallet_airdrop_atto": "0",
+                "ready_staked_to_vault_atto": "0",
+                "ready_total_claim_atto": "0",
+                "held_wallet_airdrop_atto": "0",
+                "held_staked_to_vault_atto": "0",
+                "held_total_claim_atto": "0",
+            },
+        )
+        held_delivery = int(totals["held_total_claim_atto"])
+        governor_hold = held_governor_assets[stage]
+        policy_gates = sorted(stage_policy_gates[stage])
+        release_authorized = stage in release_stages
+        blockers = []
+        if held_delivery:
+            blockers.append("unresolved_delivery")
+        if governor_hold:
+            blockers.append("unresolved_validator_governor")
+        blockers.extend(f"policy:{decision}" for decision in policy_gates)
+        if not release_authorized:
+            blockers.append("stage_release_not_authorized")
+        stage_readiness[stage] = {
+            **totals,
+            "held_validator_governor_assets_atto": str(governor_hold),
+            "pending_policy_decisions": policy_gates,
+            "release_authorized": release_authorized,
+            "status": "ready" if not blockers else "hold",
+            "blockers": blockers,
+        }
     result = {
         "status": (
             "ready"
@@ -1183,6 +1599,7 @@ def main():
             and not unresolved_governors
             and not inactive_routes
             and not pending_policy_decisions
+            and not pending_stage_review_claims
             else "hold"
         ),
         "claims": len(claims),
@@ -1203,6 +1620,19 @@ def main():
             for path in args.destinations
         ],
         "validator_accounts": args.validator_accounts,
+        "migration_stages": args.migration_stages,
+        "migration_stages_sha256": file_sha256(args.migration_stages),
+        "migration_stage_policy_rows": len(migration_stages),
+        "pending_stage_review_claims": pending_stage_review_claims,
+        "stage_totals": stage_totals,
+        "stage_readiness": stage_readiness,
+        "initial_stage_status": stage_readiness["initial"]["status"],
+        "issuance_treatment_totals": issuance_treatment_totals,
+        "vault_stage_rows": len(vault_stage_rows),
+        "vault_stage_totals": {
+            field: str(value)
+            for field, value in sorted(vault_stage_totals.items())
+        },
         "contract_review_policy_state": contract_policy_state,
         "active_routes": sum(len(rows) for rows in routes_by_key.values()),
         "inactive_routes": inactive_routes,
@@ -1233,7 +1663,9 @@ def main():
         "wone_retained_not_issued_atto": str(
             wone_retained_not_issued
         ),
-        "wone_recipient_not_issued_rows": 0,
+        "wone_recipient_not_issued_rows": len(
+            wone_recipient_not_issued
+        ),
         "issuable_wallet_airdrop_atto": str(
             source_wallet - not_issued_wallet - redistributed_wallet
         ),
@@ -1267,6 +1699,10 @@ def main():
             "governor_exceptions": {
                 "path": args.governor_exceptions_output,
                 "sha256": file_sha256(args.governor_exceptions_output),
+            },
+            "vault_stages": {
+                "path": args.vault_stage_output,
+                "sha256": file_sha256(args.vault_stage_output),
             },
             "unresolved": {
                 "path": args.unresolved_output,

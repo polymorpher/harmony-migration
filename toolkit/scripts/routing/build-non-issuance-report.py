@@ -13,6 +13,9 @@ CATEGORY_LABELS = {
         "Burn-aware extra-mint portion for blacklisted recipients"
     ),
     "burn_or_inaccessible": "Burn and inaccessible-address amounts",
+    "historical_incident_retained_cap": (
+        "Retained May 2025 / April 2026 initial-recipient caps"
+    ),
     "report_linked_theft_recipient": (
         "Direct recipients linked to reported wallet thefts"
     ),
@@ -26,6 +29,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--inventory-summary", required=True)
     parser.add_argument("--route-summary", required=True)
+    parser.add_argument("--contract-policy-summary", required=True)
     parser.add_argument("--routing-summary", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--replace", action="store_true")
@@ -66,21 +70,27 @@ def main():
 
     inventory = load(args.inventory_summary)
     routes = load(args.route_summary)
+    contract_policy = load(args.contract_policy_summary)
     routing = load(args.routing_summary)
     inventory_amount = int(inventory["totals_atto"]["not_issued"])
     not_issued = int(routes["not_issued_atto"])
     applied_not_issued = int(routing["not_issued_total_claim_atto"])
     wone_retained = int(routing["wone_retained_not_issued_atto"])
     redistributed = int(routing["redistributed_total_claim_atto"])
+    contract_not_issued = sum(
+        int(values["not_issued_atto"])
+        for values in contract_policy["groups"].values()
+    )
     gross = int(routing["source_total_claim_atto"])
     issuable = int(routing["issuable_total_claim_atto"])
     if routes.get("destination_id") != "not-issuing":
         raise ValueError("route summary is not terminal non-issuance")
-    if inventory_amount != not_issued:
-        raise ValueError("routes changed the reviewed non-issuance amount")
-    if applied_not_issued != not_issued + wone_retained:
+    if inventory_amount != int(routes["inventories"][0]["not_issued_atto"]):
+        raise ValueError("routes changed the existing reviewed inventory")
+    if applied_not_issued != not_issued + wone_retained + contract_not_issued:
         raise ValueError(
-            "applied non-issuance does not equal incident plus WONE remainder"
+            "applied non-issuance does not equal inventories, WONE remainder, "
+            "and reviewed-contract exclusion"
         )
     if gross != issuable + applied_not_issued + redistributed:
         raise ValueError(
@@ -92,6 +102,7 @@ def main():
     for category in (
         "blacklisted_extra_mint_recipient",
         "burn_or_inaccessible",
+        "historical_incident_retained_cap",
         "report_linked_theft_recipient",
         "reported_wallet_theft_perpetrator",
     ):
@@ -103,13 +114,14 @@ def main():
                 one(values["not_issued_atto"]),
             )
         )
-    text = f"""# Incident-address non-issuance policy
+    text = f"""# Migration non-issuance policy
 
-Prepared: `2026-09-16` (updates the September 15 destination decision)
+Prepared: `2026-09-17`
 
 ## Decision
 
-The reviewed incident amounts are **not issued**.
+The reviewed incident amounts, retained historical-incident caps, and excluded
+reviewed-contract allocations are **not issued**.
 `not-issuing` is a terminal routing outcome, not an address, account, transfer,
 or unresolved hold. No ERC-20 ONE, validator-vault deposit asset, or
 validator-vault share is created for these amounts.
@@ -128,8 +140,10 @@ non-issuance.
 
 {table(("Category", "Routes", "Not issued ONE"), category_rows)}
 
-- **Total not issued:** `{one(applied_not_issued)} ONE`
-- **Reviewed incident amount not issued:** `{one(not_issued)} ONE`
+- **Compiled total not issued:** `{one(applied_not_issued)} ONE`
+- **Existing plus historical incident inventories:** `{one(not_issued)} ONE`
+- **Reviewed-contract allocation not issued:**
+  `{one(contract_not_issued)} ONE`
 - **WONE reserve remainder retained as not issued:**
   `{one(wone_retained)} ONE`
 - **WONE source amount redistributed to qualified holders:**
@@ -141,7 +155,8 @@ non-issuance.
   `{one(inventory["victim_total_claim_atto_not_routed"])} ONE`
 - **Gross cutoff claims represented by routing:**
   `{one(gross)} ONE`
-- **Remaining issuable amount:** `{one(issuable)} ONE`
+- **Remaining all-stage amount represented by this routing compilation:**
+  `{one(issuable)} ONE`
 
 Exact closure:
 
@@ -152,13 +167,15 @@ gross expanded claim = remaining issuable + not issued + redistributed source
 
 ## Routing behavior
 
-- `build-non-issuance-routes.py` copies each positive `not_issued_atto`
-  amount exactly.
+- `build-non-issuance-routes.py` copies each positive `not_issued_atto` or
+  `retained_cap_atto` amount exactly and rejects inventory overlap.
 - `apply-routes.py` emits `destination_status = not_issuing` with no
   destination address.
 - WONE redistribution is reported separately from `not_issuing`; only the
-  below-threshold/excluded reserve remainder is retained in the Year 2025
-  Supply Reserve.
+  below-threshold/excluded reserve remainder is retained in the 2050 premint
+  reserve.
+- `build-contract-policy-routes.py` marks SmartVault and all other excluded
+  reviewed genuine-contract remainders as not issued, including vault shares.
 - Not-issued rows do not appear in `unresolved-routing.csv`.
 - Partial routes consume direct wallet tokens first and then vault shares
   proportionally, using the existing allocation rule.
@@ -173,6 +190,8 @@ gross expanded claim = remaining issuable + not issued + redistributed source
   `{args.inventory_summary}`
 - Generated non-issuance route summary:
   `{args.route_summary}`
+- Reviewed-contract route summary:
+  `{args.contract_policy_summary}`
 - Applied routing summary:
   `{args.routing_summary}`
 

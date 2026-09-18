@@ -127,7 +127,7 @@ def main():
                 "evidence": evidence,
                 "notes": (
                     "below-threshold and excluded WONE backing retained in "
-                    "the Year 2025 Supply Reserve"
+                    "the 2050 premint reserve"
                 ),
             }
         )
