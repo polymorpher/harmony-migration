@@ -13,12 +13,25 @@ RELEASE_FILES = (
     / "artifacts"
     / "cutoff-20260910"
     / "claims"
+    / "all-address-native-claims-cutoff.csv",
+    ROOT
+    / "artifacts"
+    / "cutoff-20260910"
+    / "claims"
     / "all-address-migration-claims-cutoff.csv",
     ROOT
     / "artifacts"
     / "cutoff-20260910"
     / "claims"
     / "all-address-migration-claims-cutoff-metadata.csv",
+    ROOT
+    / "artifacts"
+    / "wone-holder-accounting-20260917"
+    / "wone-holders-cutoff-excluding-layerzero.csv",
+    ROOT
+    / "artifacts"
+    / "wone-holder-accounting-20260917"
+    / "wone-only-qualified-metadata.csv",
     ROOT
     / "artifacts"
     / "cutoff-20260910"
@@ -59,6 +72,65 @@ RELEASE_FILES = (
     / "contract-review-20260911"
     / "out"
     / "policy-excluded.csv",
+    *(
+        ROOT / "exchanges" / "wallets-standardized" / filename
+        for filename in (
+            "binance.csv",
+            "binance-us.csv",
+            "gate.csv",
+            "mexc.csv",
+            "okx.csv",
+            "kucoin.csv",
+            "summary.json",
+        )
+    ),
+    *(
+        ROOT
+        / "artifacts"
+        / "exchange-accounting-20260917"
+        / filename
+        for filename in (
+            "summary.json",
+            "routing-verification.json",
+            "EXCHANGE_MIGRATION_ACCOUNTING_2026-09-17.md",
+            "GATE_AUTOMATIC_AIRDROP_AUDIT_2026-09-17.md",
+            "gate-airdropped.csv",
+            "gate-not-airdropped.csv",
+            "qualified-non-gate-exclusions.csv",
+            "exchange-routes.csv",
+            "exchange-destinations.csv",
+        )
+    ),
+    *(
+        ROOT
+        / "artifacts"
+        / "exchange-accounting-20260917"
+        / "audits"
+        / f"{exchange_id}.csv"
+        for exchange_id in (
+            "binance",
+            "binance-us",
+            "gate",
+            "mexc",
+            "okx",
+            "kucoin",
+        )
+    ),
+    *(
+        ROOT
+        / "artifacts"
+        / "exchange-accounting-20260917"
+        / "memos"
+        / f"{exchange_id}.md"
+        for exchange_id in (
+            "binance",
+            "binance-us",
+            "gate",
+            "mexc",
+            "okx",
+            "kucoin",
+        )
+    ),
     ROOT
     / "artifacts"
     / "contract-review-20260911"
@@ -84,6 +156,14 @@ RELEASE_FILES = (
     / "contract-review-20260911"
     / "out"
     / "base-deferred-vault-shares.csv",
+    ROOT
+    / "routing"
+    / "local"
+    / "exchanges.csv",
+    ROOT
+    / "routing"
+    / "local"
+    / "exchange-destinations.csv",
     ROOT
     / "routing"
     / "local"
@@ -136,32 +216,39 @@ def inspect(path):
             lines += chunk.count(b"\n")
     relative = path.relative_to(ROOT).as_posix()
     name = path.name
-    if name in {
+    if name == "all-address-native-claims-cutoff.csv":
+        domain = "claim-accounting"
+        classification = "database-derived"
+    elif name in {
         "all-address-migration-claims-cutoff.csv",
         "migration-claims-at-least-1000-one.csv",
     }:
         domain = "claim-accounting"
-        classification = (
-            "database-derived"
-            if name.startswith("all-address-")
-            else "policy-scenario"
-        )
+        classification = "policy-scenario"
+    elif name in {
+        "wone-holders-cutoff-excluding-layerzero.csv",
+        "wone-only-qualified-metadata.csv",
+    }:
+        domain = "claim-accounting"
+        classification = "RPC-derived"
     elif name == "staked-to-vault-by-delegation-rpc.csv":
         domain = "claim-accounting"
         classification = "RPC-derived"
     elif name == "account-activity-shard0.csv":
         domain = "claim-accounting"
-        classification = "database-derived"
+        classification = "hybrid"
     elif name == "account-activity-shard1.csv":
         domain = "claim-accounting"
         classification = "RPC-derived"
+    elif name == "migration-claims-at-least-1000-one-metadata-activity.csv":
+        domain = "claim-accounting"
+        classification = "hybrid"
     elif name in {
         "all-address-migration-claims-cutoff-metadata.csv",
         "migration-claims-at-least-1000-one-metadata.csv",
-        "migration-claims-at-least-1000-one-metadata-activity.csv",
     }:
         domain = "claim-accounting"
-        classification = "RPC-derived"
+        classification = "policy-scenario"
     elif name == "contract-review-policy.csv":
         domain = "destination-mapping"
         classification = "RPC-derived"

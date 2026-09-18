@@ -70,6 +70,7 @@ def main():
         "database-derived",
         "policy-scenario",
         "RPC-derived",
+        "hybrid",
     }
     for entry in index["entries"]:
         relative = entry["path"]

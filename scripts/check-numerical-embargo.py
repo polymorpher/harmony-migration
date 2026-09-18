@@ -12,6 +12,7 @@ SENSITIVE_PATHS = (
     "repro/as-run/",
     "results/2026-09-11/",
     "routing/local/",
+    "exchanges/",
     "toolkit/cmd/cutoff-final-verifier/",
 )
 SENSITIVE_FILES = {

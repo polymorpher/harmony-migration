@@ -29,6 +29,7 @@ def main():
         "database-derived",
         "policy-scenario",
         "RPC-derived",
+        "hybrid",
     }
     for entry in manifest["entries"]:
         relative = entry["path"]

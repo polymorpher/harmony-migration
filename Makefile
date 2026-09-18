@@ -19,6 +19,7 @@ test-python: check-python
 		toolkit/scripts/claims/*.py \
 		toolkit/scripts/cutoff/*.py \
 		toolkit/scripts/contract-review/*.py \
+		toolkit/scripts/exchanges/*.py \
 		toolkit/scripts/routing/*.py \
 		toolkit/scripts/forensics/*.py \
 		scripts/*.py
@@ -27,6 +28,12 @@ verify: check-python
 	python3 scripts/verify-source-manifest.py
 
 verify-private: verify
+	python3 toolkit/scripts/claims/build-pre-wone-archive-manifest.py \
+		--archive-root artifacts/wone-holder-accounting-20260917/pre-wone \
+		--output artifacts/wone-holder-accounting-20260917/pre-wone-manifest.json \
+		--check
+	python3 toolkit/scripts/claims/verify-wone-allocation.py \
+		--check-output artifacts/wone-holder-accounting-20260917/wone-allocation-final-verify.json
 	python3 scripts/verify-private-results.py
 	python3 scripts/verify-release-manifest.py
 

@@ -27,23 +27,40 @@
       "result row and population counts",
       "total-claim, wallet-airdrop, and staked-to-vault amounts",
       "eligibility and treasury-routing breakdowns",
+      "exchange wallet inventories, destinations, memos, and address outcomes",
       "generated-output hashes",
       "observed verification counts"
     ]
   },
   "eligibility_1000_one": {
     "threshold_atto": "1000000000000000000000",
-    "field": "total_claim_atto",
+    "field": "qualification_total_atto",
+    "formula": "native_total_claim_atto + wone_balance_atto",
     "equality_policy": "include",
     "selected_comparison": "greater-than-or-equal"
   },
+  "wone_overlay": {
+    "contract": "0xcf664087a5bb0237a0bad6742852ec6c8d69a27a",
+    "source_shard": 0,
+    "holder_source": "cutoff-pinned archival-node event replay reconciled to totalSupply and native reserve",
+    "qualified_holder_treatment": "wallet airdrop with matching reserve source classified as redistributed",
+    "remainder_treatment": "not issued; retained in the Year 2025 Supply Reserve",
+    "self_held_wone": "excluded from recipient delivery"
+  },
   "selected_policy": {
-    "threshold": "total_claim_atto >= 1000 ONE",
+    "threshold": "native_total_claim_atto + wone_balance_atto >= 1000 ONE",
     "code_bearing_accounts": "preliminary review; verified validator-wrapper accounts are key-controlled automatic claims with wallet and vault delivery separated, genuine contracts require class-specific recovery",
     "excluded_addresses": [
       "0x000000000000000000000000000000000000dEaD",
       "0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD"
     ]
+  },
+  "exchange_delivery_overlay": {
+    "policy": "exchanges/exchange-policy.json",
+    "gate": "ordinary inclusive threshold and account classification; no aggregate reroute",
+    "non_gate": "remove qualifying submitted wallets from implicit automatic delivery and route positive current claims to a confirmed aggregate exchange destination",
+    "missing_destination": "hold with no source-address fallback",
+    "submitted_balance_role": "reconciliation evidence only; never a replacement for cutoff chain accounting"
   },
   "excluded_uncertainty": {
     "category": "retired-shard receipts",
@@ -56,6 +73,7 @@
       "canonical interval audit",
       "historical RPC comparison",
       "creation-transition tracing",
+      "exchange normalization, overlap, signature, and route closure checks",
       "strict claim verification",
       "cross-component reconciliation"
     ],

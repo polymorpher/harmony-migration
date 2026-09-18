@@ -36,6 +36,14 @@ FINDING_MAPPINGS = (
     (
         ROOT
         / "artifacts"
+        / "wone-holder-accounting-20260917"
+        / "WONE_MIGRATION_INTEGRATION_2026-09-17.md",
+        CLAIM_FINDINGS / "wone-holder-qualification.md",
+        "claim-accounting",
+    ),
+    (
+        ROOT
+        / "artifacts"
         / "contract-review-20260911"
         / "CONTRACT_ACCOUNT_REVIEW_2026-09-11.md",
         DESTINATION_FINDINGS / "contract-account-review.md",
@@ -64,6 +72,43 @@ FINDING_MAPPINGS = (
         / "NON_ISSUANCE_POLICY_2026-09-16.md",
         DESTINATION_FINDINGS / "non-issuance.md",
         "destination-mapping",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "exchange-accounting-20260917"
+        / "EXCHANGE_MIGRATION_ACCOUNTING_2026-09-17.md",
+        DESTINATION_FINDINGS / "exchange-migration-accounting.md",
+        "destination-mapping",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "exchange-accounting-20260917"
+        / "GATE_AUTOMATIC_AIRDROP_AUDIT_2026-09-17.md",
+        DESTINATION_FINDINGS / "gate-automatic-airdrop-audit.md",
+        "destination-mapping",
+    ),
+    *(
+        (
+            ROOT
+            / "artifacts"
+            / "exchange-accounting-20260917"
+            / "memos"
+            / f"{exchange_id}.md",
+            DESTINATION_FINDINGS
+            / "exchange-memos"
+            / f"{exchange_id}.md",
+            "destination-mapping",
+        )
+        for exchange_id in (
+            "binance",
+            "binance-us",
+            "gate",
+            "mexc",
+            "okx",
+            "kucoin",
+        )
     ),
 )
 
@@ -103,7 +148,34 @@ RESULT_MAPPINGS = (
         / "all-address-migration-claims-cutoff-summary.json",
         CLAIM_RESULTS / "migration-claims-summary.json",
         "claim-accounting",
-        "database-derived",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "wone-holder-accounting-20260917"
+        / "wone-holders-cutoff-summary.json",
+        CLAIM_RESULTS / "wone-holder-scan-summary.json",
+        "claim-accounting",
+        "RPC-derived",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "wone-holder-accounting-20260917"
+        / "wone-only-qualified-metadata-summary.json",
+        CLAIM_RESULTS / "wone-only-qualified-metadata-summary.json",
+        "claim-accounting",
+        "RPC-derived",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "wone-holder-accounting-20260917"
+        / "wone-allocation-final-verify.json",
+        CLAIM_RESULTS / "wone-allocation-final-verify.json",
+        "claim-accounting",
+        "policy-scenario",
     ),
     (
         ROOT
@@ -143,7 +215,7 @@ RESULT_MAPPINGS = (
         / "all-address-migration-claims-cutoff-metadata-summary.json",
         CLAIM_RESULTS / "all-address-claim-metadata-summary.json",
         "claim-accounting",
-        "RPC-derived",
+        "policy-scenario",
     ),
     (
         ROOT
@@ -173,7 +245,7 @@ RESULT_MAPPINGS = (
         / "account-activity-shard0-summary.json",
         CLAIM_RESULTS / "account-activity-shard0-summary.json",
         "claim-accounting",
-        "database-derived",
+        "hybrid",
     ),
     (
         ROOT
@@ -193,7 +265,7 @@ RESULT_MAPPINGS = (
         / "migration-claims-at-least-1000-one-metadata-activity-summary.json",
         CLAIM_RESULTS / "priority-claim-activity-source-summary.json",
         "claim-accounting",
-        "RPC-derived",
+        "hybrid",
     ),
     (
         ROOT
@@ -202,7 +274,7 @@ RESULT_MAPPINGS = (
         / "priority-claim-activity-summary.json",
         CLAIM_RESULTS / "priority-claim-activity-summary.json",
         "claim-accounting",
-        "RPC-derived",
+        "hybrid",
     ),
     (
         ROOT
@@ -230,6 +302,33 @@ RESULT_MAPPINGS = (
         / "supply-reconciliation-20260911"
         / "treasury-reclaim-inventory-summary.json",
         DESTINATION_RESULTS / "historical-treasury-inventory-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "exchanges"
+        / "wallets-standardized"
+        / "summary.json",
+        DESTINATION_RESULTS / "exchange-normalization-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "exchange-accounting-20260917"
+        / "summary.json",
+        DESTINATION_RESULTS / "exchange-accounting-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "exchange-accounting-20260917"
+        / "routing-verification.json",
+        DESTINATION_RESULTS / "exchange-routing-verification.json",
         "destination-mapping",
         "policy-scenario",
     ),
@@ -297,8 +396,20 @@ RESULT_MAPPINGS = (
         "policy-scenario",
     ),
     (
+        ROOT / "routing" / "local" / "bridge-reserves.base.csv",
+        DESTINATION_RESULTS / "routes" / "bridge-reserves.base.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
         ROOT / "routing" / "local" / "bridge-reserves.csv",
         DESTINATION_RESULTS / "routes" / "bridge-reserves.csv",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT / "routing" / "local" / "bridge-reserves-summary.json",
+        DESTINATION_RESULTS / "routes" / "bridge-reserves-summary.json",
         "destination-mapping",
         "policy-scenario",
     ),
@@ -425,6 +536,8 @@ These unredacted files are under the numerical-results embargo:
   of direct wallet airdrop and the amount staked to validator vaults;
 - `claim-accounting/priority-claim-activity.md` — cumulative claim totals for
   candidates with indexed activity in the prior 3–48 calendar months;
+- `claim-accounting/wone-holder-qualification.md` — cutoff WONE holder
+  reconciliation, combined threshold, wallet amount, and source split;
 - `destination-mapping/contract-account-review.md` — contract
   classifications, balances, and claim destination evidence;
 - `destination-mapping/historical-treasury-routing-audit.md` — retained
@@ -433,6 +546,11 @@ These unredacted files are under the numerical-results embargo:
   perpetrator-related inventory and separate reported-victim reconciliation;
 - `destination-mapping/non-issuance.md` — current terminal non-issuance policy
   for those exact amounts.
+- `destination-mapping/exchange-migration-accounting.md` and
+  `exchange-memos/` — per-exchange cutoff totals, balance/activity breakdowns,
+  destination readiness, and input reconciliation;
+- `destination-mapping/gate-automatic-airdrop-audit.md` — Gate automatic and
+  residual totals plus the identities of its complete private address lists.
 
 `SOURCE-HASHES.json` maps each packaged finding to its retained local source.
 
@@ -449,12 +567,13 @@ RESULTS_README = """# Private migration result package
 This ignored dated directory contains compact numerical outputs used to compare
 an independent reproduction with the original migration calculation.
 
-- `claim-accounting/` contains total-claim, wallet-airdrop,
-  staked-to-vault, threshold, cutoff-relative activity, and independent RPC
-  summaries;
+- `claim-accounting/` contains native and WONE claim overlays,
+  wallet-airdrop, staked-to-vault, threshold, cutoff-relative activity, and
+  independent RPC summaries;
 - `destination-mapping/` contains the preliminary and corrected eligibility
   splits, contract-review summary, vault-share allocation, sparse routing and
-  governor exceptions, unresolved work queue, and non-issuance scenario.
+  governor exceptions, exchange normalization/accounting summaries, unresolved
+  work queue, and non-issuance scenario.
 
 `index.json` records each result's domain, evidence classification, source
 identity, packaged identity, byte size, and optional row count.
