@@ -22,6 +22,7 @@ go test ./...
 for command in \
   account-snapshot \
   account-activity \
+  wone-holders \
   account-preimage-resolve \
   actual-supply \
   staking-claims \
