@@ -70,16 +70,23 @@ def main():
     inventory_amount = int(inventory["totals_atto"]["not_issued"])
     not_issued = int(routes["not_issued_atto"])
     applied_not_issued = int(routing["not_issued_total_claim_atto"])
+    wone_retained = int(routing["wone_retained_not_issued_atto"])
+    redistributed = int(routing["redistributed_total_claim_atto"])
     gross = int(routing["source_total_claim_atto"])
     issuable = int(routing["issuable_total_claim_atto"])
     if routes.get("destination_id") != "not-issuing":
         raise ValueError("route summary is not terminal non-issuance")
     if inventory_amount != not_issued:
         raise ValueError("routes changed the reviewed non-issuance amount")
-    if applied_not_issued != not_issued:
-        raise ValueError("applied routing did not consume every exact route")
-    if gross != issuable + applied_not_issued:
-        raise ValueError("gross claim does not equal issuable plus not-issued")
+    if applied_not_issued != not_issued + wone_retained:
+        raise ValueError(
+            "applied non-issuance does not equal incident plus WONE remainder"
+        )
+    if gross != issuable + applied_not_issued + redistributed:
+        raise ValueError(
+            "gross claim does not equal issuable plus not-issued plus "
+            "redistributed"
+        )
 
     category_rows = []
     for category in (
@@ -122,6 +129,11 @@ non-issuance.
 {table(("Category", "Routes", "Not issued ONE"), category_rows)}
 
 - **Total not issued:** `{one(applied_not_issued)} ONE`
+- **Reviewed incident amount not issued:** `{one(not_issued)} ONE`
+- **WONE reserve remainder retained as not issued:**
+  `{one(wone_retained)} ONE`
+- **WONE source amount redistributed to qualified holders:**
+  `{one(redistributed)} ONE`
 - **September 16 perpetrator-related addition:**
   `{one(inventory["wallet_theft_addition_atto"])} ONE`
 - **Reported victim wallets kept outside non-issuance:**
@@ -134,8 +146,8 @@ non-issuance.
 Exact closure:
 
 ```text
-gross cutoff claim = remaining issuable + not issued
-{gross} = {issuable} + {applied_not_issued}
+gross expanded claim = remaining issuable + not issued + redistributed source
+{gross} = {issuable} + {applied_not_issued} + {redistributed}
 ```
 
 ## Routing behavior
@@ -144,12 +156,16 @@ gross cutoff claim = remaining issuable + not issued
   amount exactly.
 - `apply-routes.py` emits `destination_status = not_issuing` with no
   destination address.
+- WONE redistribution is reported separately from `not_issuing`; only the
+  below-threshold/excluded reserve remainder is retained in the Year 2025
+  Supply Reserve.
 - Not-issued rows do not appear in `unresolved-routing.csv`.
 - Partial routes consume direct wallet tokens first and then vault shares
   proportionally, using the existing allocation rule.
 - A final deployment builder must omit every not-issued wallet row, subtract
   every not-issued staked row from its validator's vault deposit and share
-  mint, and verify the `issuable_*` totals from `routing-summary.json`.
+  mint, omit every redistributed source row, and verify the `issuable_*`
+  totals from `routing-summary.json`.
 
 ## Evidence
 

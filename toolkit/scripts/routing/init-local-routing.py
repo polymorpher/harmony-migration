@@ -57,6 +57,7 @@ def main():
             "multisigs.csv",
             "lost-wallets.csv",
             "frozen-wallets.csv",
+            "bridge-reserves.base.csv",
             "bridge-reserves.csv",
             "destinations.csv",
             "validator-governors.csv",
@@ -77,25 +78,9 @@ def main():
     ):
         write_csv(directory / name, ROUTE_FIELDS, ())
     write_csv(
-        directory / "bridge-reserves.csv",
+        directory / "bridge-reserves.base.csv",
         ROUTE_FIELDS,
         (
-            {
-                "route_id": "wone-reserve-custody",
-                "priority": "400",
-                "source_address": (
-                    "0xcf664087a5bb0237a0bad6742852ec6c8d69a27a"
-                ),
-                "destination_id": "wone-reserve-custody",
-                "destination_address": "",
-                "amount_atto": "SHARD0_LIQUID",
-                "allocation_method": "wallet_first_pro_rata_vault",
-                "reason": "wone_reserve_custody",
-                "evidence": (
-                    "docs/claim-routing.md#wone-reserve-custody"
-                ),
-                "notes": "dedicated reserve multisig address pending",
-            },
             {
                 "route_id": "layerzero-nativeoft-bsc-custody",
                 "priority": "400",
@@ -110,7 +95,7 @@ def main():
                 "evidence": (
                     "docs/claim-routing.md#layerzero-nativeoft-reconciliation"
                 ),
-                "notes": "remote supply and message reconciliation pending",
+                "notes": "remote supply and in-flight reconciliation pending",
             },
             {
                 "route_id": "layerzero-nativeoft-ethereum-custody",
@@ -126,7 +111,7 @@ def main():
                 "evidence": (
                     "docs/claim-routing.md#layerzero-nativeoft-reconciliation"
                 ),
-                "notes": "remote supply and message reconciliation pending",
+                "notes": "remote supply and in-flight reconciliation pending",
             },
         ),
     )
@@ -163,12 +148,12 @@ def main():
                 ),
             },
             {
-                "destination_id": "wone-reserve-custody",
+                "destination_id": "wone-holder-redistribution",
                 "destination_address": "",
-                "status": "hold",
+                "status": "redistributed",
                 "notes": (
-                    "fill the approved dedicated WONE reserve multisig "
-                    "address"
+                    "terminal source offset paired exactly with WONE added "
+                    "to current qualified-holder airdrops"
                 ),
             },
             {
@@ -218,19 +203,19 @@ def main():
                 ),
             },
             {
-                "decision_id": "wone-reserve-custody",
+                "decision_id": "wone-holder-redistribution",
                 "status": "resolved",
                 "decision": (
-                    "migrate the WONE native reserve once to a dedicated "
-                    "custody multisig; claimants receive transfers from that "
-                    "finite reserve, not additional issuance"
+                    "redistribute the qualified-holder portion of the WONE "
+                    "native reserve to holder airdrops and retain the "
+                    "remainder as not issued"
                 ),
                 "evidence": (
-                    "docs/claim-routing.md#wone-reserve-custody"
+                    "docs/claim-routing.md#wone-holder-redistribution"
                 ),
                 "notes": (
-                    "the custody destination remains held until its approved "
-                    "multisig address is supplied"
+                    "build-wone-routes.py writes exact source offsets from "
+                    "the verified WONE qualification summary"
                 ),
             },
             {

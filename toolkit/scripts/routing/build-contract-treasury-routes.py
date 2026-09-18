@@ -121,10 +121,7 @@ def main():
                     "amount_atto": "ALL",
                     "allocation_method": "wallet_first_pro_rata_vault",
                     "reason": "non_multisig_contract_recovery_custody",
-                    "evidence": (
-                        "artifacts/contract-review-20260911/out/"
-                        "contract-review-policy.csv"
-                    ),
+                    "evidence": args.contracts,
                     "notes": f"{category}: {row['subcategory']}",
                     "policy_state_block": row["policy_state_block"],
                     "policy_state_block_hash": row[

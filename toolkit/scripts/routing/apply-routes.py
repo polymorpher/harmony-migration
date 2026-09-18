@@ -24,10 +24,11 @@ REQUIRED_POLICY_DECISIONS = {
     "contract-recovery-custody",
     "layerzero-nativeoft-reconciliation",
     "rollback-exploit-proceeds",
-    "wone-reserve-custody",
+    "wone-holder-redistribution",
 }
-DESTINATION_STATUSES = {"ready", "hold", "not_issuing"}
+DESTINATION_STATUSES = {"ready", "hold", "not_issuing", "redistributed"}
 NOT_ISSUING_DESTINATION_ID = "not-issuing"
+REDISTRIBUTED_DESTINATION_ID = "wone-holder-redistribution"
 ROUTING_EXCEPTION_FIELDS = (
     "component",
     "source_secure_key",
@@ -84,7 +85,12 @@ def parse_args():
     parser.add_argument("--base-vault-deposits", required=True)
     parser.add_argument("--validator-accounts", required=True)
     parser.add_argument("--routes", action="append", default=[])
-    parser.add_argument("--destinations", required=True)
+    parser.add_argument(
+        "--destinations",
+        action="append",
+        required=True,
+        help="destination CSV; repeatable",
+    )
     parser.add_argument("--governors", required=True)
     parser.add_argument("--policy-decisions", required=True)
     parser.add_argument("--exceptions-output", required=True)
@@ -165,8 +171,13 @@ def load_claims(paths):
                 wallet = int(row["wallet_airdrop_atto"])
                 staked = int(row["staked_to_vault_atto"])
                 total = int(row["total_claim_atto"])
+                wone = int(row.get("wone_airdrop_atto", "0") or 0)
                 has_code = code_bearing(row)
-                if min(wallet, staked, total) < 0 or wallet + staked != total:
+                if (
+                    min(wallet, wone, staked, total) < 0
+                    or wone > wallet
+                    or wallet + staked != total
+                ):
                     raise ValueError(f"{path}:{line}: claim mismatch")
                 if has_code is None:
                     raise ValueError(
@@ -178,6 +189,7 @@ def load_claims(paths):
                     "key": key,
                     "address": address,
                     "wallet": wallet,
+                    "wone": wone,
                     "staked": staked,
                     "total": total,
                     "liquid_shard0": (
@@ -209,8 +221,13 @@ def load_routed_deferred_claims(path, route_sources, claims, by_address):
             wallet = int(row["wallet_airdrop_atto"])
             staked = int(row["staked_to_vault_atto"])
             total = int(row["total_claim_atto"])
+            wone = int(row.get("wone_airdrop_atto", "0") or 0)
             has_code = code_bearing(row)
-            if min(wallet, staked, total) < 0 or wallet + staked != total:
+            if (
+                min(wallet, wone, staked, total) < 0
+                or wone > wallet
+                or wallet + staked != total
+            ):
                 raise ValueError(f"{path}:{line}: deferred claim mismatch")
             if has_code is None:
                 raise ValueError(
@@ -220,6 +237,7 @@ def load_routed_deferred_claims(path, route_sources, claims, by_address):
                 "key": key,
                 "address": address,
                 "wallet": wallet,
+                "wone": wone,
                 "staked": staked,
                 "total": total,
                 "liquid_shard0": (
@@ -273,43 +291,75 @@ def load_validator_accounts(path, claims, by_address):
     return validators
 
 
-def load_destinations(path):
+def load_destinations(paths):
     destinations = {}
-    with open(path, newline="") as source:
-        reader = csv.DictReader(source)
-        for line, row in enumerate(reader, start=2):
-            destination_id = row["destination_id"].strip()
-            if not destination_id or destination_id in destinations:
-                raise ValueError(f"{path}:{line}: invalid destination id")
-            address = row["destination_address"].strip()
-            if address:
-                address = lib.to_checksum(lib.normalize_address(address))
-            status = row["status"].strip()
-            if status not in DESTINATION_STATUSES:
-                raise ValueError(f"{path}:{line}: invalid destination status")
-            if status == "ready" and not address:
-                raise ValueError(
-                    f"{path}:{line}: ready destination has no address"
-                )
-            if status == "not_issuing" and (
-                address or destination_id != NOT_ISSUING_DESTINATION_ID
-            ):
-                raise ValueError(
-                    f"{path}:{line}: not_issuing must use the "
-                    "not-issuing id with no address"
-                )
-            if (
-                destination_id == NOT_ISSUING_DESTINATION_ID
-                and status != "not_issuing"
-            ):
-                raise ValueError(
-                    f"{path}:{line}: not-issuing destination must have "
-                    "not_issuing status"
-                )
-            destinations[destination_id] = {
-                "address": address,
-                "status": status,
-            }
+    for path in paths:
+        with open(path, newline="") as source:
+            reader = csv.DictReader(source)
+            for line, row in enumerate(reader, start=2):
+                destination_id = row["destination_id"].strip()
+                if not destination_id or destination_id in destinations:
+                    raise ValueError(
+                        f"{path}:{line}: invalid or duplicate destination id"
+                    )
+                address = row["destination_address"].strip()
+                if address:
+                    normalized = lib.normalize_address(address)
+                    if normalized is None:
+                        raise ValueError(
+                            f"{path}:{line}: invalid destination address"
+                        )
+                    try:
+                        if len(bytes.fromhex(normalized[2:])) != 20:
+                            raise ValueError
+                    except ValueError as error:
+                        raise ValueError(
+                            f"{path}:{line}: invalid destination address"
+                        ) from error
+                    address = lib.to_checksum(normalized)
+                status = row["status"].strip()
+                if status not in DESTINATION_STATUSES:
+                    raise ValueError(
+                        f"{path}:{line}: invalid destination status"
+                    )
+                if status == "ready" and not address:
+                    raise ValueError(
+                        f"{path}:{line}: ready destination has no address"
+                    )
+                if status == "not_issuing" and (
+                    address or destination_id != NOT_ISSUING_DESTINATION_ID
+                ):
+                    raise ValueError(
+                        f"{path}:{line}: not_issuing must use the "
+                        "not-issuing id with no address"
+                    )
+                if (
+                    destination_id == NOT_ISSUING_DESTINATION_ID
+                    and status != "not_issuing"
+                ):
+                    raise ValueError(
+                        f"{path}:{line}: not-issuing destination must have "
+                        "not_issuing status"
+                    )
+                if status == "redistributed" and (
+                    address or destination_id != REDISTRIBUTED_DESTINATION_ID
+                ):
+                    raise ValueError(
+                        f"{path}:{line}: redistributed must use the "
+                        "wone-holder-redistribution id with no address"
+                    )
+                if (
+                    destination_id == REDISTRIBUTED_DESTINATION_ID
+                    and status != "redistributed"
+                ):
+                    raise ValueError(
+                        f"{path}:{line}: WONE redistribution destination must "
+                        "have redistributed status"
+                    )
+                destinations[destination_id] = {
+                    "address": address,
+                    "status": status,
+                }
     return destinations
 
 
@@ -386,21 +436,23 @@ def resolve_destination(row, destinations):
     if explicit_status and explicit_status not in DESTINATION_STATUSES:
         raise ValueError(f"invalid explicit destination status: {explicit_status}")
     if direct:
-        if explicit_status == "not_issuing":
-            raise ValueError("not_issuing destination cannot have an address")
+        if explicit_status in {"not_issuing", "redistributed"}:
+            raise ValueError(
+                f"{explicit_status} destination cannot have an address"
+            )
         return (
             destination_id,
             lib.to_checksum(lib.normalize_address(direct)),
             explicit_status or "ready",
         )
     if not destination_id:
-        if explicit_status in {"ready", "not_issuing"}:
+        if explicit_status in {"ready", "not_issuing", "redistributed"}:
             raise ValueError(
                 f"{explicit_status} destination has no address or id"
             )
         return "", "", "hold"
     if destination_id not in destinations:
-        if explicit_status in {"ready", "not_issuing"}:
+        if explicit_status in {"ready", "not_issuing", "redistributed"}:
             raise ValueError(
                 f"{explicit_status} destination id is undefined: "
                 f"{destination_id}"
@@ -413,6 +465,14 @@ def resolve_destination(row, destinations):
     ):
         raise ValueError(
             "explicit not_issuing status requires the not-issuing destination"
+        )
+    if (
+        explicit_status == "redistributed"
+        and destination["status"] != "redistributed"
+    ):
+        raise ValueError(
+            "explicit redistributed status requires the WONE redistribution "
+            "destination"
         )
     status = (
         "hold"
@@ -915,9 +975,9 @@ def main():
             destination_id, destination, status = resolve_destination(
                 row, destinations
             )
-            if status == "not_issuing":
+            if status in {"not_issuing", "redistributed"}:
                 raise ValueError(
-                    "not-issuing is not a validator-governor destination"
+                    f"{status} is not a validator-governor destination"
                 )
             governor_overrides[validator] = {
                 "destination_id": destination_id,
@@ -1028,6 +1088,7 @@ def main():
     )
 
     source_wallet = sum(claim["wallet"] for claim in claims.values())
+    source_wone = sum(claim["wone"] for claim in claims.values())
     source_staked = sum(claim["staked"] for claim in claims.values())
     routed_wallet = sum(
         int(row["wallet_airdrop_atto"]) for row in wallet_rows
@@ -1072,6 +1133,48 @@ def main():
         if row["component"] == "vault_shares"
         and row["destination_status"] == "not_issuing"
     )
+    redistributed_wallet = sum(
+        int(row["amount_atto"])
+        for row in routing_exceptions
+        if row["component"] == "wallet_airdrop"
+        and row["destination_status"] == "redistributed"
+    )
+    redistributed_staked = sum(
+        int(row["amount_atto"])
+        for row in routing_exceptions
+        if row["component"] == "vault_shares"
+        and row["destination_status"] == "redistributed"
+    )
+    wone_retained_not_issued = sum(
+        int(row["amount_atto"])
+        for row in routing_exceptions
+        if row["route_id"] == "wone-reserve-remainder-not-issued"
+        and row["destination_status"] == "not_issuing"
+    )
+    wone_recipient_not_issued = sorted(
+        {
+            lib.any_to_hex(row["source_address"])
+            for row in routing_exceptions
+            if row["destination_status"] == "not_issuing"
+            and row["component"] == "wallet_airdrop"
+            and claims[
+                by_address[lib.any_to_hex(row["source_address"])]
+            ]["wone"]
+            > 0
+        }
+    )
+    if wone_recipient_not_issued:
+        raise ValueError(
+            "component-aware WONE non-issuance is required for: "
+            + ", ".join(wone_recipient_not_issued)
+        )
+    if redistributed_staked:
+        raise ValueError("WONE redistribution cannot consume vault shares")
+    if redistributed_wallet != source_wone:
+        raise ValueError(
+            "redistributed WONE reserve does not equal holder WONE airdrops"
+        )
+    wone_reserve_source = redistributed_wallet + wone_retained_not_issued
     result = {
         "status": (
             "ready"
@@ -1090,6 +1193,15 @@ def main():
             claim["category"] == "deferred" for claim in claims.values()
         ),
         "route_files": args.routes,
+        "route_inputs": [
+            {"path": path, "sha256": file_sha256(path)}
+            for path in args.routes
+        ],
+        "destination_files": args.destinations,
+        "destination_inputs": [
+            {"path": path, "sha256": file_sha256(path)}
+            for path in args.destinations
+        ],
         "validator_accounts": args.validator_accounts,
         "contract_review_policy_state": contract_policy_state,
         "active_routes": sum(len(rows) for rows in routes_by_key.values()),
@@ -1099,6 +1211,7 @@ def main():
         "validator_account_exceptions": len(validator_accounts),
         "governor_exception_rows": len(governor_exceptions),
         "source_wallet_airdrop_atto": str(source_wallet),
+        "source_wone_airdrop_atto": str(source_wone),
         "source_staked_to_vault_atto": str(source_staked),
         "source_total_claim_atto": str(source_wallet + source_staked),
         "routed_wallet_airdrop_atto": str(routed_wallet),
@@ -1108,17 +1221,32 @@ def main():
         "not_issued_total_claim_atto": str(
             not_issued_wallet + not_issued_staked
         ),
+        "redistributed_wallet_airdrop_atto": str(redistributed_wallet),
+        "redistributed_staked_to_vault_atto": str(redistributed_staked),
+        "redistributed_total_claim_atto": str(
+            redistributed_wallet + redistributed_staked
+        ),
+        "wone_reserve_source_atto": str(wone_reserve_source),
+        "wone_redistributed_to_holders_atto": str(
+            redistributed_wallet
+        ),
+        "wone_retained_not_issued_atto": str(
+            wone_retained_not_issued
+        ),
+        "wone_recipient_not_issued_rows": 0,
         "issuable_wallet_airdrop_atto": str(
-            source_wallet - not_issued_wallet
+            source_wallet - not_issued_wallet - redistributed_wallet
         ),
         "issuable_staked_to_vault_atto": str(
-            source_staked - not_issued_staked
+            source_staked - not_issued_staked - redistributed_staked
         ),
         "issuable_total_claim_atto": str(
             source_wallet
             + source_staked
             - not_issued_wallet
             - not_issued_staked
+            - redistributed_wallet
+            - redistributed_staked
         ),
         "exception_wallet_airdrop_atto": str(exception_wallet),
         "exception_staked_to_vault_atto": str(exception_staked),

@@ -92,6 +92,9 @@ class ContractTreasuryRoutesTest(unittest.TestCase):
             self.assertTrue(
                 all(row["amount_atto"] == "ALL" for row in output_rows)
             )
+            self.assertTrue(
+                all(row["evidence"] == str(source) for row in output_rows)
+            )
             result = json.loads(summary.read_text())
             self.assertEqual(result["validator_rows_skipped"], 1)
             self.assertEqual(result["multisig_rows_skipped"], 1)

@@ -47,7 +47,7 @@ def resolved_policy_decisions():
             "contract-recovery-custody",
             "layerzero-nativeoft-reconciliation",
             "rollback-exploit-proceeds",
-            "wone-reserve-custody",
+            "wone-holder-redistribution",
         )
     ]
 
@@ -69,6 +69,7 @@ class ExplicitRoutingTest(unittest.TestCase):
                 "secure_key",
                 "address",
                 "liquid_shard0_atto",
+                "wone_airdrop_atto",
                 "wallet_airdrop_atto",
                 "staked_to_vault_atto",
                 "total_claim_atto",
@@ -76,11 +77,18 @@ class ExplicitRoutingTest(unittest.TestCase):
                 "code_hash_shard1",
             )
 
-            def claim(index, wallet, staked, code_bearing=False):
+            def claim(
+                index,
+                wallet,
+                staked,
+                code_bearing=False,
+                wone=0,
+            ):
                 return {
                     "secure_key": secure_key(index),
                     "address": address(index),
                     "liquid_shard0_atto": str(wallet),
+                    "wone_airdrop_atto": str(wone),
                     "wallet_airdrop_atto": str(wallet),
                     "staked_to_vault_atto": str(staked),
                     "total_claim_atto": str(wallet + staked),
@@ -103,6 +111,7 @@ class ExplicitRoutingTest(unittest.TestCase):
                 claim(3, 80, 0),
                 claim(4, 10, 20),
                 claim(5, 30, 20, code_bearing=True),
+                claim(6, 20, 0, wone=20),
             )
             write_csv(all_claims, claim_fields, claim_rows)
             write_csv(
@@ -217,6 +226,12 @@ class ExplicitRoutingTest(unittest.TestCase):
                         "status": "not_issuing",
                         "notes": "",
                     },
+                    {
+                        "destination_id": "wone-holder-redistribution",
+                        "destination_address": "",
+                        "status": "redistributed",
+                        "notes": "",
+                    },
                 ],
             )
             routes = root / "routes.csv"
@@ -239,6 +254,18 @@ class ExplicitRoutingTest(unittest.TestCase):
                 routes,
                 route_fields,
                 [
+                    {
+                        "route_id": "wone-redistribution",
+                        "priority": "50",
+                        "source_address": f"0x{6:040x}",
+                        "destination_id": "wone-holder-redistribution",
+                        "destination_address": "",
+                        "amount_atto": "20",
+                        "allocation_method": "wallet_only",
+                        "reason": "test",
+                        "evidence": "",
+                        "notes": "",
+                    },
                     {
                         "route_id": "partial-treasury",
                         "priority": "100",
@@ -389,13 +416,15 @@ class ExplicitRoutingTest(unittest.TestCase):
             )
             result = json.loads(summary.read_text())
             self.assertEqual(result["status"], "hold")
-            self.assertEqual(result["source_wallet_airdrop_atto"], "270")
+            self.assertEqual(result["source_wallet_airdrop_atto"], "290")
+            self.assertEqual(result["source_wone_airdrop_atto"], "20")
             self.assertEqual(result["source_staked_to_vault_atto"], "190")
             self.assertEqual(result["unresolved_wallet_airdrop_atto"], "110")
             self.assertEqual(result["unresolved_staked_to_vault_atto"], "70")
             self.assertEqual(result["not_issued_wallet_airdrop_atto"], "80")
             self.assertEqual(result["not_issued_staked_to_vault_atto"], "0")
             self.assertEqual(result["not_issued_total_claim_atto"], "80")
+            self.assertEqual(result["redistributed_total_claim_atto"], "20")
             self.assertEqual(result["issuable_total_claim_atto"], "380")
             with exceptions.open(newline="") as handle:
                 rows = list(csv.DictReader(handle))
@@ -417,6 +446,16 @@ class ExplicitRoutingTest(unittest.TestCase):
                     for row in rows
                 )
             )
+            redistributed = [
+                row
+                for row in rows
+                if row["route_id"] == "wone-redistribution"
+            ]
+            self.assertEqual(len(redistributed), 1)
+            self.assertEqual(
+                redistributed[0]["destination_status"],
+                "redistributed",
+            )
             non_issued = [
                 row
                 for row in rows
@@ -428,6 +467,12 @@ class ExplicitRoutingTest(unittest.TestCase):
             )
             with unresolved.open(newline="") as handle:
                 unresolved_rows = list(csv.DictReader(handle))
+            self.assertFalse(
+                any(
+                    row["route_id"] == "wone-redistribution"
+                    for row in unresolved_rows
+                )
+            )
             self.assertFalse(
                 any(
                     row["route_id"] == "excluded-not-issuing"
@@ -555,26 +600,31 @@ class PolicyDecisionGateTest(unittest.TestCase):
                     "layerzero-nativeoft-reconciliation",
                 ],
             )
-            with (root / "bridge-reserves.csv").open(newline="") as source:
+            with (root / "bridge-reserves.base.csv").open(
+                newline=""
+            ) as source:
                 reserve_route_ids = {
                     row["route_id"] for row in csv.DictReader(source)
                 }
             self.assertEqual(
                 reserve_route_ids,
                 {
-                    "wone-reserve-custody",
                     "layerzero-nativeoft-bsc-custody",
                     "layerzero-nativeoft-ethereum-custody",
                 },
             )
             with (root / "destinations.csv").open(newline="") as source:
-                destination_ids = {
-                    row["destination_id"] for row in csv.DictReader(source)
+                destinations = {
+                    row["destination_id"]: row
+                    for row in csv.DictReader(source)
                 }
-            self.assertIn("wone-reserve-custody", destination_ids)
-            self.assertIn("layerzero-nativeoft-custody", destination_ids)
-            self.assertIn("contract-recovery-custody", destination_ids)
-            self.assertIn("not-issuing", destination_ids)
+            self.assertEqual(
+                destinations["wone-holder-redistribution"]["status"],
+                "redistributed",
+            )
+            self.assertIn("layerzero-nativeoft-custody", destinations)
+            self.assertIn("contract-recovery-custody", destinations)
+            self.assertIn("not-issuing", destinations)
 
 
 if __name__ == "__main__":
