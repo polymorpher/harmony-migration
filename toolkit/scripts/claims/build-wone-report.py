@@ -3,8 +3,11 @@
 """Render the WONE qualification, airdrop, and source-routing report."""
 
 import argparse
+import csv
+import hashlib
 import json
 import os
+from pathlib import Path
 
 
 ATTO_PER_ONE = 10**18
@@ -32,6 +35,58 @@ def load(path):
 def one(value):
     whole, fraction = divmod(int(value), ATTO_PER_ONE)
     return f"{whole:,}.{fraction:018d}"
+
+
+def sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def load_policy_addresses(summary, label, summary_path=None):
+    categories = {}
+    union = set()
+    for category in ("automatic", "contract_review", "excluded_address"):
+        record = summary["categories"][category]
+        recorded_path = Path(record["output"])
+        candidates = [recorded_path]
+        if summary_path is not None:
+            candidates.append(
+                Path(summary_path).resolve().parent / recorded_path.name
+            )
+        path = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.is_file()
+                and (
+                    not record.get("output_sha256")
+                    or sha256(candidate) == record["output_sha256"]
+                )
+            ),
+            None,
+        )
+        if path is None:
+            raise ValueError(
+                f"{label} {category} output does not match its recorded hash"
+            )
+        addresses = set()
+        with open(path, newline="") as source:
+            reader = csv.DictReader(source)
+            if "address" not in set(reader.fieldnames or ()):
+                raise ValueError(f"{label} {category} output has no address")
+            for line, row in enumerate(reader, start=2):
+                address = row["address"].lower()
+                if address in addresses:
+                    raise ValueError(
+                        f"{label} {category} output line {line}: duplicate"
+                    )
+                addresses.add(address)
+        if len(addresses) != int(summary["categories"][category]["rows"]):
+            raise ValueError(f"{label} {category} row count mismatch")
+        if union & addresses:
+            raise ValueError(f"{label} policy categories overlap")
+        union.update(addresses)
+        categories[category] = addresses
+    return categories, union
 
 
 def main():
@@ -95,25 +150,31 @@ def main():
     ):
         raise ValueError("verification used a different WONE reserve split")
 
-    current_categories = policy["categories"]
-    prior_categories = prior_policy["categories"]
-    automatic_delta = (
-        current_categories["automatic"]["rows"]
-        - prior_categories["automatic"]["rows"]
+    current_categories, current_addresses = load_policy_addresses(
+        policy, "current", args.policy_summary
     )
-    contract_delta = (
-        current_categories["contract_review"]["rows"]
-        - prior_categories["contract_review"]["rows"]
+    prior_categories, prior_addresses = load_policy_addresses(
+        prior_policy, "prior", args.prior_policy_summary
     )
-    excluded_delta = (
-        current_categories["excluded_address"]["rows"]
-        - prior_categories["excluded_address"]["rows"]
-    )
-    if (
-        automatic_delta + contract_delta + excluded_delta
-        != int(overlay["newly_qualified_rows"])
-    ):
-        raise ValueError("new qualification category deltas do not close")
+    removed = prior_addresses - current_addresses
+    if removed:
+        raise ValueError("current threshold set removed prior qualifiers")
+    newcomers = current_addresses - prior_addresses
+    if len(newcomers) != int(overlay["newly_qualified_rows"]):
+        raise ValueError("new qualification address set does not close")
+    newcomer_counts = {
+        category: len(newcomers & addresses)
+        for category, addresses in current_categories.items()
+    }
+    reclassified = {
+        address
+        for address in prior_addresses & current_addresses
+        if any(
+            (address in prior_categories[category])
+            != (address in current_categories[category])
+            for category in current_categories
+        )
+    }
 
     text = f"""# WONE holder qualification and migration routing
 
@@ -137,11 +198,15 @@ Prepared from cutoff-pinned archival-node data.
 - Reserve remainder retained as not issued:
   **{one(retained)} ONE**.
 
-The newly qualified rows split into:
+An address-set join, rather than a category-total delta, shows that the newly
+qualified rows split into:
 
-- `{automatic_delta:,}` ordinary automatic same-address rows;
-- `{contract_delta:,}` code-bearing contract-recovery rows;
-- `{excluded_delta:,}` excluded-address rows.
+- `{newcomer_counts["automatic"]:,}` automatic-policy rows;
+- `{newcomer_counts["contract_review"]:,}` contract-review rows;
+- `{newcomer_counts["excluded_address"]:,}` excluded-address rows.
+
+Separately, `{len(reclassified):,}` existing qualifiers changed policy category.
+They are not WONE-created eligibility.
 
 ## Classification
 
@@ -164,14 +229,15 @@ WONE native reserve
 `redistributed` is a terminal source offset, not a destination and not another
 issuance. It exactly cancels the WONE amount added to qualified-holder wallet
 rows. The retained remainder receives no replacement asset in the current
-migration and remains in the Year 2025 Supply Reserve.
+migration and remains in the 2050 premint reserve.
 
 The WONE contract's own balance is excluded from recipient delivery as a
 circular, code-controlled system balance. Together with selected inaccessible
 addresses, excluded WONE totals `{one(excluded_wone)} WONE`. The two Harmony
 LayerZero NativeOFT contracts hold native ONE directly and had no WONE balance
 to exclude. Same-address shard-1 ONE at the WONE address is not backing and
-continues through ordinary contract-recovery routing.
+is included in reviewed-contract non-issuance; it is not subtracted as backing
+a second time.
 
 ## Claim fields
 
@@ -200,14 +266,16 @@ retained reserve.
 
 - WONE redistributed source:
   `{one(routing["redistributed_total_claim_atto"])} ONE`.
-- Total not issued, including reviewed incidents and the retained WONE
+- Compiled not issued, including reviewed incidents, reviewed contracts, and
+  the retained WONE
   remainder: `{one(routing["not_issued_total_claim_atto"])} ONE`.
-- Remaining issuable amount after routing:
-  `{one(routing["issuable_total_claim_atto"])} ONE`.
 - Routing status: `{routing["status"]}`.
 
 The routing remains held for unrelated unresolved destinations and policy
-decisions; the WONE arithmetic itself is fully reconciled.
+decisions, plus explicitly routed below-threshold claims whose stage remains
+under review; the WONE arithmetic itself is fully reconciled. WONE held by a
+reviewed excluded contract is part of that contract's non-issuance and is not
+subtracted from source backing a second time.
 
 ## Evidence
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Split verified migration entitlements into destination categories."""
+"""Classify threshold rows by account/routing category, not migration stage."""
 
 import argparse
 import csv
@@ -360,6 +360,10 @@ def main():
             }
 
         result = {
+            "semantics": (
+                "snapshot-threshold account and routing classification only; "
+                "migration stage is assigned separately"
+            ),
             "input": args.input,
             "input_sha256": file_sha256(args.input),
             "input_rows": input_rows,

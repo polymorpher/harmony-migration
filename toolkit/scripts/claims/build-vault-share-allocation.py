@@ -434,6 +434,10 @@ def main():
                 f"{category} direct wallet-airdrop total mismatch"
             )
     result = {
+        "priority_label_semantics": (
+            "legacy name for the inclusive snapshot-threshold base set; "
+            "not the six-month initial migration stage"
+        ),
         "minimum_atto": str(args.minimum_one),
         "all_claims_sha256": file_sha256(args.all_claims),
         "delegations_sha256": file_sha256(args.delegations),
@@ -476,7 +480,7 @@ def main():
                 "path": args.automatic_wallet_output,
                 "sha256": file_sha256(args.automatic_wallet_output),
             },
-            "contract_wallet_recovery": {
+            "contract_wallet_base": {
                 "path": args.contract_wallet_output,
                 "sha256": file_sha256(args.contract_wallet_output),
             },

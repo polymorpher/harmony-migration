@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Summarize cutoff claim value by latest indexed account activity."""
+"""Summarize raw snapshot-qualified value by latest indexed activity."""
 
 import argparse
 import calendar
@@ -172,6 +172,7 @@ def summarize(path, cutoff, months):
         required = {
             "secure_key",
             "address",
+            "qualification_total_atto",
             "total_claim_atto",
             "wallet_airdrop_atto",
             "staked_to_vault_atto",
@@ -198,9 +199,10 @@ def summarize(path, cutoff, months):
                 row["address"], key, f"input line {line}"
             )
             total_claim = int(row["total_claim_atto"])
-            if total_claim < 1000 * ATTO_PER_ONE:
+            qualification_total = int(row["qualification_total_atto"])
+            if qualification_total < 1000 * ATTO_PER_ONE:
                 raise ValueError(
-                    f"input line {line}: claim is below 1,000 ONE"
+                    f"input line {line}: qualification is below 1,000 ONE"
                 )
             if (
                 int(row["wallet_airdrop_atto"])
@@ -211,7 +213,7 @@ def summarize(path, cutoff, months):
                     f"input line {line}: delivery components do not close"
                 )
             exact_threshold_rows += int(
-                total_claim == 1000 * ATTO_PER_ONE
+                qualification_total == 1000 * ATTO_PER_ONE
             )
             candidates += 1
             add_row(all_totals, row)
@@ -358,9 +360,11 @@ def render_report(summary):
                 f"`{bucket['activity_not_found']:,}` without)."
             )
     provenance_text = "\n".join(provenance_lines)
-    return f"""# Prioritized-claim account activity
+    return f"""# All-address snapshot-qualified activity context
 
-Generated from the inclusive `>= 1,000 ONE` cutoff candidate ledger.
+Generated from the inclusive `>= 1,000 ONE` cutoff candidate ledger before
+migration-stage and non-issuance policy. This population includes genuine
+contracts and must not be labeled as the initial migration population.
 
 ## Definition
 
@@ -386,14 +390,14 @@ contract address.
 Calendar-month windows are measured backwards from the cutoff. They are
 cumulative: an account in the 3-month row is also in every longer row.
 
-## Cumulative claim value by recent activity
+## Cumulative raw allocation value by recent activity
 
 {markdown_table(
     (
         "Last indexed activity",
         "On or after (UTC)",
         "Accounts",
-        "Total claim ONE",
+        "Raw allocation ONE",
         "WONE airdrop ONE",
         "Share of all candidate claims",
     ),
@@ -428,8 +432,10 @@ cumulative: an account in the 3-month row is also in every longer row.
 - Snapshot manifest SHA-256:
   `{summary["snapshot_manifest_sha256"]}`
 
-These activity fields and aggregates are context only. They do not change
-claim amounts, eligibility, or routing.
+These raw all-address aggregates are context only. Initial-stage wallet
+reporting is generated separately by `build-migration-stage-policy.py`, which
+removes genuine contracts from every activity row and applies reviewed
+non-issuance without retesting the snapshot threshold.
 """
 
 

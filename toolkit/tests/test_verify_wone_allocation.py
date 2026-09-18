@@ -199,6 +199,17 @@ def exception_row(
         "source_address": source_address,
         "source_category": "contract_review",
         "source_code_bearing": "true",
+        "migration_stage": (
+            "" if destination_status in {"redistributed", "not_issuing"}
+            else "next_stage"
+        ),
+        "issuance_treatment": (
+            "redistributed"
+            if destination_status == "redistributed"
+            else "not_issued"
+            if destination_status == "not_issuing"
+            else "issue"
+        ),
         "validator_secure_key": "",
         "validator_address": "",
         "amount_atto": str(amount),
@@ -638,11 +649,11 @@ class AllocationFixture:
             exception_row(
                 VERIFY.WONE_ADDRESS,
                 7 * SCALE,
-                "contract-custody-" + VERIFY.WONE_ADDRESS[2:],
+                "contract-policy-other-" + VERIFY.WONE_ADDRESS[2:],
                 500,
-                "contract-recovery-custody",
-                "hold",
-                "non_multisig_contract_recovery_custody",
+                "not-issuing",
+                "not_issuing",
+                "reviewed_contract_allocation_not_issued",
             ),
             exception_row(
                 self.addresses["layerzero_bsc"],
@@ -688,7 +699,13 @@ class AllocationFixture:
             int(row["amount_atto"]) for row in exception_rows
         )
         implicit_wallet = wallet - exception_wallet
-        issuable_wallet = wallet - retained - redistributed
+        reviewed_contract_non_issuance = 7 * SCALE
+        issuable_wallet = (
+            wallet
+            - retained
+            - redistributed
+            - reviewed_contract_non_issuance
+        )
         issuable_staked = staked
         write_json(
             self.paths["routing_summary"],
@@ -711,9 +728,13 @@ class AllocationFixture:
                 "exception_staked_to_vault_atto": "0",
                 "implicit_wallet_airdrop_atto": str(implicit_wallet),
                 "implicit_staked_to_vault_atto": str(staked),
-                "not_issued_wallet_airdrop_atto": str(retained),
+                "not_issued_wallet_airdrop_atto": str(
+                    retained + reviewed_contract_non_issuance
+                ),
                 "not_issued_staked_to_vault_atto": "0",
-                "not_issued_total_claim_atto": str(retained),
+                "not_issued_total_claim_atto": str(
+                    retained + reviewed_contract_non_issuance
+                ),
                 "redistributed_wallet_airdrop_atto": str(redistributed),
                 "redistributed_staked_to_vault_atto": "0",
                 "redistributed_total_claim_atto": str(redistributed),

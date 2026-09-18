@@ -579,7 +579,7 @@ def main():
         "policy": (
             "WONE is added only for addresses in the current inclusive "
             "1,000 ONE batch; the matching reserve is redistributed and "
-            "the remainder is retained in the Year 2025 Supply Reserve"
+            "the remainder is retained in the 2050 premint reserve"
         ),
         "minimum_atto": str(args.minimum_one),
         "native_claims": args.native_claims,

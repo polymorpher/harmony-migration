@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Independently verify total-claim and destination-category splits."""
+"""Verify threshold account/routing categories, not migration stage."""
 
 import argparse
 import csv
@@ -366,6 +366,10 @@ def main():
 
     result = {
         "status": "passed",
+        "semantics": (
+            "snapshot-threshold account and routing classification only; "
+            "migration stage is verified separately"
+        ),
         "input_sha256": file_sha256(args.input),
         "threshold_rows": len(expected_keys),
         "exact_threshold_rows": exact,

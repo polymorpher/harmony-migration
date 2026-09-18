@@ -133,7 +133,7 @@ shares.
 
 {table(("Component", "ONE"), rows)}
 
-## Prioritized destination categories
+## Snapshot-threshold base categories
 
 {table(("Category", "Rows", "Wallet airdrop ONE", "WONE airdrop ONE", "Staked to vault ONE", "Total claim ONE"), category_rows)}
 
@@ -170,9 +170,12 @@ This metadata pass verifies every row in the current prioritized batch. The
 separate metadata-complete all-address ledger retains cutoff code state for
 native claims below the threshold.
 
-## Explicit routing status
+## Explicit routing and stage status
 
-- status: `{routing["status"]}`
+- conservative all-stage status: `{routing["status"]}`
+- initial-stage status: `{routing["initial_stage_status"]}`
+- initial-stage blockers:
+  `{", ".join(routing["stage_readiness"]["initial"]["blockers"]) or "none"}`
 - prioritized claims checked: `{routing["priority_claims"]}`
 - explicitly routed deferred claims:
   `{routing["explicitly_routed_deferred_claims"]}`
@@ -197,30 +200,40 @@ native claims below the threshold.
   `{one(routing["wone_retained_not_issued_atto"])} ONE`
 - total source amount classified as redistributed:
   `{one(routing["redistributed_total_claim_atto"])} ONE`
-- total remaining issuable amount:
+- all-stage nonterminal amount represented by this routing compilation:
   `{one(routing["issuable_total_claim_atto"])} ONE`
+- initial-stage allocation:
+  `{one(routing["stage_totals"]["initial"]["total_claim_atto"])} ONE`
+- next-stage allocation:
+  `{one(routing["stage_totals"]["next_stage"]["total_claim_atto"])} ONE`
+- qualified deferred-wallet allocation:
+  `{one(routing["stage_totals"]["deferred"]["total_claim_atto"])} ONE`
+- explicitly routed below-threshold claims pending stage review:
+  `{routing["pending_stage_review_claims"]}` rows,
+  `{one(routing["stage_totals"]["manual_review"]["total_claim_atto"])} ONE`
 - unresolved validator governors: `{routing["unresolved_governors"]}`
 - pending policy decisions:
   `{", ".join(routing["pending_policy_decisions"]) or "none"}`
 
 Ordinary code-less EOAs use the implicit same-address rule and are deliberately
-absent from the sparse exception output. The routing result remains on hold
-until every required exception destination and validator governor is supplied
-and every policy gate is resolved.
+absent from the sparse exception output. The global result remains a
+conservative all-stage hold. Each stage has separate held destination,
+validator-governor, and policy-gate totals; a later-stage hold does not by
+itself change initial-stage readiness.
 
 `redistributed` is a terminal source offset paired exactly with WONE already
 added to qualified-holder wallet rows. It is not itself another destination or
 issuance. `not_issuing` is also terminal, but unlike redistribution those exact
-amounts receive no token and remain in the Year 2025 Supply Reserve. A
+amounts receive no token and remain in the 2050 premint reserve. A
 not-issued staked row also removes the corresponding vault deposit assets and
 shares. Existing partial-row remainders continue to their ordinary destinations.
 
-Ordinary non-multisig contract claims go to `contract-recovery-custody`: one
-Safe or multisig that holds those funds until a verified claimant is paid. It
-is separate from the general treasury. The builder that writes those rows
-cannot send them to `treasury`. WONE and LayerZero reserves use their own
-treatments: WONE uses exact redistribution and retained non-issuance source
-routes, while LayerZero remains a separate custody hold.
+Migration stage is separate from destination status. Reviewed multisig,
+LayerZero, and 1wallet allocations are held for the next stage; a verified
+destination is still required. SmartVault and all other reviewed genuine
+contracts are terminal `not_issuing`. WONE uses exact redistribution and
+retained non-issuance source routes, and its non-backing shard-1 remainder is
+included in reviewed-contract non-issuance.
 
 ## Outputs
 
@@ -238,18 +251,22 @@ routes, while LayerZero remains a separate custody hold.
   `{vault_allocation["outputs"]["deferred_shares"]["path"]}`
 - intermediate automatic wallet amount:
   `{vault_allocation["outputs"]["automatic_wallet_airdrop"]["path"]}`
-- intermediate contract wallet amount:
-  `{vault_allocation["outputs"]["contract_wallet_recovery"]["path"]}`
+- intermediate contract wallet base amount:
+  `{vault_allocation["outputs"]["contract_wallet_base"]["path"]}`
 - intermediate excluded wallet amount:
   `{vault_allocation["outputs"]["excluded_wallet_routing"]["path"]}`
 - base destination categories:
   `{policy["categories"]["automatic"]["output"]}`,
   `{policy["categories"]["contract_review"]["output"]}`, and
   `{policy["categories"]["excluded_address"]["output"]}`
+- migration-stage policy:
+  `{routing["migration_stages"]}`
 - sparse wallet and vault-share exceptions:
   `{routing["outputs"]["routing_exceptions"]["path"]}`
 - sparse validator-governor exceptions:
   `{routing["outputs"]["governor_exceptions"]["path"]}`
+- complete validator-vault stage partition:
+  `{routing["outputs"]["vault_stages"]["path"]}`
 - unresolved route list:
   `{routing["outputs"]["unresolved"]["path"]}`
 

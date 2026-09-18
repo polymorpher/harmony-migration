@@ -114,6 +114,7 @@ class ClaimActivityTest(unittest.TestCase):
             zip(times, amounts), start=1
         ):
             address = f"0x{index:040x}"
+            allocation = 900 if index == 1 else amount
             secure_key = (
                 "0x"
                 + self.summarize.lib.keccak256(
@@ -126,10 +127,11 @@ class ClaimActivityTest(unittest.TestCase):
                     "secure_key": secure_key,
                     "address": address,
                     "wallet_airdrop_atto": str(
-                        amount * 10**18
+                        allocation * 10**18
                     ),
                     "staked_to_vault_atto": "0",
-                    "total_claim_atto": str(amount * 10**18),
+                    "qualification_total_atto": str(amount * 10**18),
+                    "total_claim_atto": str(allocation * 10**18),
                     "last_activity_time_utc": (
                         self.summarize.format_utc(activity)
                         if activity
@@ -172,7 +174,7 @@ class ClaimActivityTest(unittest.TestCase):
         )
         self.assertEqual(
             result["windows"][2]["total_claim_atto"],
-            str(3000 * 10**18),
+            str(2900 * 10**18),
         )
         self.assertEqual(
             result["before_longest_window"]["accounts"], 1

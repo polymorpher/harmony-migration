@@ -125,6 +125,8 @@ ROUTING_EXCEPTION_FIELDS = (
     "source_address",
     "source_category",
     "source_code_bearing",
+    "migration_stage",
+    "issuance_treatment",
     "validator_secure_key",
     "validator_address",
     "amount_atto",
@@ -1593,6 +1595,29 @@ def verify_routing_exceptions(
                 raise ValueError(f"{context}: amount must be positive")
             if row["component"] not in {"wallet_airdrop", "vault_shares"}:
                 raise ValueError(f"{context}: invalid component")
+            expected_treatment = {
+                "ready": "issue",
+                "hold": "issue",
+                "not_issuing": "not_issued",
+                "redistributed": "redistributed",
+            }.get(row["destination_status"])
+            if row["issuance_treatment"] != expected_treatment:
+                raise ValueError(f"{context}: issuance treatment mismatch")
+            if row["issuance_treatment"] == "issue":
+                if row["migration_stage"] not in {
+                    "initial",
+                    "next_stage",
+                    "deferred",
+                    "manual_review",
+                }:
+                    raise ValueError(f"{context}: issued row has no stage")
+            elif row["migration_stage"] and row["migration_stage"] not in {
+                "initial",
+                "next_stage",
+                "deferred",
+                "manual_review",
+            }:
+                raise ValueError(f"{context}: invalid associated stage")
             canonical_uint(
                 row["route_priority"], f"{context}.route_priority"
             )
@@ -1671,6 +1696,8 @@ def verify_routing_exceptions(
             "destination_id": "wone-holder-redistribution",
             "destination_address": "",
             "destination_status": "redistributed",
+            "migration_stage": "",
+            "issuance_treatment": "redistributed",
             "reason": "wone_priority_holder_redistribution",
         },
         "WONE redistribution exception",
@@ -1685,6 +1712,8 @@ def verify_routing_exceptions(
             "destination_id": "not-issuing",
             "destination_address": "",
             "destination_status": "not_issuing",
+            "migration_stage": "",
+            "issuance_treatment": "not_issued",
             "reason": "wone_reserve_remainder_retained_not_issued",
         },
         "WONE retained exception",
@@ -1702,11 +1731,13 @@ def verify_routing_exceptions(
             {
                 "component": "wallet_airdrop",
                 "source_secure_key": wone["key"],
-                "destination_id": "contract-recovery-custody",
-                "destination_status": "hold",
-                "reason": "non_multisig_contract_recovery_custody",
+                "destination_id": "not-issuing",
+                "destination_status": "not_issuing",
+                "migration_stage": "",
+                "issuance_treatment": "not_issued",
+                "reason": "reviewed_contract_allocation_not_issued",
             },
-            "WONE residual exception",
+            "WONE reviewed-contract residual exception",
         )
         if canonical_uint(
             row["route_priority"], "WONE residual route priority"
@@ -1719,7 +1750,8 @@ def verify_routing_exceptions(
         )
     if residual_total != non_backing_residual:
         raise ValueError(
-            "WONE non-backing residual is not exactly held for contract recovery"
+            "WONE non-backing residual is not exactly excluded by reviewed "
+            "contract policy"
         )
     if sum(canonical_uint(row["amount_atto"], "WONE exception") for row in wone_rows) != (
         wone["native_wallet"]
@@ -1751,6 +1783,8 @@ def verify_routing_exceptions(
                 "destination_id": "layerzero-nativeoft-custody",
                 "destination_address": "",
                 "destination_status": "hold",
+                "migration_stage": "next_stage",
+                "issuance_treatment": "issue",
                 "reason": "layerzero_nativeoft_reconciliation_hold",
             },
             f"LayerZero exception {route_id}",
@@ -1765,9 +1799,11 @@ def verify_routing_exceptions(
                 {
                     "component": "wallet_airdrop",
                     "source_secure_key": claim["key"],
-                    "destination_id": "contract-recovery-custody",
+                    "destination_id": "layerzero-nativeoft-custody",
                     "destination_status": "hold",
-                    "reason": "non_multisig_contract_recovery_custody",
+                    "migration_stage": "next_stage",
+                    "issuance_treatment": "issue",
+                    "reason": "layerzero_nativeoft_reconciliation_hold",
                 },
                 f"LayerZero residual exception {address}",
             )
@@ -1782,13 +1818,13 @@ def verify_routing_exceptions(
         layerzero_metrics[address] = {
             "liquid_shard0_atto": str(claim["liquid_shard0"]),
             "liquid_shard1_atto": str(claim["liquid_shard1"]),
-            "contract_recovery_residual_atto": str(remainder_total),
+            "next_stage_residual_atto": str(remainder_total),
         }
     totals["wone_recipient_not_issued_rows"] = len(
         recipient_not_issued
     )
     totals["wone_non_backing_residual"] = non_backing_residual
-    totals["wone_contract_recovery"] = residual_total
+    totals["wone_reviewed_contract_non_issuance"] = residual_total
     totals["layerzero"] = layerzero_metrics
     return totals
 
@@ -1967,8 +2003,6 @@ def validate_routing_summary(
         exception_metrics["wone_recipient_not_issued_rows"],
         context,
     )
-    if exception_metrics["wone_recipient_not_issued_rows"] != 0:
-        raise ValueError(f"{context}: qualified WONE recipient is not issued")
     expect_count(
         summary, "priority_claims", metrics["qualified_rows"], context
     )
@@ -2211,8 +2245,8 @@ def verify(args):
             "wone_non_backing_residual_atto": str(
                 exception_metrics["wone_non_backing_residual"]
             ),
-            "wone_contract_recovery_atto": str(
-                exception_metrics["wone_contract_recovery"]
+            "wone_reviewed_contract_non_issuance_atto": str(
+                exception_metrics["wone_reviewed_contract_non_issuance"]
             ),
             "layerzero": exception_metrics["layerzero"],
         },
