@@ -14,11 +14,13 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--claims-summary", required=True)
     parser.add_argument("--all-metadata-summary", required=True)
+    parser.add_argument("--all-metadata-ledger")
     parser.add_argument("--vault-rpc-summary", required=True)
     parser.add_argument("--vault-allocation-summary", required=True)
     parser.add_argument("--policy-summary", required=True)
     parser.add_argument("--routing-summary", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--replace", action="store_true")
     return parser.parse_args()
 
 
@@ -30,6 +32,10 @@ def load(path):
 def one(value):
     whole, fraction = divmod(int(value), ATTO_PER_ONE)
     return f"{whole:,}.{fraction:018d}"
+
+
+def display_path(value):
+    return os.path.relpath(value) if os.path.isabs(value) else value
 
 
 def table(headers, rows):
@@ -46,7 +52,9 @@ def table(headers, rows):
 
 def main():
     args = parse_args()
-    if os.path.exists(args.output) or os.path.exists(args.output + ".partial"):
+    if os.path.exists(args.output + ".partial"):
+        raise FileExistsError(args.output)
+    if os.path.exists(args.output) and not args.replace:
         raise FileExistsError(args.output)
     parent = os.path.dirname(args.output)
     if parent:
@@ -60,6 +68,14 @@ def main():
     components = claims["component_totals_atto"]
 
     rows = [
+        (
+            "Native direct wallet claim",
+            one(components["native_wallet_airdrop"]),
+        ),
+        (
+            "Qualified-holder WONE airdrop",
+            one(components["wone_airdrop"]),
+        ),
         ("Direct wallet airdrop", one(components["wallet_airdrop"])),
         (
             "Staked amount moved to validator vaults",
@@ -75,6 +91,7 @@ def main():
                 category,
                 values["rows"],
                 one(values["wallet"]),
+                one(values.get("wone", 0)),
                 one(values["staked"]),
                 one(values["total_claim"]),
             )
@@ -93,17 +110,21 @@ must be split without changing the total.
 The claim is delivered in two places:
 
 ```text
-wallet_airdrop
+native_wallet_airdrop
 = liquid_shard0 + liquid_shard1
 + pending_undelegation + unclaimed_staking_reward
 + pending_cross_shard
+
+wallet_airdrop
+= native_wallet_airdrop + qualified_wone_airdrop
 
 staked_to_vault = active_staked_or_delegated
 
 total_claim = wallet_airdrop + staked_to_vault
 ```
 
-`total_claim` determines whether the account is in the prioritized batch.
+`native_total_claim + WONE balance` determines whether the account is in the
+prioritized batch.
 `wallet_airdrop` is the direct ERC-20 ONE delivery. `staked_to_vault` is
 deposited into the corresponding validator's ERC-4626 vault and represented by
 shares.
@@ -114,7 +135,7 @@ shares.
 
 ## Prioritized destination categories
 
-{table(("Category", "Rows", "Wallet airdrop ONE", "Staked to vault ONE", "Total claim ONE"), category_rows)}
+{table(("Category", "Rows", "Wallet airdrop ONE", "WONE airdrop ONE", "Staked to vault ONE", "Total claim ONE"), category_rows)}
 
 ## Validator-vault evidence
 
@@ -145,8 +166,9 @@ stake/delegation total exactly.
 - code-bearing accounts among those rows:
   `{all_metadata["code_bearing_among_queried"]}`
 
-This metadata pass covers the current prioritized batch and all deferred
-below-threshold claims.
+This metadata pass verifies every row in the current prioritized batch. The
+separate metadata-complete all-address ledger retains cutoff code state for
+native claims below the threshold.
 
 ## Explicit routing status
 
@@ -169,6 +191,12 @@ below-threshold claims.
   `{one(routing["not_issued_wallet_airdrop_atto"])} ONE`
 - not-issued staked-to-vault amount:
   `{one(routing["not_issued_staked_to_vault_atto"])} ONE`
+- WONE reserve redistributed to current qualified-holder airdrops:
+  `{one(routing["wone_redistributed_to_holders_atto"])} ONE`
+- WONE reserve remainder retained as not issued:
+  `{one(routing["wone_retained_not_issued_atto"])} ONE`
+- total source amount classified as redistributed:
+  `{one(routing["redistributed_total_claim_atto"])} ONE`
 - total remaining issuable amount:
   `{one(routing["issuable_total_claim_atto"])} ONE`
 - unresolved validator governors: `{routing["unresolved_governors"]}`
@@ -180,23 +208,26 @@ absent from the sparse exception output. The routing result remains on hold
 until every required exception destination and validator governor is supplied
 and every policy gate is resolved.
 
-`not_issuing` is a terminal result, not a hold. Those exact amounts receive no
-token. A not-issued staked row also removes the corresponding vault deposit
-assets and shares. Existing partial-row remainders continue to their ordinary
-destinations.
+`redistributed` is a terminal source offset paired exactly with WONE already
+added to qualified-holder wallet rows. It is not itself another destination or
+issuance. `not_issuing` is also terminal, but unlike redistribution those exact
+amounts receive no token and remain in the Year 2025 Supply Reserve. A
+not-issued staked row also removes the corresponding vault deposit assets and
+shares. Existing partial-row remainders continue to their ordinary destinations.
 
 Ordinary non-multisig contract claims go to `contract-recovery-custody`: one
 Safe or multisig that holds those funds until a verified claimant is paid. It
 is separate from the general treasury. The builder that writes those rows
 cannot send them to `treasury`. WONE and LayerZero reserves use their own
-holding addresses.
+treatments: WONE uses exact redistribution and retained non-issuance source
+routes, while LayerZero remains a separate custody hold.
 
 ## Outputs
 
 - all-address claim ledger:
-  `{claims["output"]}`
+  `{display_path(claims["output"])}`
 - metadata-complete all-address companion:
-  `{all_metadata["output"]}`
+  `{display_path(args.all_metadata_ledger or all_metadata["output"])}`
 - per-validator/delegator source ledger:
   `{vault_rpc["output"]}`
 - intermediate validator vault deposits:

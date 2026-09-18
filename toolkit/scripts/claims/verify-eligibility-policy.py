@@ -27,10 +27,22 @@ COMPONENTS = (
     "pending_undelegation",
     "unclaimed_staking_reward",
     "pending_cross_shard",
+    "native_wallet_airdrop",
+    "wone_balance",
+    "wone_airdrop",
     "wallet_airdrop",
     "staked_to_vault",
+    "qualification_total",
+    "native_total_claim",
     "total_claim",
 )
+OPTIONAL_COMPONENTS = {
+    "native_wallet_airdrop",
+    "wone_balance",
+    "wone_airdrop",
+    "qualification_total",
+    "native_total_claim",
+}
 
 
 def parse_args():
@@ -46,6 +58,21 @@ def parse_args():
         help=(
             "CSV containing an address column for independently verified "
             "code-bearing, key-controlled accounts; repeatable"
+        ),
+    )
+    parser.add_argument(
+        "--exclude-address",
+        action="append",
+        default=[],
+        help="independently supplied excluded address; repeatable",
+    )
+    parser.add_argument(
+        "--exclude-addresses-file",
+        action="append",
+        default=[],
+        help=(
+            "CSV containing an address column used by the selected policy; "
+            "repeatable"
         ),
     )
     parser.add_argument("--policy-summary", required=True)
@@ -101,6 +128,54 @@ def load_automatic_code_addresses(paths):
     return addresses, sources
 
 
+def normalize_address(value, context):
+    address = lib.any_to_hex(str(value or "").strip())
+    if address is None:
+        raise ValueError(f"{context}: invalid address")
+    try:
+        raw = bytes.fromhex(address[2:])
+    except ValueError as error:
+        raise ValueError(f"{context}: invalid address") from error
+    if len(raw) != 20:
+        raise ValueError(f"{context}: invalid address")
+    return address
+
+
+def load_excluded_addresses(values, paths):
+    addresses = {
+        normalize_address(value, "--exclude-address") for value in values
+    }
+    sources = []
+    for path in paths:
+        with open(path, newline="") as source:
+            reader = csv.DictReader(source)
+            if "address" not in set(reader.fieldnames or ()):
+                raise ValueError(f"{path} is missing address column")
+            source_addresses = set()
+            for line, row in enumerate(reader, start=2):
+                address = normalize_address(
+                    row["address"], f"{path}:{line}"
+                )
+                if address in source_addresses:
+                    raise ValueError(f"{path}:{line}: duplicate address")
+                source_addresses.add(address)
+            overlap = addresses & source_addresses
+            if overlap:
+                raise ValueError(
+                    f"{path}: duplicate exclusions across inputs: "
+                    f"{sorted(overlap)}"
+                )
+            addresses.update(source_addresses)
+        sources.append(
+            {
+                "path": path,
+                "sha256": file_sha256(path),
+                "addresses": len(source_addresses),
+            }
+        )
+    return addresses, sources
+
+
 def read_category(path, expected, automatic_code):
     keys = set()
     automatic_code_found = set()
@@ -122,6 +197,9 @@ def read_category(path, expected, automatic_code):
                 f"{path}:{line}",
             )
             total_claim = int(row["total_claim_atto"])
+            qualification_total = int(
+                row.get("qualification_total_atto", total_claim)
+            )
             wallet = int(row["wallet_airdrop_atto"])
             vault = int(row["staked_to_vault_atto"])
             if (
@@ -132,7 +210,7 @@ def read_category(path, expected, automatic_code):
                 raise ValueError(
                     f"{path}:{line}: allocation component mismatch"
                 )
-            if total_claim < 1000 * 10**18:
+            if qualification_total < 1000 * 10**18:
                 raise ValueError(f"{path}:{line}: below threshold")
             is_contract = code_bearing(row)
             if is_contract is None:
@@ -157,7 +235,11 @@ def read_category(path, expected, automatic_code):
                     f"{path}:{line}: invalid genuine-contract review row"
                 )
             for component in COMPONENTS:
-                totals[component] += int(row[f"{component}_atto"])
+                totals[component] += int(
+                    (row.get(f"{component}_atto", "0") or "0")
+                    if component in OPTIONAL_COMPONENTS
+                    else row[f"{component}_atto"]
+                )
             rows += 1
     return {
         "keys": keys,
@@ -174,14 +256,28 @@ def main():
     policy = json.load(open(args.policy_summary))
     if policy["comparison"] != "ge":
         raise ValueError("selected policy must use inclusive comparison")
-    excluded_addresses = set(policy["excluded_addresses_requested"])
+    policy_excluded_addresses = set(policy["excluded_addresses_requested"])
+    if args.exclude_address or args.exclude_addresses_file:
+        excluded_addresses, excluded_sources = load_excluded_addresses(
+            args.exclude_address,
+            args.exclude_addresses_file,
+        )
+        if excluded_addresses != policy_excluded_addresses:
+            raise ValueError(
+                "independent exclusion inputs do not match policy summary"
+            )
+        if excluded_sources != policy.get("excluded_address_sources", []):
+            raise ValueError(
+                "exclusion source identities do not match policy summary"
+            )
+    else:
+        excluded_addresses = policy_excluded_addresses
+        excluded_sources = policy.get("excluded_address_sources", [])
     automatic_code, automatic_code_sources = load_automatic_code_addresses(
         args.automatic_code_addresses
     )
-    if automatic_code & excluded_addresses:
-        raise ValueError(
-            "automatic code-address overrides overlap excluded addresses"
-        )
+    suppressed_automatic_code = automatic_code & excluded_addresses
+    active_automatic_code = automatic_code - excluded_addresses
     if automatic_code != set(
         policy.get("automatic_code_addresses_requested", ())
     ):
@@ -190,15 +286,15 @@ def main():
         )
 
     automatic = read_category(
-        args.automatic, "automatic", automatic_code
+        args.automatic, "automatic", active_automatic_code
     )
     contracts = read_category(
-        args.contract_review, "contract_review", automatic_code
+        args.contract_review, "contract_review", active_automatic_code
     )
     excluded = read_category(
-        args.excluded_address, "excluded_address", automatic_code
+        args.excluded_address, "excluded_address", active_automatic_code
     )
-    if automatic["automatic_code_addresses"] != automatic_code:
+    if automatic["automatic_code_addresses"] != active_automatic_code:
         raise ValueError(
             "not every automatic code-address override is present in "
             "automatic output"
@@ -234,7 +330,12 @@ def main():
                 raise ValueError(
                     f"{args.input}:{line}: unresolved code metadata"
                 )
-            value = int(row["total_claim_atto"])
+            value = int(
+                row.get(
+                    "qualification_total_atto",
+                    row["total_claim_atto"],
+                )
+            )
             if value == 1000 * 10**18:
                 exact += 1
             if value >= 1000 * 10**18:
@@ -271,8 +372,12 @@ def main():
         "automatic_rows": automatic["rows"],
         "contract_review_rows": contracts["rows"],
         "excluded_address_rows": excluded["rows"],
+        "excluded_address_sources": excluded_sources,
         "automatic_code_address_sources": automatic_code_sources,
         "automatic_code_addresses": sorted(automatic_code),
+        "automatic_code_addresses_suppressed_by_exclusion": sorted(
+            suppressed_automatic_code
+        ),
         "policy_summary_sha256": file_sha256(args.policy_summary),
         "output_sha256": {
             "automatic": file_sha256(args.automatic),

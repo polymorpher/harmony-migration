@@ -29,10 +29,22 @@ COMPONENTS = (
     "pending_undelegation",
     "unclaimed_staking_reward",
     "pending_cross_shard",
+    "native_wallet_airdrop",
+    "wone_balance",
+    "wone_airdrop",
     "wallet_airdrop",
     "staked_to_vault",
+    "qualification_total",
+    "native_total_claim",
     "total_claim",
 )
+OPTIONAL_COMPONENTS = {
+    "native_wallet_airdrop",
+    "wone_balance",
+    "wone_airdrop",
+    "qualification_total",
+    "native_total_claim",
+}
 
 
 def parse_one(value):
@@ -76,6 +88,15 @@ def parse_args():
         default=[],
         help="address to exclude before contract classification; repeatable",
     )
+    parser.add_argument(
+        "--exclude-addresses-file",
+        action="append",
+        default=[],
+        help=(
+            "CSV containing an address column to exclude before contract "
+            "classification; repeatable"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -114,13 +135,61 @@ def load_automatic_code_addresses(paths):
     return addresses, sources
 
 
+def normalize_address(value, context):
+    address = lib.any_to_hex(str(value or "").strip())
+    if address is None:
+        raise ValueError(f"{context}: invalid address")
+    try:
+        raw = bytes.fromhex(address[2:])
+    except ValueError as error:
+        raise ValueError(f"{context}: invalid address") from error
+    if len(raw) != 20:
+        raise ValueError(f"{context}: invalid address")
+    return address
+
+
+def load_excluded_addresses(values, paths):
+    addresses = {
+        normalize_address(value, "--exclude-address") for value in values
+    }
+    sources = []
+    for path in paths:
+        with open(path, newline="") as source:
+            reader = csv.DictReader(source)
+            if "address" not in set(reader.fieldnames or ()):
+                raise ValueError(f"{path} is missing address column")
+            source_addresses = set()
+            for line, row in enumerate(reader, start=2):
+                address = normalize_address(
+                    row["address"], f"{path}:{line}"
+                )
+                if address in source_addresses:
+                    raise ValueError(f"{path}:{line}: duplicate address")
+                source_addresses.add(address)
+            overlap = addresses & source_addresses
+            if overlap:
+                raise ValueError(
+                    f"{path}: duplicate exclusions across inputs: "
+                    f"{sorted(overlap)}"
+                )
+            addresses.update(source_addresses)
+        sources.append(
+            {
+                "path": path,
+                "sha256": file_sha256(path),
+                "addresses": len(source_addresses),
+            }
+        )
+    return addresses, sources
+
+
 def new_totals():
     return {component: 0 for component in COMPONENTS}
 
 
 def add_totals(totals, row):
     for component in COMPONENTS:
-        value = int(row[f"{component}_atto"])
+        value = int(row.get(f"{component}_atto", "0") or 0)
         if value < 0:
             raise ValueError(f"negative {component} for {row['secure_key']}")
         totals[component] += value
@@ -149,19 +218,15 @@ def main():
     for path in (*outputs.values(), args.summary):
         if os.path.exists(path) or os.path.exists(path + ".partial"):
             raise FileExistsError(path)
-    excluded = {address.lower() for address in args.exclude_address}
-    if any(
-        len(address) != 42 or not address.startswith("0x")
-        for address in excluded
-    ):
-        raise ValueError("excluded addresses must be 20-byte hexadecimal values")
+    excluded, excluded_sources = load_excluded_addresses(
+        args.exclude_address,
+        args.exclude_addresses_file,
+    )
     automatic_code, automatic_code_sources = load_automatic_code_addresses(
         args.automatic_code_addresses
     )
-    if automatic_code & excluded:
-        raise ValueError(
-            "automatic code-address overrides overlap excluded addresses"
-        )
+    suppressed_automatic_code = automatic_code & excluded
+    active_automatic_code = automatic_code - excluded
 
     handles = {}
     writers = {}
@@ -184,7 +249,11 @@ def main():
                 "address",
                 "code_hash_shard0",
                 "code_hash_shard1",
-                *(f"{component}_atto" for component in COMPONENTS),
+                *(
+                    f"{component}_atto"
+                    for component in COMPONENTS
+                    if component not in OPTIONAL_COMPONENTS
+                ),
             }
             missing = required - set(reader.fieldnames or ())
             if missing:
@@ -215,23 +284,32 @@ def main():
                     raise ValueError(
                         f"unresolved code metadata at line {line}"
                     )
-                value = int(row["total_claim_atto"])
+                qualification_value = int(
+                    row.get(
+                        "qualification_total_atto",
+                        row["total_claim_atto"],
+                    )
+                )
+                total_claim = int(row["total_claim_atto"])
                 wallet = int(row["wallet_airdrop_atto"])
                 vault = int(row["staked_to_vault_atto"])
                 if (
                     wallet < 0
                     or vault < 0
-                    or wallet + vault != value
+                    or total_claim < 0
+                    or wallet + vault != total_claim
                 ):
                     raise ValueError(
                         f"allocation component mismatch at line {line}"
                     )
                 input_rows += 1
-                exact_threshold_rows += int(value == args.minimum_one)
+                exact_threshold_rows += int(
+                    qualification_value == args.minimum_one
+                )
                 eligible = (
-                    value >= args.minimum_one
+                    qualification_value >= args.minimum_one
                     if args.comparison == "ge"
-                    else value > args.minimum_one
+                    else qualification_value > args.minimum_one
                 )
                 if not eligible:
                     below_threshold_rows += 1
@@ -241,7 +319,7 @@ def main():
                 if address in excluded:
                     label = "excluded_address"
                     seen_excluded.add(address)
-                elif address in automatic_code:
+                elif address in active_automatic_code:
                     if not has_code:
                         raise ValueError(
                             f"automatic code-address override has empty code: {address}"
@@ -260,8 +338,8 @@ def main():
             raise ValueError(
                 "not every requested excluded address was present above threshold"
             )
-        if seen_automatic_code != automatic_code:
-            missing = sorted(automatic_code - seen_automatic_code)
+        if seen_automatic_code != active_automatic_code:
+            missing = sorted(active_automatic_code - seen_automatic_code)
             raise ValueError(
                 "not every automatic code-address override was present "
                 f"above threshold: {missing}"
@@ -292,9 +370,13 @@ def main():
             "below_threshold_rows": below_threshold_rows,
             "excluded_addresses_requested": sorted(excluded),
             "excluded_addresses_found": sorted(seen_excluded),
+            "excluded_address_sources": excluded_sources,
             "automatic_code_address_sources": automatic_code_sources,
             "automatic_code_addresses_requested": sorted(automatic_code),
             "automatic_code_addresses_found": sorted(seen_automatic_code),
+            "automatic_code_addresses_suppressed_by_exclusion": sorted(
+                suppressed_automatic_code
+            ),
             "categories": stats,
         }
         with open(args.summary + ".partial", "x") as output:

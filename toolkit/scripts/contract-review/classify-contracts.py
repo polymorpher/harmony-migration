@@ -405,7 +405,13 @@ def classify(address, facts, claim, registry, extra):
         "address": lib.to_checksum(address),
         "address_bech32": lib.hex_to_bech32(address),
         "total_claim_one": total_claim,
+        "native_total_claim_one": claim.get(
+            "native_total_claim_one", total_claim
+        ),
         "wallet_airdrop_one": wallet_airdrop,
+        "wone_airdrop_one": claim.get(
+            "wone_airdrop_one", "0.000000000000000000"
+        ),
         "staked_to_vault_one": staked_to_vault,
         "liquid_total_one": claim["liquid_total_one"],
         "active_staked_or_delegated_one": claim["active_staked_or_delegated_one"],
@@ -564,7 +570,8 @@ def write_csv(path, rows, fields):
 COMMON_FIELDS = [
     "address", "address_bech32",
     "policy_state_block", "policy_state_block_hash", "policy_state_root",
-    "total_claim_one", "wallet_airdrop_one",
+    "total_claim_one", "native_total_claim_one", "wallet_airdrop_one",
+    "wone_airdrop_one",
     "staked_to_vault_one", "liquid_total_one",
     "active_staked_or_delegated_one", "pending_undelegation_one",
     "unclaimed_staking_reward_one", "total_usd_at_cutoff_price",
@@ -591,7 +598,8 @@ POLICY_FIELDS = [
     "primary_category", "subcategory", "identity",
     "address", "address_bech32",
     "policy_state_block", "policy_state_block_hash", "policy_state_root",
-    "total_claim_one", "wallet_airdrop_one", "staked_to_vault_one",
+    "total_claim_one", "native_total_claim_one", "wallet_airdrop_one",
+    "wone_airdrop_one", "staked_to_vault_one",
     "code_size_bytes", "code_hash",
     "is_erc20", "is_nft", "is_multisig", "is_onewallet",
     "is_smartvault", "known_app", "known_app_role",
@@ -977,6 +985,7 @@ def main():
                 "count": 0,
                 "total_claim_atto": 0,
                 "wallet_airdrop_atto": 0,
+                "wone_airdrop_atto": 0,
                 "staked_to_vault_atto": 0,
                 "liquid_atto": 0,
                 "staked_atto": 0,
@@ -988,6 +997,9 @@ def main():
             )
             b["wallet_airdrop_atto"] += lib.one_str_to_atto(
                 r["wallet_airdrop_one"]
+            )
+            b["wone_airdrop_atto"] += lib.one_str_to_atto(
+                r["wone_airdrop_one"]
             )
             b["staked_to_vault_atto"] += lib.one_str_to_atto(
                 r["staked_to_vault_one"]

@@ -60,6 +60,7 @@ class ApplyEligibilityPolicyTest(unittest.TestCase):
             automatic = root / "automatic.csv"
             contracts = root / "contracts.csv"
             excluded = root / "excluded.csv"
+            exclusions = root / "exclusions.csv"
             validators = root / "validators.csv"
             summary = root / "summary.json"
             verification = root / "verification.json"
@@ -137,7 +138,7 @@ class ApplyEligibilityPolicyTest(unittest.TestCase):
                                 1002 * 10**18,
                                 "0x02",
                             ),
-                            row(blocked, 1003 * 10**18),
+                            row(blocked, 1003 * 10**18, "0x03"),
                         ),
                         key=lambda item: item["secure_key"],
                     )
@@ -147,7 +148,19 @@ class ApplyEligibilityPolicyTest(unittest.TestCase):
                     handle, fieldnames=("address",), lineterminator="\n"
                 )
                 writer.writeheader()
-                writer.writerow({"address": validator})
+                writer.writerows(
+                    ({"address": validator}, {"address": blocked})
+                )
+            with exclusions.open("w", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=("address", "reason"),
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {"address": blocked, "reason": "exchange reroute"}
+                )
             subprocess.run(
                 (
                     sys.executable,
@@ -168,8 +181,8 @@ class ApplyEligibilityPolicyTest(unittest.TestCase):
                     "1000",
                     "--comparison",
                     "ge",
-                    "--exclude-address",
-                    blocked,
+                    "--exclude-addresses-file",
+                    str(exclusions),
                 ),
                 check=True,
                 capture_output=True,
@@ -182,6 +195,12 @@ class ApplyEligibilityPolicyTest(unittest.TestCase):
             self.assertEqual(metadata["exact_threshold_rows"], 1)
             self.assertEqual(
                 metadata["automatic_code_addresses_found"], [validator]
+            )
+            self.assertEqual(
+                metadata[
+                    "automatic_code_addresses_suppressed_by_exclusion"
+                ],
+                [blocked],
             )
             self.assertEqual(
                 metadata["categories"]["automatic"]["components_atto"][
@@ -209,6 +228,8 @@ class ApplyEligibilityPolicyTest(unittest.TestCase):
                     str(excluded),
                     "--automatic-code-addresses",
                     str(validators),
+                    "--exclude-addresses-file",
+                    str(exclusions),
                     "--policy-summary",
                     str(summary),
                     "--output",

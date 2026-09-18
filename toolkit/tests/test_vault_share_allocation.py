@@ -57,24 +57,30 @@ class VaultShareAllocationTest(unittest.TestCase):
             claim_fields = (
                 "secure_key",
                 "address",
+                "wone_airdrop_atto",
                 "wallet_airdrop_atto",
                 "staked_to_vault_atto",
+                "qualification_total_atto",
                 "total_claim_atto",
             )
 
-            def claim(index, wallet, vault):
+            def claim(index, wallet, vault, wone=0):
                 return {
                     "secure_key": secure_key(index),
                     "address": address(index),
+                    "wone_airdrop_atto": str(wone * 10**18),
                     "wallet_airdrop_atto": str(wallet * 10**18),
                     "staked_to_vault_atto": str(vault * 10**18),
+                    "qualification_total_atto": str(
+                        (wallet + vault) * 10**18
+                    ),
                     "total_claim_atto": str(
                         (wallet + vault) * 10**18
                     ),
                 }
 
             claims_by_index = {
-                1: claim(1, 100, 1000),
+                1: claim(1, 100, 1000, wone=10),
                 2: claim(2, 200, 1000),
                 3: claim(3, 300, 1000),
                 4: claim(4, 100, 800),
@@ -207,6 +213,14 @@ class VaultShareAllocationTest(unittest.TestCase):
             self.assertEqual(len(direct), 1)
             self.assertEqual(
                 direct[0]["wallet_airdrop_atto"], str(100 * 10**18)
+            )
+            self.assertEqual(
+                direct[0]["native_wallet_airdrop_atto"],
+                str(90 * 10**18),
+            )
+            self.assertEqual(
+                direct[0]["wone_airdrop_atto"],
+                str(10 * 10**18),
             )
             self.assertEqual(
                 direct[0]["destination_address"],

@@ -21,6 +21,7 @@ import contract_review_lib as lib  # noqa: E402
 ATTO_PER_ONE = 10**18
 COMPONENTS = (
     "wallet_airdrop",
+    "wone_airdrop",
     "staked_to_vault",
     "total_claim",
 )
@@ -99,7 +100,7 @@ def empty_totals():
 
 def add_row(totals, row):
     for component in COMPONENTS:
-        value = int(row[f"{component}_atto"])
+        value = int(row.get(f"{component}_atto", "0") or 0)
         if value < 0:
             raise ValueError(
                 f"negative {component} for {row['secure_key']}"
@@ -334,6 +335,7 @@ def render_report(summary):
             entry["since_time_utc"],
             f"{entry['accounts']:,}",
             one(entry["total_claim_atto"]),
+            one(entry["wone_airdrop_atto"]),
             entry["share_of_all_claim_percent"] + "%",
         )
         for entry in summary["windows"]
@@ -341,6 +343,21 @@ def render_report(summary):
     no_activity = summary["indexed_activity_not_found"]
     before = summary["before_longest_window"]
     longest = summary["windows"][-1]["months"]
+    provenance = summary.get("activity_provenance") or {}
+    shard0 = (provenance.get("by_shard") or {}).get("0") or {}
+    breakdown = shard0.get("provenance_breakdown") or {}
+    provenance_lines = [
+        f"- Activity source classification: `{provenance.get('classification', 'unknown')}`."
+    ]
+    for kind in ("database-derived", "RPC-derived"):
+        bucket = breakdown.get(kind)
+        if bucket:
+            provenance_lines.append(
+                f"- Shard-0 {kind}: `{bucket['rows']:,}` rows "
+                f"(`{bucket['activity_found']:,}` with activity, "
+                f"`{bucket['activity_not_found']:,}` without)."
+            )
+    provenance_text = "\n".join(provenance_lines)
     return f"""# Prioritized-claim account activity
 
 Generated from the inclusive `>= 1,000 ONE` cutoff candidate ledger.
@@ -377,6 +394,7 @@ cumulative: an account in the 3-month row is also in every longer row.
         "On or after (UTC)",
         "Accounts",
         "Total claim ONE",
+        "WONE airdrop ONE",
         "Share of all candidate claims",
     ),
     rows,
@@ -385,7 +403,8 @@ cumulative: an account in the 3-month row is also in every longer row.
 ## Coverage outside the windows
 
 - All candidates: `{summary["candidates"]:,}` accounts,
-  `{one(summary["all_candidates"]["total_claim_atto"])} ONE`.
+  `{one(summary["all_candidates"]["total_claim_atto"])} ONE`, including
+  `{one(summary["all_candidates"]["wone_airdrop_atto"])} ONE` from WONE.
 - Indexed activity found: `{summary["indexed_activity_found"]["accounts"]:,}`
   accounts.
 - Last indexed activity before the {longest}-month window:
@@ -399,6 +418,7 @@ cumulative: an account in the 3-month row is also in every longer row.
 
 ## Evidence and use
 
+{provenance_text}
 - Candidate CSV: `{summary["input"]}`
 - Candidate CSV SHA-256: `{summary["input_sha256"]}`
 - Activity enrichment summary: `{summary["activity_summary"]}`
@@ -470,6 +490,25 @@ def main():
         "activity_summary_sha256": file_sha256(
             args.activity_summary
         ),
+        "activity_provenance": {
+            "classification": activity_summary.get(
+                "classification", "unknown"
+            ),
+            "by_shard": {
+                shard: {
+                    "classification": source["scan"].get(
+                        "classification", "unknown"
+                    ),
+                    "source_kind": source["scan"].get("source_kind"),
+                    "provenance_breakdown": source["scan"].get(
+                        "provenance_breakdown", {}
+                    ),
+                }
+                for shard, source in (
+                    activity_summary.get("sources") or {}
+                ).items()
+            },
+        },
         "snapshot_manifest": args.snapshot_manifest,
         "snapshot_manifest_sha256": file_sha256(
             args.snapshot_manifest

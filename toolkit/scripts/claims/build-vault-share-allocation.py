@@ -109,10 +109,22 @@ def load_all_claims(path):
             total_claim, wallet, staked = require_allocation_fields(
                 row, f"{path}:{line}"
             )
+            wone = int(row.get("wone_airdrop_atto", "0") or 0)
+            qualification_total = int(
+                row.get("qualification_total_atto", total_claim)
+            )
+            if (
+                wone < 0
+                or wone > wallet
+                or qualification_total < total_claim
+            ):
+                raise ValueError(f"{path}:{line}: invalid WONE overlay")
             claims[key] = {
                 "address": row["address"].lower(),
                 "total_claim": total_claim,
                 "wallet": wallet,
+                "wone": wone,
+                "qualification_total": qualification_total,
                 "staked": staked,
             }
     return claims
@@ -122,6 +134,7 @@ def load_category(path, category, claims, assignments):
     totals = {
         "rows": 0,
         "wallet": 0,
+        "wone": 0,
         "staked": 0,
         "total_claim": 0,
     }
@@ -146,11 +159,14 @@ def load_category(path, category, claims, assignments):
                 or wallet != expected["wallet"]
                 or staked != expected["staked"]
                 or address != expected["address"]
+                or int(row.get("wone_airdrop_atto", "0") or 0)
+                != expected["wone"]
             ):
                 raise ValueError(f"{path}:{line}: claim mismatch")
             assignments[key] = category
             totals["rows"] += 1
             totals["wallet"] += wallet
+            totals["wone"] += expected["wone"]
             totals["staked"] += staked
             totals["total_claim"] += total_claim
     return totals
@@ -200,7 +216,7 @@ def main():
     expected_priority = {
         key
         for key, claim in claims.items()
-        if claim["total_claim"] >= args.minimum_one
+        if claim["qualification_total"] >= args.minimum_one
     }
     if set(assignments) != expected_priority:
         raise ValueError(
@@ -347,6 +363,8 @@ def main():
     wallet_fields = (
         "secure_key",
         "source_address",
+        "native_wallet_airdrop_atto",
+        "wone_airdrop_atto",
         "wallet_airdrop_atto",
         "staked_to_vault_atto",
         "total_claim_atto",
@@ -372,6 +390,10 @@ def main():
             {
                 "secure_key": key,
                 "source_address": claim["address"],
+                "native_wallet_airdrop_atto": str(
+                    claim["wallet"] - claim["wone"]
+                ),
+                "wone_airdrop_atto": str(claim["wone"]),
                 "wallet_airdrop_atto": str(claim["wallet"]),
                 "staked_to_vault_atto": str(claim["staked"]),
                 "total_claim_atto": str(claim["total_claim"]),

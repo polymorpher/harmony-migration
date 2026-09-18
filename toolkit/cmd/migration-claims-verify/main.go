@@ -36,6 +36,14 @@ var componentNames = []string{
 	"total_claim",
 }
 
+var woneComponentNames = []string{
+	"native_wallet_airdrop",
+	"wone_balance",
+	"wone_airdrop",
+	"qualification_total",
+	"native_total_claim",
+}
+
 type totals struct {
 	Rows                        uint64 `json:"rows"`
 	RowsWithAddress             uint64 `json:"rows_with_address"`
@@ -51,6 +59,11 @@ type totals struct {
 	WalletAirdropAtto           string `json:"wallet_airdrop_atto"`
 	StakedToVaultAtto           string `json:"staked_to_vault_atto"`
 	TotalClaimAtto              string `json:"total_claim_atto"`
+	NativeWalletAirdropAtto     string `json:"native_wallet_airdrop_atto,omitempty"`
+	WONEBalanceAtto             string `json:"wone_balance_atto,omitempty"`
+	WONEAirdropAtto             string `json:"wone_airdrop_atto,omitempty"`
+	QualificationTotalAtto      string `json:"qualification_total_atto,omitempty"`
+	NativeTotalClaimAtto        string `json:"native_total_claim_atto,omitempty"`
 	StrictOverOneUSDTotalClaim  string `json:"strict_over_one_usd_total_claim_atto"`
 	OriginalLiquidTotalAtto     string `json:"original_liquid_total_atto,omitempty"`
 }
@@ -123,6 +136,7 @@ func main() {
 		expectedShard1Block    = flag.String("expected-shard1-block", "94978278", "required claims shard-1 block")
 		expectedPriceBlock     = flag.String("expected-price-reference-shard0-block", "93448483", "required price-reference block")
 		expectedPrice          = flag.String("expected-price-usd-per-one", "0.00074801", "required USD price")
+		woneThreshold          = flag.String("wone-threshold-atto", "1000000000000000000000", "inclusive WONE qualification threshold")
 	)
 	flag.Parse()
 	if *input == "" {
@@ -141,6 +155,23 @@ func main() {
 		fatalf("read header: %v", err)
 	}
 	columns := columnIndexes(header)
+	haveWONE := false
+	for _, component := range woneComponentNames {
+		_, present := columns[component+"_atto"]
+		if present {
+			haveWONE = true
+		}
+	}
+	if haveWONE {
+		for _, component := range woneComponentNames {
+			if _, present := columns[component+"_atto"]; !present {
+				fatalf("incomplete WONE overlay: missing %s_atto", component)
+			}
+			if _, present := columns[component+"_one"]; !present {
+				fatalf("incomplete WONE overlay: missing %s_one", component)
+			}
+		}
+	}
 
 	acc := accumulators{
 		components:          make(map[string]*big.Int, len(componentNames)),
@@ -150,8 +181,14 @@ func main() {
 	for _, component := range componentNames {
 		acc.components[component] = new(big.Int)
 	}
+	if haveWONE {
+		for _, component := range woneComponentNames {
+			acc.components[component] = new(big.Int)
+		}
+	}
 	threshold := new(big.Int).Exp(big.NewInt(10), big.NewInt(usdDecimals), nil)
 	price := big.NewInt(priceNumerator)
+	woneMinimum := unsigned(*woneThreshold, "wone threshold", 0)
 	var previous common.Hash
 	var havePrevious bool
 
@@ -212,6 +249,19 @@ func main() {
 			values[component] = value
 			acc.components[component].Add(acc.components[component], value)
 		}
+		if haveWONE {
+			for _, component := range woneComponentNames {
+				attoName := component + "_atto"
+				oneName := component + "_one"
+				value := unsigned(field(row, columns, attoName, line), attoName, line)
+				one := fixedDecimal(field(row, columns, oneName, line), attoDecimals, oneName, line)
+				if value.Cmp(one) != 0 {
+					fatalf("row %d %s does not reproduce %s", line, oneName, attoName)
+				}
+				values[component] = value
+				acc.components[component].Add(acc.components[component], value)
+			}
+		}
 		expectedLiquid := new(big.Int).Add(values["liquid_shard0"], values["liquid_shard1"])
 		if expectedLiquid.Cmp(values["liquid_total"]) != 0 {
 			fatalf("row %d liquid total mismatch", line)
@@ -226,6 +276,29 @@ func main() {
 		} {
 			expectedWalletAirdrop.Add(expectedWalletAirdrop, values[component])
 		}
+		if haveWONE {
+			if expectedWalletAirdrop.Cmp(values["native_wallet_airdrop"]) != 0 {
+				fatalf("row %d native wallet airdrop mismatch", line)
+			}
+			expectedQualification := new(big.Int).Add(
+				values["native_total_claim"],
+				values["wone_balance"],
+			)
+			if expectedQualification.Cmp(values["qualification_total"]) != 0 {
+				fatalf("row %d WONE qualification total mismatch", line)
+			}
+			expectedWONEAirdrop := new(big.Int)
+			if expectedQualification.Cmp(woneMinimum) >= 0 {
+				expectedWONEAirdrop.Set(values["wone_balance"])
+			}
+			if expectedWONEAirdrop.Cmp(values["wone_airdrop"]) != 0 {
+				fatalf("row %d WONE airdrop mismatch", line)
+			}
+			expectedWalletAirdrop.Add(
+				expectedWalletAirdrop,
+				values["wone_airdrop"],
+			)
+		}
 		if expectedWalletAirdrop.Cmp(values["wallet_airdrop"]) != 0 {
 			fatalf("row %d wallet airdrop mismatch", line)
 		}
@@ -238,6 +311,15 @@ func main() {
 		)
 		if expectedTotalClaim.Cmp(values["total_claim"]) != 0 {
 			fatalf("row %d total claim mismatch", line)
+		}
+		if haveWONE {
+			expectedNativeTotal := new(big.Int).Add(
+				values["native_wallet_airdrop"],
+				values["staked_to_vault"],
+			)
+			if expectedNativeTotal.Cmp(values["native_total_claim"]) != 0 {
+				fatalf("row %d native total claim mismatch", line)
+			}
 		}
 		expectedUSD := new(big.Int).Mul(values["total_claim"], price)
 		gotTotalUSD := fixedDecimal(
@@ -317,6 +399,13 @@ func main() {
 	}
 	if *requireOriginalOverUSD {
 		result.OriginalLiquidTotalAtto = acc.originalLiquidTotal.String()
+	}
+	if haveWONE {
+		result.NativeWalletAirdropAtto = acc.components["native_wallet_airdrop"].String()
+		result.WONEBalanceAtto = acc.components["wone_balance"].String()
+		result.WONEAirdropAtto = acc.components["wone_airdrop"].String()
+		result.QualificationTotalAtto = acc.components["qualification_total"].String()
+		result.NativeTotalClaimAtto = acc.components["native_total_claim"].String()
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 		fatalf("encode summary: %v", err)

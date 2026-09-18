@@ -78,6 +78,7 @@ def agg(rows, key):
         "n": 0,
         "claim": Decimal(0),
         "wallet": Decimal(0),
+        "wone": Decimal(0),
         "vault": Decimal(0),
         "liquid": Decimal(0),
         "staked": Decimal(0),
@@ -88,6 +89,7 @@ def agg(rows, key):
         b["n"] += 1
         b["claim"] += D(r["total_claim_one"])
         b["wallet"] += D(r.get("wallet_airdrop_one"))
+        b["wone"] += D(r.get("wone_airdrop_one"))
         b["vault"] += D(
             r.get("staked_to_vault_one")
             or r["active_staked_or_delegated_one"]
@@ -124,6 +126,7 @@ def main():
         raise ValueError("classification policy-state block is not the cutoff")
 
     total_claim = sum(D(r["total_claim_one"]) for r in all_rows)
+    total_wone = sum(D(r["wone_airdrop_one"]) for r in all_rows)
     contracts = [r for r in all_rows if r["primary_category"] != "validator-account"]
     latest_block = max(int(r["latest_block_at_fetch"] or 0) for r in all_rows)
     today = datetime.date.today().isoformat()
@@ -140,11 +143,14 @@ def main():
         f"block {policy_state['block']:,} (`{policy_state['block_hash']}`, state root `{policy_state['state_root']}`). "
         f"Cutoff claim and delivery components came from the two-shard input CSV. Explorer/indexer balances were not used. "
         f"Latest-state balances and activity context were read at block {latest_block:,} or later and do not select destinations.\n"
-        f"- Total claim of the reviewed rows: **{one(total_claim, 18)} ONE** (matches the eligibility summary exactly).\n"
+        f"- Total claim of the reviewed rows: **{one(total_claim, 18)} ONE**, including "
+        f"**{one(total_wone, 18)} ONE** of WONE-backed wallet airdrops "
+        f"(matches the eligibility summary exactly).\n"
     )
     L.append(
         "Terminology: **total claim** includes active delegation and is used "
-        "for threshold selection. **Wallet airdrop** excludes active "
+        "for threshold selection after native claims and WONE are combined. "
+        "**Wallet airdrop** includes qualified WONE and excludes active "
         "delegation. **Staked to vault** is deposited into the "
         "validator's ERC-4626 vault and represented by shares rather than "
         "being sent to the delegator wallet.\n"
@@ -201,8 +207,20 @@ def main():
     rows = []
     for key, label in headline:
         v = pc.get(key, {"n": 0, "claim": Decimal(0)})
-        rows.append([label, v["n"], f"{v['claim']:,.0f}"])
-    L.append(table(["category", f"accounts with >= {threshold:,} ONE", "total claim ONE"], rows))
+        rows.append(
+            [label, v["n"], f"{v['claim']:,.0f}", f"{v['wone']:,.0f}"]
+        )
+    L.append(
+        table(
+            [
+                "category",
+                f"accounts with >= {threshold:,} ONE",
+                "total claim ONE",
+                "WONE airdrop ONE",
+            ],
+            rows,
+        )
+    )
     L.append(
         f"\nOverlapping membership per question: {len(multisig)} multisigs, {len(onewallets)} 1wallets, "
         f"{len(erc20)} ERC-20 ({sum(D(r['total_claim_one']) for r in erc20) / Decimal(10**6):,.1f}M ONE incl. WONE), "
@@ -236,7 +254,7 @@ def main():
     ka = [r for r in all_rows if r["known_app"]]
     L.append(
         f"4. **{len(ka)} rows are attributed to {len(set(r['known_app'] for r in ka))} well-known applications** ({one(sum(D(r['total_claim_one']) for r in ka))} ONE of total claim including wallet rows). "
-        f"The largest are WONE ({one([r for r in all_rows if r['address'].lower()=='0xcf664087a5bb0237a0bad6742852ec6c8d69a27a'][0]['total_claim_one'])} ONE of wrapped ONE) and the two "
+        f"The WONE source contract has {one([r for r in all_rows if r['address'].lower()=='0xcf664087a5bb0237a0bad6742852ec6c8d69a27a'][0]['native_total_claim_one'])} ONE of native claim before its reserve is split into redistribution and retained non-issuance. The two "
         f"LayerZero NativeOFT lock contracts backing bridged ONE on BNB Chain and Ethereum "
         f"({one(sum(D(r['total_claim_one']) for r in all_rows if r['known_app'].startswith('Harmony LayerZero')))} ONE).\n"
     )
@@ -250,9 +268,9 @@ def main():
     L.append("## Statistics by primary category (mutually exclusive)\n")
     rows = []
     for k, v in sorted(pc.items(), key=lambda kv: -kv[1]["claim"]):
-        rows.append([k, v["n"], one(v["claim"]), one(v["wallet"]), one(v["vault"]), one(v["latest"]), f"{v['claim'] / total_claim * 100:.2f}%"])
-    rows.append(["**total**", len(all_rows), one(total_claim), one(sum(v["wallet"] for v in pc.values())), one(sum(v["vault"] for v in pc.values())), one(sum(v["latest"] for v in pc.values())), "100%"])
-    L.append(table(["primary category", "rows", "total claim ONE", "direct wallet airdrop ONE", "staked to vault ONE", "latest liquid balance ONE", "share of total"], rows))
+        rows.append([k, v["n"], one(v["claim"]), one(v["wallet"]), one(v["wone"]), one(v["vault"]), one(v["latest"]), f"{v['claim'] / total_claim * 100:.2f}%"])
+    rows.append(["**total**", len(all_rows), one(total_claim), one(sum(v["wallet"] for v in pc.values())), one(sum(v["wone"] for v in pc.values())), one(sum(v["vault"] for v in pc.values())), one(sum(v["latest"] for v in pc.values())), "100%"])
+    L.append(table(["primary category", "rows", "total claim ONE", "direct wallet airdrop ONE", "WONE airdrop ONE", "staked to vault ONE", "latest liquid balance ONE", "share of total"], rows))
     L.append("\nPriority when a contract fits several categories: validator account > Safe multisig > 1wallet > SmartVault wallet > well-known app > ERC-20 > NFT > fingerprint pattern > unidentified. "
              "The per-question sections below use overlapping membership (e.g. WONE appears both as a known app and as an ERC-20).\n")
 

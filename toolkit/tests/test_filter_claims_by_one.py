@@ -96,6 +96,71 @@ class FilterClaimsByOneTest(unittest.TestCase):
         self.assertEqual([row["secure_key"] for row in rows], ["0x03"])
         self.assertEqual(metadata["exact_threshold_rows"], 1)
 
+    def test_wone_qualification_total_controls_filter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "input.csv"
+            output = root / "output.csv"
+            summary = root / "summary.json"
+            scale = 10**18
+            fields = (
+                "secure_key",
+                "wallet_airdrop_atto",
+                "staked_to_vault_atto",
+                "native_total_claim_atto",
+                "wone_balance_atto",
+                "wone_airdrop_atto",
+                "qualification_total_atto",
+                "total_claim_atto",
+            )
+            with source.open("w", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=fields,
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "secure_key": "0x01",
+                        "wallet_airdrop_atto": str(900 * scale),
+                        "staked_to_vault_atto": str(100 * scale),
+                        "native_total_claim_atto": str(600 * scale),
+                        "wone_balance_atto": str(400 * scale),
+                        "wone_airdrop_atto": str(400 * scale),
+                        "qualification_total_atto": str(1000 * scale),
+                        "total_claim_atto": str(1000 * scale),
+                    }
+                )
+            subprocess.run(
+                (
+                    sys.executable,
+                    str(SCRIPT),
+                    "--input",
+                    str(source),
+                    "--output",
+                    str(output),
+                    "--summary",
+                    str(summary),
+                    "--minimum-one",
+                    "1000",
+                    "--comparison",
+                    "ge",
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            with output.open(newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            metadata = json.loads(summary.read_text())
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(metadata["wone_airdrop_atto"], str(400 * scale))
+            self.assertEqual(
+                metadata["threshold_field"],
+                "qualification_total_atto",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

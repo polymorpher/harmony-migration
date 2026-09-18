@@ -63,6 +63,7 @@ def main():
     total_claim_atto = 0
     wallet_airdrop_atto = 0
     staked_to_vault_atto = 0
+    wone_airdrop_atto = 0
     previous_key = None
     with open(args.input, newline="") as source, open(
         args.output + ".partial", "x", newline=""
@@ -78,6 +79,15 @@ def main():
         missing = required - set(reader.fieldnames)
         if missing:
             raise ValueError(f"input is missing fields: {sorted(missing)}")
+        wone_fields = {
+            "native_total_claim_atto",
+            "wone_balance_atto",
+            "wone_airdrop_atto",
+            "qualification_total_atto",
+        }
+        have_wone = bool(wone_fields & set(reader.fieldnames))
+        if have_wone and not wone_fields <= set(reader.fieldnames):
+            raise ValueError("input has an incomplete WONE overlay")
         writer = csv.DictWriter(
             output, fieldnames=reader.fieldnames, lineterminator="\n"
         )
@@ -100,12 +110,41 @@ def main():
                 raise ValueError(
                     f"allocation component mismatch at line {line}"
                 )
+            qualification_value = value
+            wone_value = 0
+            if have_wone:
+                native_value = int(row["native_total_claim_atto"])
+                wone_balance = int(row["wone_balance_atto"])
+                wone_value = int(row["wone_airdrop_atto"])
+                qualification_value = int(row["qualification_total_atto"])
+                if min(native_value, wone_balance, wone_value) < 0:
+                    raise ValueError(
+                        f"negative WONE overlay value at line {line}"
+                    )
+                if qualification_value != native_value + wone_balance:
+                    raise ValueError(
+                        f"qualification total mismatch at line {line}"
+                    )
+                expected_wone = (
+                    wone_balance
+                    if qualification_value >= args.minimum_one
+                    else 0
+                )
+                if (
+                    wone_value != expected_wone
+                    or value != native_value + wone_value
+                ):
+                    raise ValueError(
+                        f"WONE airdrop mismatch at line {line}"
+                    )
             input_rows += 1
-            exact_threshold_rows += int(value == args.minimum_one)
+            exact_threshold_rows += int(
+                qualification_value == args.minimum_one
+            )
             include = (
-                value >= args.minimum_one
+                qualification_value >= args.minimum_one
                 if args.comparison == "ge"
-                else value > args.minimum_one
+                else qualification_value > args.minimum_one
             )
             if include:
                 writer.writerow(row)
@@ -113,6 +152,7 @@ def main():
                 total_claim_atto += value
                 wallet_airdrop_atto += wallet_value
                 staked_to_vault_atto += vault_value
+                wone_airdrop_atto += wone_value
         output.flush()
         os.fsync(output.fileno())
     os.replace(args.output + ".partial", args.output)
@@ -130,6 +170,10 @@ def main():
         "total_claim_atto": str(total_claim_atto),
         "wallet_airdrop_atto": str(wallet_airdrop_atto),
         "staked_to_vault_atto": str(staked_to_vault_atto),
+        "wone_airdrop_atto": str(wone_airdrop_atto),
+        "threshold_field": (
+            "qualification_total_atto" if have_wone else "total_claim_atto"
+        ),
     }
     with open(args.summary + ".partial", "x") as output:
         json.dump(result, output, indent=2, sort_keys=True)

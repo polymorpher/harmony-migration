@@ -225,6 +225,16 @@ def select_activity(records):
     return {field: selected[field] for field in ACTIVITY_FIELDS}
 
 
+def source_classification(summary):
+    if summary.get("classification"):
+        return summary["classification"]
+    if summary.get("db_path"):
+        return "database-derived"
+    if summary.get("rpc"):
+        return "RPC-derived"
+    raise ValueError("activity source has unknown provenance")
+
+
 def write_enriched(input_path, output_path, by_shard):
     parent = os.path.dirname(output_path)
     if parent:
@@ -320,10 +330,23 @@ def main():
     )
     if rows != len(by_shard["0"]):
         raise ValueError("candidate CSV and activity row counts differ")
+    source_classifications = {
+        source_classification(summary) for summary in summaries.values()
+    }
+    classification = (
+        source_classifications.pop()
+        if len(source_classifications) == 1
+        else "hybrid"
+    )
+    if "hybrid" in {
+        source_classification(summary) for summary in summaries.values()
+    }:
+        classification = "hybrid"
 
     result = {
         "schema_version": 1,
         "status": "passed",
+        "classification": classification,
         "activity_definition": (
             "latest canonical direct regular transaction involving the "
             "address on shard 0 or shard 1, or canonical shard-0 staking "
@@ -332,8 +355,10 @@ def main():
             "are excluded"
         ),
         "source_kind": (
-            "archival-node per-address indexes with canonical block "
-            "verification; no Explorer website or REST API"
+            "hybrid database and archival-RPC activity; exact provenance "
+            "is recorded under sources by shard"
+            if classification == "hybrid"
+            else "archival-node RPC activity"
         ),
         "input": args.input,
         "input_sha256": input_sha256,
