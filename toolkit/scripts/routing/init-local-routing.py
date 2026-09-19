@@ -152,7 +152,7 @@ def main():
                 "status": "redistributed",
                 "notes": (
                     "terminal source offset paired exactly with WONE added "
-                    "to current qualified-holder airdrops"
+                    "to ordinary-threshold and aggregate-exchange delivery"
                 ),
             },
             {
@@ -215,12 +215,24 @@ def main():
                 ),
             },
             {
+                "decision_id": "non-gate-exchange-aggregate-stage",
+                "status": "resolved",
+                "decision": (
+                    "deliver every positive native ONE, WONE, and vault-share "
+                    "entitlement in a confirmed non-Gate inventory through "
+                    "one release-authorized aggregate exchange stage without "
+                    "individual threshold or activity gating"
+                ),
+                "evidence": "docs/eligibility-policy.md#exchange-delivery-overlay",
+                "notes": "Gate remains under the ordinary wallet policy",
+            },
+            {
                 "decision_id": "wone-holder-redistribution",
                 "status": "resolved",
                 "decision": (
-                    "redistribute the qualified-holder portion of the WONE "
-                    "native reserve to holder airdrops and retain the "
-                    "remainder as not issued"
+                    "redistribute the WONE reserve paired with ordinary-"
+                    "threshold and aggregate-exchange delivery, and retain "
+                    "the remainder as not issued"
                 ),
                 "evidence": (
                     "docs/claim-routing.md#wone-holder-redistribution"

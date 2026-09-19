@@ -145,8 +145,8 @@ def render_report(result):
 
 This plan contains only `migration_stage = initial` and
 `issuance_treatment = issue`. It expands implicit same-address wallet and vault
-share delivery and excludes every next-stage, deferred, manual-review,
-not-issued, and redistributed amount.
+share delivery and excludes every exchange-aggregate, next-stage, deferred,
+manual-review, not-issued, and redistributed amount.
 
 - Status: `{result["status"]}`
 - Source wallet addresses: `{result["source_addresses"]:,}`
@@ -321,7 +321,16 @@ def load_exceptions(path, all_stages, initial):
             )
             stage = all_stages.get(source_address)
             if stage is not None and row["migration_stage"] != stage["stage"]:
-                raise ValueError(f"{path}:{line}: migration stage mismatch")
+                if (
+                    row["migration_stage"] == "exchange_aggregate"
+                    and row["reason"]
+                    == "exchange_requested_aggregate_reroute"
+                ):
+                    initial.pop(source_address, None)
+                else:
+                    raise ValueError(
+                        f"{path}:{line}: migration stage mismatch"
+                    )
             treatment = row["issuance_treatment"]
             expected_treatment = {
                 "ready": "issue",
@@ -620,10 +629,10 @@ def main():
     args = parse_args()
     routing = load_routing_summary(args.routing_summary, args)
     all_stages, initial = load_stages(args.stage_policy)
-    positions = load_base_shares(args.base_priority_shares, initial)
     wallet_issue, share_routes = load_exceptions(
         args.routing_exceptions, all_stages, initial
     )
+    positions = load_base_shares(args.base_priority_shares, initial)
     wallets = materialize_wallets(initial, wallet_issue)
     shares = materialize_shares(initial, positions, share_routes)
     governors = load_governors(args.governor_exceptions)

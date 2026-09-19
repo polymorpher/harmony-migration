@@ -68,7 +68,14 @@ def main():
     if wone.get("status") != "passed":
         raise ValueError("WONE qualification summary did not pass")
     reserve = int(wone["wone_reserve_atto"])
-    redistributed = int(wone["wone_redistributed_to_priority_atto"])
+    redistributed = int(
+        wone.get(
+            "wone_redistributed_to_recipients_atto",
+            wone["wone_redistributed_to_priority_atto"],
+        )
+    )
+    if int(wone["wone_redistributed_to_priority_atto"]) != redistributed:
+        raise ValueError("legacy WONE redistribution alias mismatch")
     retained = int(wone["wone_retained_not_issued_atto"])
     if (
         min(reserve, redistributed, retained) < 0
@@ -105,11 +112,11 @@ def main():
                 "destination_address": "",
                 "amount_atto": str(redistributed),
                 "allocation_method": "wallet_only",
-                "reason": "wone_priority_holder_redistribution",
+                "reason": "wone_holder_delivery_redistribution",
                 "evidence": evidence,
                 "notes": (
-                    "offsets WONE amounts included in current qualified-holder "
-                    "wallet airdrops"
+                    "offsets WONE amounts included in ordinary-threshold and "
+                    "aggregate-exchange wallet delivery"
                 ),
             }
         )
@@ -126,8 +133,9 @@ def main():
                 "reason": "wone_reserve_remainder_retained_not_issued",
                 "evidence": evidence,
                 "notes": (
-                    "below-threshold and excluded WONE backing retained in "
-                    "the 2050 premint reserve"
+                    "WONE backing not selected for ordinary-threshold or "
+                    "aggregate-exchange delivery, plus excluded backing, "
+                    "retained in the 2050 premint reserve"
                 ),
             }
         )
@@ -152,6 +160,7 @@ def main():
         "input": args.input,
         "input_sha256": input_sha256,
         "wone_reserve_atto": str(reserve),
+        "wone_redistributed_to_recipients_atto": str(redistributed),
         "wone_redistributed_to_holders_atto": str(redistributed),
         "wone_retained_not_issued_atto": str(retained),
         "output": args.output,

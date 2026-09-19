@@ -191,8 +191,10 @@ def load_compiled(path, routes):
             )
         if statuses[route_id] - {"ready", "hold"}:
             raise ValueError(f"{route_id}: invalid compiled destination status")
-        if stages[route_id] != {route["stage"]}:
-            raise ValueError(f"{route_id}: compiled migration stage mismatch")
+        if stages[route_id] != {"exchange_aggregate"}:
+            raise ValueError(
+                f"{route_id}: compiled aggregate-exchange stage mismatch"
+            )
         if treatments[route_id] != {"issue"}:
             raise ValueError(f"{route_id}: compiled issuance treatment mismatch")
     return amounts, statuses, stages

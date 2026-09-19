@@ -23,6 +23,7 @@ EMPTY_CODE_HASH = (
 REQUIRED_POLICY_DECISIONS = {
     "initial-wallet-activity-stage",
     "layerzero-nativeoft-reconciliation",
+    "non-gate-exchange-aggregate-stage",
     "reviewed-contract-migration-policy",
     "rollback-exploit-proceeds",
     "wone-holder-redistribution",
@@ -82,6 +83,7 @@ VAULT_STAGE_FIELDS = (
     "validator_secure_key",
     "base_vault_assets_atto",
     "initial_assets_atto",
+    "exchange_aggregate_assets_atto",
     "next_stage_assets_atto",
     "qualified_deferred_assets_atto",
     "manual_review_assets_atto",
@@ -682,6 +684,8 @@ def pro_rata(amount, positions):
 
 
 def route_stage(claim, route):
+    if route["reason"] == "exchange_requested_aggregate_reroute":
+        return "exchange_aggregate"
     return claim["migration_stage"]
 
 
@@ -770,6 +774,11 @@ def main():
     destinations = load_destinations(args.destinations)
     pending_policy_decisions = load_policy_decisions(args.policy_decisions)
     routes = load_routes(args.routes, destinations)
+    aggregate_exchange_addresses = {
+        route["source_address"]
+        for route in routes
+        if route["reason"] == "exchange_requested_aggregate_reroute"
+    }
     contract_policy_states = {
         tuple(route["policy_state"].values())
         for route in routes
@@ -833,7 +842,9 @@ def main():
             f"missing={missing}, extra={extra}"
         )
     for claim in claims.values():
-        if claim["category"] == "automatic":
+        if claim["address"] in aggregate_exchange_addresses:
+            claim["routing_category"] = "exchange_aggregate"
+        elif claim["category"] == "automatic":
             claim["routing_category"] = (
                 "validator_account"
                 if claim["address"] in validator_accounts
@@ -1255,6 +1266,7 @@ def main():
         post_policy = base["assets"] - not_issued
         if (
             stages["initial"]
+            + stages["exchange_aggregate"]
             + stages["next_stage"]
             + stages["deferred"]
             + stages["manual_review"]
@@ -1270,6 +1282,9 @@ def main():
                 "validator_secure_key": base["key"],
                 "base_vault_assets_atto": str(base["assets"]),
                 "initial_assets_atto": str(stages["initial"]),
+                "exchange_aggregate_assets_atto": str(
+                    stages["exchange_aggregate"]
+                ),
                 "next_stage_assets_atto": str(stages["next_stage"]),
                 "qualified_deferred_assets_atto": str(stages["deferred"]),
                 "manual_review_assets_atto": str(stages["manual_review"]),
@@ -1402,6 +1417,7 @@ def main():
     compiled_by_address = defaultdict(int)
     compiled_wallet_by_address = defaultdict(int)
     compiled_staked_by_address = defaultdict(int)
+    compiled_stages_by_address = defaultdict(set)
     stage_wallet = Counter()
     stage_staked = Counter()
     ready_stage_wallet = Counter()
@@ -1410,6 +1426,9 @@ def main():
     held_stage_staked = Counter()
     treatment_wallet = Counter()
     treatment_staked = Counter()
+    stage_override_wallet = Counter()
+    stage_override_staked = Counter()
+    stage_override_addresses = defaultdict(set)
     for row in wallet_rows:
         amount = int(row["wallet_airdrop_atto"])
         stage = row["migration_stage"]
@@ -1430,6 +1449,12 @@ def main():
             address = lib.any_to_hex(row["source_address"])
             compiled_by_address[address] += amount
             compiled_wallet_by_address[address] += amount
+            compiled_stages_by_address[address].add(stage)
+            original_stage = claims[by_address[address]]["migration_stage"]
+            if stage != original_stage:
+                key = (original_stage, stage)
+                stage_override_wallet[key] += amount
+                stage_override_addresses[key].add(address)
     for row in share_rows:
         amount = int(row["staked_to_vault_atto"])
         stage = row["migration_stage"]
@@ -1452,6 +1477,12 @@ def main():
             address = lib.any_to_hex(row["delegator_address"])
             compiled_by_address[address] += amount
             compiled_staked_by_address[address] += amount
+            compiled_stages_by_address[address].add(stage)
+            original_stage = claims[by_address[address]]["migration_stage"]
+            if stage != original_stage:
+                key = (original_stage, stage)
+                stage_override_staked[key] += amount
+                stage_override_addresses[key].add(address)
     stage_policy_mismatches = [
         address
         for address, stage in migration_stages.items()
@@ -1467,8 +1498,7 @@ def main():
             + ", ".join(sorted(stage_policy_mismatches))
         )
     pending_stage_review_claims = sum(
-        claim["migration_stage"] == "manual_review"
-        and compiled_by_address[claim["address"]] > 0
+        "manual_review" in compiled_stages_by_address[claim["address"]]
         for claim in claims.values()
     )
     all_stages = sorted(set(stage_wallet) | set(stage_staked))
@@ -1491,6 +1521,20 @@ def main():
             ),
         }
         for stage in all_stages
+    }
+    stage_overrides = {
+        f"{source_stage}_to_{target_stage}": {
+            "source_stage": source_stage,
+            "target_stage": target_stage,
+            "addresses": len(stage_override_addresses[key]),
+            "wallet_airdrop_atto": str(stage_override_wallet[key]),
+            "staked_to_vault_atto": str(stage_override_staked[key]),
+            "total_claim_atto": str(
+                stage_override_wallet[key] + stage_override_staked[key]
+            ),
+        }
+        for key in sorted(stage_override_addresses)
+        for source_stage, target_stage in (key,)
     }
     all_treatments = sorted(set(treatment_wallet) | set(treatment_staked))
     issuance_treatment_totals = {
@@ -1537,6 +1581,9 @@ def main():
         held_governor_assets["initial"] += int(
             stages["initial_assets_atto"]
         )
+        held_governor_assets["exchange_aggregate"] += int(
+            stages["exchange_aggregate_assets_atto"]
+        )
         held_governor_assets["next_stage"] += int(
             stages["next_stage_assets_atto"]
         )
@@ -1547,7 +1594,7 @@ def main():
             stages["manual_review_assets_atto"]
         )
     stage_policy_gates = defaultdict(list)
-    release_stages = {"initial"}
+    release_stages = {"initial", "exchange_aggregate"}
     for decision in pending_policy_decisions:
         scope = POLICY_DECISION_STAGE_SCOPE.get(
             decision,
@@ -1556,7 +1603,13 @@ def main():
         for stage in scope:
             stage_policy_gates[stage].append(decision)
     stage_readiness = {}
-    for stage in ("initial", "next_stage", "deferred", "manual_review"):
+    for stage in (
+        "initial",
+        "exchange_aggregate",
+        "next_stage",
+        "deferred",
+        "manual_review",
+    ):
         totals = stage_totals.get(
             stage,
             {
@@ -1625,6 +1678,7 @@ def main():
         "migration_stage_policy_rows": len(migration_stages),
         "pending_stage_review_claims": pending_stage_review_claims,
         "stage_totals": stage_totals,
+        "stage_overrides": stage_overrides,
         "stage_readiness": stage_readiness,
         "initial_stage_status": stage_readiness["initial"]["status"],
         "issuance_treatment_totals": issuance_treatment_totals,
