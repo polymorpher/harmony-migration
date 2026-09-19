@@ -1,4 +1,4 @@
-.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage manifest private-manifest check-public
+.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage exchange-native-report manifest private-manifest check-public
 
 SUPPLY_AUDIT_REPO ?= ../harmony-supply-audit
 
@@ -83,6 +83,19 @@ initial-stage: check-python
 		--unresolved-output routing/local/generated/initial-stage/unresolved.csv \
 		--summary routing/local/generated/initial-stage/summary.json \
 		--report artifacts/migration-policy-20260917/INITIAL_STAGE_MATERIALIZATION_2026-09-17.md \
+		--replace
+
+exchange-native-report: check-python
+	python3 toolkit/scripts/exchanges/build-exchange-native-policy.py \
+		--audits-dir artifacts/exchange-accounting-20260917/audits \
+		--native-claims artifacts/cutoff-20260910/claims/all-address-native-claims-cutoff-metadata.csv \
+		--delegations artifacts/cutoff-20260910/state/staked-to-vault-by-delegation-rpc.csv \
+		--vaults artifacts/contract-review-20260911/out/base-validator-vault-deposits.csv \
+		--gate-addition exchanges/wallets-raw/gate-addition.txt \
+		--gate-destination exchanges/destinations/gate.txt \
+		--output-dir artifacts/exchange-accounting-20260917 \
+		--summary artifacts/exchange-accounting-20260917/exchange-native-summary.json \
+		--report artifacts/exchange-accounting-20260917/EXCHANGE_AGGREGATE_DELIVERY_2026-09-18.md \
 		--replace
 
 manifest: check-python
