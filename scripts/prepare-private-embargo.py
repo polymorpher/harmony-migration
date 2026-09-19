@@ -101,6 +101,14 @@ FINDING_MAPPINGS = (
         ROOT
         / "artifacts"
         / "exchange-accounting-20260917"
+        / "EXCHANGE_AGGREGATE_DELIVERY_2026-09-18.md",
+        DESTINATION_FINDINGS / "exchange-aggregate-delivery.md",
+        "destination-mapping",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "exchange-accounting-20260917"
         / "GATE_AUTOMATIC_AIRDROP_AUDIT_2026-09-17.md",
         DESTINATION_FINDINGS / "gate-automatic-airdrop-audit.md",
         "destination-mapping",
@@ -370,6 +378,15 @@ RESULT_MAPPINGS = (
         ROOT
         / "artifacts"
         / "exchange-accounting-20260917"
+        / "exchange-native-summary.json",
+        DESTINATION_RESULTS / "exchange-native-summary.json",
+        "destination-mapping",
+        "policy-scenario",
+    ),
+    (
+        ROOT
+        / "artifacts"
+        / "exchange-accounting-20260917"
         / "routing-verification.json",
         DESTINATION_RESULTS / "exchange-routing-verification.json",
         "destination-mapping",
@@ -614,7 +631,8 @@ These unredacted files are under the numerical-results embargo:
 - `claim-accounting/initial-stage-materialization.md` — initial-only wallet,
   vault-share, validator-vault, unresolved, and readiness outputs;
 - `claim-accounting/wone-holder-qualification.md` — cutoff WONE holder
-  reconciliation, combined threshold, wallet amount, and source split;
+  reconciliation, combined threshold, aggregate-exchange exception, wallet
+  amount, and source split;
 - `destination-mapping/contract-account-review.md` — contract
   classifications, balances, destination evidence, and reviewed stage policy;
 - `destination-mapping/historical-treasury-routing-audit.md` — retained
@@ -624,8 +642,12 @@ These unredacted files are under the numerical-results embargo:
 - `destination-mapping/non-issuance.md` — current terminal non-issuance policy
   for those exact amounts.
 - `destination-mapping/exchange-migration-accounting.md` and
-  `exchange-memos/` — per-exchange cutoff totals, balance/activity breakdowns,
-  destination readiness, and input reconciliation;
+  `exchange-memos/` — per-exchange wallet counts, submitted and cutoff balance
+  statistics/breakdowns, signature-verification coverage, destination
+  readiness, and input reconciliation;
+- `destination-mapping/exchange-aggregate-delivery.md` — native ONE exchange
+  totals, separate Gate reconciliation, and Binance.US delegation-to-wallet
+  treatment;
 - `destination-mapping/gate-automatic-airdrop-audit.md` — Gate automatic and
   residual totals plus the identities of its complete private address lists.
 
@@ -649,8 +671,8 @@ an independent reproduction with the original migration calculation.
   independent RPC summaries;
 - `destination-mapping/` contains the preliminary and corrected eligibility
   splits, contract-review summary, vault-share allocation, sparse routing and
-  governor exceptions, exchange normalization/accounting summaries, unresolved
-  work queue, and non-issuance scenario.
+  governor exceptions, exchange normalization/accounting and release-stage
+  summaries, unresolved work queue, and non-issuance scenario.
 
 `index.json` records each result's domain, evidence classification, source
 identity, packaged identity, byte size, and optional row count.

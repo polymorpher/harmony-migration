@@ -43,7 +43,7 @@
     "contract": "0xcf664087a5bb0237a0bad6742852ec6c8d69a27a",
     "source_shard": 0,
     "holder_source": "cutoff-pinned archival-node event replay reconciled to totalSupply and native reserve",
-    "qualified_holder_treatment": "wallet airdrop with matching reserve source classified as redistributed",
+    "qualified_holder_treatment": "wallet delivery for ordinary-threshold rows plus a non-Gate aggregate-exchange exception, with matching reserve source classified as redistributed",
     "remainder_treatment": "not issued; retained in the 2050 premint reserve",
     "self_held_wone": "excluded from recipient delivery"
   },
@@ -51,6 +51,7 @@
     "threshold": "native_total_claim_atto + wone_balance_atto >= 1000 ONE",
     "threshold_timing": "evaluate snapshot qualification before deductions or routing",
     "initial_stage": "positive eligible wallets with indexed activity in the six calendar months before cutoff",
+    "exchange_aggregate_stage": "every positive native ONE, WONE, and vault-share entitlement in a confirmed non-Gate inventory; no individual threshold or activity gate",
     "code_bearing_accounts": "preliminary review; verified validator-wrapper accounts remain key-controlled wallets",
     "reviewed_contracts": "multisig, LayerZero collateral, and 1wallet allocations are next stage; SmartVault and other reviewed genuine-contract allocations are not issued",
     "stage_and_treatment": "migration stage, issuance treatment, account classification, and destination readiness are separate fields",
@@ -62,7 +63,7 @@
   "exchange_delivery_overlay": {
     "policy": "exchanges/exchange-policy.json",
     "gate": "ordinary inclusive threshold and account classification; no aggregate reroute",
-    "non_gate": "remove qualifying submitted wallets from implicit automatic delivery and route positive current claims to a confirmed aggregate exchange destination",
+    "non_gate": "route every positive native and WONE claim through a release-authorized aggregate exchange stage regardless of individual threshold or activity; remove threshold overlap from implicit automatic delivery",
     "missing_destination": "hold with no source-address fallback",
     "submitted_balance_role": "reconciliation evidence only; never a replacement for cutoff chain accounting"
   },
