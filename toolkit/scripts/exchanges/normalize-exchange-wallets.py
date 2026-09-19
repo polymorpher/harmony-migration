@@ -24,6 +24,7 @@ XLSX_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 XLSX_DOCUMENT_REL = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 )
+DOCX_MAIN = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 SECP256K1_P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
 SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 SECP256K1_G = (
@@ -55,6 +56,11 @@ FORBIDDEN_XLSX_PARTS = (
     "externalLinks/",
     "vbaProject.bin",
     "macrosheets/",
+)
+FORBIDDEN_DOCX_PARTS = (
+    "word/activeX/",
+    "word/embeddings/",
+    "word/vbaProject.bin",
 )
 
 
@@ -137,7 +143,8 @@ def shared_strings(archive):
     path = "xl/sharedStrings.xml"
     if path not in archive.namelist():
         return []
-    root = ElementTree.parse(archive.open(path)).getroot()
+    with archive.open(path) as source:
+        root = ElementTree.parse(source).getroot()
     return [
         "".join(
             node.text or ""
@@ -148,10 +155,10 @@ def shared_strings(archive):
 
 
 def workbook_sheet_path(archive, expected_name):
-    workbook = ElementTree.parse(archive.open("xl/workbook.xml")).getroot()
-    relationships = ElementTree.parse(
-        archive.open("xl/_rels/workbook.xml.rels")
-    ).getroot()
+    with archive.open("xl/workbook.xml") as source:
+        workbook = ElementTree.parse(source).getroot()
+    with archive.open("xl/_rels/workbook.xml.rels") as source:
+        relationships = ElementTree.parse(source).getroot()
     targets = {
         relation.attrib["Id"]: relation.attrib["Target"]
         for relation in relationships.findall("{*}Relationship")
@@ -190,65 +197,99 @@ def xlsx_rows(path, sheet_name):
         rows = []
         physical_data_rows = 0
         blank_data_rows = 0
-        for _event, element in ElementTree.iterparse(
-            archive.open(sheet_path), events=("end",)
-        ):
-            if element.tag != f"{{{XLSX_MAIN}}}row":
-                continue
-            row_number = int(element.attrib.get("r", len(rows) + 1))
-            values = {}
-            for cell in element.findall(f"{{{XLSX_MAIN}}}c"):
-                if cell.find(f"{{{XLSX_MAIN}}}f") is not None:
-                    raise ValueError(
-                        f"{path}:{sheet_name}!{cell.attrib.get('r')}: "
-                        "formulas are not allowed"
-                    )
-                index = column_number(cell.attrib.get("r", ""))
-                cell_type = cell.attrib.get("t", "")
-                value = ""
-                if cell_type == "inlineStr":
-                    value = "".join(
-                        node.text or ""
-                        for node in cell.iter(f"{{{XLSX_MAIN}}}t")
-                    )
-                else:
-                    raw = cell.find(f"{{{XLSX_MAIN}}}v")
-                    if raw is not None and raw.text is not None:
-                        value = raw.text
-                        if cell_type == "s":
-                            try:
-                                value = strings[int(value)]
-                            except (IndexError, ValueError) as error:
-                                raise ValueError(
-                                    f"{path}:{sheet_name}!"
-                                    f"{cell.attrib.get('r')}: "
-                                    "invalid shared-string reference"
-                                ) from error
-                values[index] = value
-            width = max(values, default=-1) + 1
-            populated = [values.get(index, "") for index in range(width)]
-            if header is None:
-                if not any(str(value).strip() for value in populated):
+        with archive.open(sheet_path) as worksheet:
+            for _event, element in ElementTree.iterparse(
+                worksheet, events=("end",)
+            ):
+                if element.tag != f"{{{XLSX_MAIN}}}row":
+                    continue
+                row_number = int(element.attrib.get("r", len(rows) + 1))
+                values = {}
+                for cell in element.findall(f"{{{XLSX_MAIN}}}c"):
+                    if cell.find(f"{{{XLSX_MAIN}}}f") is not None:
+                        raise ValueError(
+                            f"{path}:{sheet_name}!{cell.attrib.get('r')}: "
+                            "formulas are not allowed"
+                        )
+                    index = column_number(cell.attrib.get("r", ""))
+                    cell_type = cell.attrib.get("t", "")
+                    value = ""
+                    if cell_type == "inlineStr":
+                        value = "".join(
+                            node.text or ""
+                            for node in cell.iter(f"{{{XLSX_MAIN}}}t")
+                        )
+                    else:
+                        raw = cell.find(f"{{{XLSX_MAIN}}}v")
+                        if raw is not None and raw.text is not None:
+                            value = raw.text
+                            if cell_type == "s":
+                                try:
+                                    value = strings[int(value)]
+                                except (IndexError, ValueError) as error:
+                                    raise ValueError(
+                                        f"{path}:{sheet_name}!"
+                                        f"{cell.attrib.get('r')}: "
+                                        "invalid shared-string reference"
+                                    ) from error
+                    values[index] = value
+                width = max(values, default=-1) + 1
+                populated = [values.get(index, "") for index in range(width)]
+                if header is None:
+                    if not any(str(value).strip() for value in populated):
+                        element.clear()
+                        continue
+                    header = [str(value).strip() for value in populated]
+                    if not all(header) or len(set(header)) != len(header):
+                        raise ValueError(f"{path}: invalid XLSX header")
                     element.clear()
                     continue
-                header = [str(value).strip() for value in populated]
-                if not all(header) or len(set(header)) != len(header):
-                    raise ValueError(f"{path}: invalid XLSX header")
+                physical_data_rows += 1
+                record = {
+                    field: str(values.get(index, "")).strip()
+                    for index, field in enumerate(header)
+                }
+                if any(record.values()):
+                    rows.append((row_number, record))
+                else:
+                    blank_data_rows += 1
                 element.clear()
-                continue
-            physical_data_rows += 1
-            record = {
-                field: str(values.get(index, "")).strip()
-                for index, field in enumerate(header)
-            }
-            if any(record.values()):
-                rows.append((row_number, record))
-            else:
-                blank_data_rows += 1
-            element.clear()
         if header is None:
             raise ValueError(f"{path}: XLSX has no populated header")
         return header, rows, physical_data_rows, blank_data_rows
+
+
+def docx_paragraphs(path):
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        for name in names:
+            if any(
+                name == part or name.startswith(part)
+                for part in FORBIDDEN_DOCX_PARTS
+            ):
+                raise ValueError(f"{path}: forbidden DOCX part {name}")
+        document = "word/document.xml"
+        if document not in names:
+            raise ValueError(f"{path}: DOCX has no main document")
+        with archive.open(document) as source:
+            root = ElementTree.parse(source).getroot()
+        paragraphs = []
+        for paragraph in root.iter(f"{{{DOCX_MAIN}}}p"):
+            parts = []
+            for node in paragraph.iter():
+                if node.tag == f"{{{DOCX_MAIN}}}t":
+                    parts.append(node.text or "")
+                elif node.tag == f"{{{DOCX_MAIN}}}tab":
+                    parts.append("\t")
+                elif node.tag in {
+                    f"{{{DOCX_MAIN}}}br",
+                    f"{{{DOCX_MAIN}}}cr",
+                }:
+                    parts.append("\n")
+            text = "".join(parts).strip()
+            if text:
+                paragraphs.append(text)
+        return paragraphs
 
 
 def point_add(left, right):
@@ -472,7 +513,7 @@ def parse_xlsx_address(config, path, raw_sha256, destination, state):
         )
         for row_number, record in source_rows
     ]
-    return rows, physical, blank
+    return rows, physical, blank, {}
 
 
 def parse_okx(config, path, raw_sha256, destination, state):
@@ -509,7 +550,7 @@ def parse_okx(config, path, raw_sha256, destination, state):
                 }
             )
             rows.append(row)
-    return rows, physical, blank
+    return rows, physical, blank, {}
 
 
 def message_addresses(message):
@@ -521,6 +562,336 @@ def message_addresses(message):
         normalize_address(candidate, "signed message")
         for candidate in candidates
     }
+
+
+def parse_kucoin_authorizations(path, destination):
+    paragraphs = docx_paragraphs(path)
+    messages = [
+        paragraph
+        for paragraph in paragraphs
+        if paragraph.startswith("Kucoin owns this address,")
+    ]
+    if len(messages) != 1:
+        raise ValueError(f"{path}: expected one KuCoin authorization message")
+    message = messages[0]
+    configured = normalize_address(destination, str(path))
+    if message_addresses(message) != {configured}:
+        raise ValueError(
+            f"{path}: signed message does not name configured destination"
+        )
+    records = {}
+    pattern = re.compile(
+        r"(one1[023456789acdefghjklmnpqrstuvwxyz]{38})"
+        r"\s+(0x[0-9a-fA-F]{130})"
+    )
+    for paragraph in paragraphs:
+        match = pattern.fullmatch(paragraph)
+        if match is None:
+            continue
+        one_address, signature = match.groups()
+        address = normalize_address(one_address, str(path))
+        if address in records:
+            raise ValueError(f"{path}: duplicate authorization address")
+        signer = recover_eip191_address(message, signature, str(path))
+        if signer != address:
+            raise ValueError(f"{path}: signature signer mismatch")
+        records[address] = {
+            "one_address": one_address,
+            "signature": signature,
+        }
+    if not records:
+        raise ValueError(f"{path}: no KuCoin authorization signatures")
+    return message, records
+
+
+def kucoin_summary_metadata(
+    config,
+    path,
+    sheet_totals,
+    sheet_rows,
+    sheet_positive_rows,
+):
+    header, rows, _physical, _blank = xlsx_rows(path, "summary")
+    if len(header) != 3 or header[0] != "shard0":
+        raise ValueError(f"{path}: unexpected KuCoin summary header")
+    if (
+        lib.one_str_to_atto(header[1]) != sheet_totals["shard0"]
+        or not header[2].isdigit()
+        or int(header[2]) != sheet_totals["shard0"]
+    ):
+        raise ValueError(f"{path}: shard0 summary total mismatch")
+    labels = {}
+    for row_number, row in rows:
+        label = row[header[0]]
+        if label in labels:
+            raise ValueError(
+                f"{path}:summary:{row_number}: duplicate summary label"
+            )
+        labels[label] = {
+            "value": row[header[1]],
+            "atto": row[header[2]],
+        }
+    expected_totals = {
+        "shard1": sheet_totals["shard1"],
+        "total": sum(sheet_totals.values()),
+    }
+    for label, expected in expected_totals.items():
+        record = labels.get(label)
+        if (
+            record is None
+            or lib.one_str_to_atto(record["value"]) != expected
+            or not record["atto"].isdigit()
+            or int(record["atto"]) != expected
+        ):
+            raise ValueError(f"{path}: {label} summary total mismatch")
+    expected_counts = {
+        "shard0 地址数": sheet_rows["shard0"],
+        "shard1 非 0 地址数": sheet_positive_rows["shard1"],
+    }
+    for label, expected in expected_counts.items():
+        record = labels.get(label)
+        if (
+            record is None
+            or not record["value"].isdigit()
+            or int(record["value"]) != expected
+        ):
+            raise ValueError(f"{path}: {label} summary count mismatch")
+    snapshot_blocks = {}
+    snapshot_times = {}
+    for shard in ("shard0", "shard1"):
+        block_record = labels.get(f"{shard} 快照高度")
+        time_record = labels.get(f"{shard} 快照时间 (UTC)")
+        if (
+            block_record is None
+            or not block_record["value"].isdigit()
+            or time_record is None
+            or not re.fullmatch(
+                r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}",
+                time_record["value"],
+            )
+        ):
+            raise ValueError(f"{path}: invalid {shard} snapshot identity")
+        snapshot_blocks[shard] = int(block_record["value"])
+        snapshot_times[shard] = (
+            time_record["value"].replace(" ", "T") + "Z"
+        )
+    expected_blocks = config.get("snapshot_blocks", {})
+    expected_times = config.get("snapshot_times_utc", {})
+    if snapshot_blocks != expected_blocks or snapshot_times != expected_times:
+        raise ValueError(f"{path}: KuCoin snapshot identity mismatch")
+    return {
+        "source_snapshot_blocks": snapshot_blocks,
+        "source_snapshot_times_utc": snapshot_times,
+        "source_summary_balance_atto": {
+            label: str(value) for label, value in expected_totals.items()
+        }
+        | {"shard0": str(sheet_totals["shard0"])},
+    }
+
+
+def parse_kucoin(config, path, raw_sha256, destination, state):
+    sheet_definitions = (
+        (
+            "shard0",
+            ["address", "confirmBalance", "sign", "balanceWei"],
+            "confirmBalance",
+        ),
+        (
+            "shard1",
+            ["address", "balance", "sign", "balanceWei"],
+            "balance",
+        ),
+    )
+    entries = {}
+    source_by_sheet = {}
+    sheet_rows = {}
+    sheet_positive_rows = {}
+    sheet_totals = {}
+    physical_total = 0
+    blank_total = 0
+    for sheet, expected_header, balance_field in sheet_definitions:
+        header, source_rows, physical, blank = xlsx_rows(path, sheet)
+        if header != expected_header:
+            raise ValueError(
+                f"{path}:{sheet}: unexpected fields {header}"
+            )
+        physical_total += physical
+        blank_total += blank
+        sheet_rows[sheet] = len(source_rows)
+        sheet_total = 0
+        sheet_entries = {}
+        for row_number, record in source_rows:
+            context = f"{path}:{sheet}:{row_number}"
+            address = normalize_address(record["address"], context)
+            if address in sheet_entries:
+                raise ValueError(f"{context}: duplicate address in sheet")
+            amount = record["balanceWei"]
+            if not amount.isdigit():
+                raise ValueError(f"{context}: invalid atto-ONE balance")
+            amount_atto = int(amount)
+            if lib.one_str_to_atto(record[balance_field]) != amount_atto:
+                raise ValueError(f"{context}: decimal/atto balance mismatch")
+            marker = record["sign"]
+            if marker not in {"", "SIGN"}:
+                raise ValueError(f"{context}: invalid signature marker")
+            source = {
+                "address_raw": record["address"],
+                "balance_atto": amount_atto,
+                "row": row_number,
+                "signature_marked": marker == "SIGN",
+            }
+            sheet_entries[address] = source
+            entry = entries.setdefault(
+                address,
+                {
+                    "address_raw": record["address"],
+                    "balance_atto": 0,
+                    "sources": [],
+                },
+            )
+            entry["balance_atto"] += amount_atto
+            entry["sources"].append((sheet, source))
+            sheet_total += amount_atto
+        source_by_sheet[sheet] = sheet_entries
+        sheet_positive_rows[sheet] = sum(
+            source["balance_atto"] > 0 for source in sheet_entries.values()
+        )
+        sheet_totals[sheet] = sheet_total
+
+    authorization_name = config.get("authorization_file")
+    if not authorization_name:
+        raise ValueError(f"{path}: KuCoin authorization file is not configured")
+    authorization_path = path.parent / authorization_name
+    if not authorization_path.is_file():
+        raise ValueError(f"{path}: missing {authorization_name}")
+    message, authorizations = parse_kucoin_authorizations(
+        authorization_path,
+        destination,
+    )
+
+    high_header, high_rows, high_physical, high_blank = xlsx_rows(
+        path,
+        "balance >= 1000",
+    )
+    if high_header != [
+        "shard",
+        "balance",
+        "balanceWei",
+        "address",
+        "EIP-191 signature",
+    ]:
+        raise ValueError(f"{path}: unexpected KuCoin signature-sheet fields")
+    high_addresses = set()
+    for row_number, record in high_rows:
+        context = f"{path}:balance >= 1000:{row_number}"
+        shard = record["shard"]
+        if shard not in source_by_sheet:
+            raise ValueError(f"{context}: invalid shard")
+        address = normalize_address(record["address"], context)
+        if address in high_addresses:
+            raise ValueError(f"{context}: duplicate signature address")
+        high_addresses.add(address)
+        source = source_by_sheet[shard].get(address)
+        if source is None:
+            raise ValueError(f"{context}: address is absent from source sheet")
+        amount = record["balanceWei"]
+        if (
+            not amount.isdigit()
+            or int(amount) != source["balance_atto"]
+            or lib.one_str_to_atto(record["balance"]) != source["balance_atto"]
+        ):
+            raise ValueError(f"{context}: signature-sheet balance mismatch")
+        if not source["signature_marked"]:
+            raise ValueError(f"{context}: source row is not signature-marked")
+        authorization = authorizations.get(address)
+        if (
+            authorization is None
+            or authorization["signature"] != record["EIP-191 signature"]
+        ):
+            raise ValueError(f"{context}: authorization artifact mismatch")
+    marked_addresses = {
+        address
+        for sheet_entries in source_by_sheet.values()
+        for address, source in sheet_entries.items()
+        if source["signature_marked"]
+    }
+    if (
+        high_addresses != marked_addresses
+        or high_addresses != set(authorizations)
+    ):
+        raise ValueError(
+            f"{path}: KuCoin signature inventories do not match"
+        )
+
+    details = kucoin_summary_metadata(
+        config,
+        path,
+        sheet_totals,
+        sheet_rows,
+        sheet_positive_rows,
+    )
+    rows = []
+    message_sha256 = hashlib.sha256(message.encode("utf-8")).hexdigest()
+    for address, entry in entries.items():
+        sources = entry["sources"]
+        source_sheet = ";".join(sheet for sheet, _source in sources)
+        source_row = ";".join(
+            f"{sheet}:{source['row']}" for sheet, source in sources
+        )
+        row = base_row(
+            config["id"],
+            path,
+            raw_sha256,
+            source_sheet,
+            source_row,
+            entry["address_raw"],
+            destination,
+            state,
+        )
+        row.update(
+            {
+                "submitted_balance_raw": lib.atto_to_one_str(
+                    entry["balance_atto"]
+                ),
+                "submitted_balance_unit": "ONE",
+                "submitted_balance_atto": str(entry["balance_atto"]),
+            }
+        )
+        authorization = authorizations.get(address)
+        if authorization is not None:
+            row.update(
+                {
+                    "authorization_type": "EIP-191",
+                    "authorization_destination": lib.to_checksum(
+                        normalize_address(destination, str(path))
+                    ),
+                    "authorization_message_sha256": message_sha256,
+                    "authorization_signature_sha256": hashlib.sha256(
+                        authorization["signature"].encode("utf-8")
+                    ).hexdigest(),
+                    "authorization_status": "verified",
+                }
+            )
+        rows.append(row)
+    details.update(
+        {
+            "authorization_artifact": str(authorization_path),
+            "authorization_artifact_sha256": file_sha256(authorization_path),
+            "authorization_designated_rows": len(high_addresses),
+            "authorization_message_sha256": message_sha256,
+            "cross_sheet_merged_rows": sum(
+                len(entry["sources"]) > 1 for entry in entries.values()
+            ),
+            "signature_sheet_blank_rows": high_blank,
+            "signature_sheet_physical_rows": high_physical,
+            "source_sheet_balance_atto": {
+                sheet: str(value) for sheet, value in sheet_totals.items()
+            },
+            "source_sheet_positive_rows": sheet_positive_rows,
+            "source_sheet_rows": sheet_rows,
+        }
+    )
+    return rows, physical_total, blank_total, details
 
 
 def parse_mexc(config, path, raw_sha256, destination, state):
@@ -584,7 +955,11 @@ def parse_mexc(config, path, raw_sha256, destination, state):
             }
         )
         rows.append(row)
-    return rows, physical, blank
+    return rows, physical, blank, {
+        "authorization_artifact": str(path),
+        "authorization_artifact_sha256": raw_sha256,
+        "authorization_designated_rows": len(rows),
+    }
 
 
 def load_policy(path):
@@ -622,6 +997,7 @@ def main():
     policy = load_policy(policy_path)
     parsers = {
         "xlsx_address": parse_xlsx_address,
+        "xlsx_kucoin_eip191": parse_kucoin,
         "xlsx_mexc_eip191": parse_mexc,
         "csv_okx_atto": parse_okx,
     }
@@ -639,6 +1015,7 @@ def main():
         raw_sha256 = None
         physical_rows = 0
         blank_rows = 0
+        parser_details = {}
         inventory_status = config["raw_inventory_status"]
         if raw_path is not None:
             if not raw_path.is_file():
@@ -650,7 +1027,12 @@ def main():
                     raise ValueError(
                         f"unsupported input type for {exchange_id}"
                     )
-                rows, physical_rows, blank_rows = parser(
+                (
+                    rows,
+                    physical_rows,
+                    blank_rows,
+                    parser_details,
+                ) = parser(
                     config,
                     raw_path,
                     raw_sha256,
@@ -676,10 +1058,33 @@ def main():
         output_path = output_dir / f"{exchange_id}.csv"
         atomic_csv(output_path, rows, args.replace)
         output_paths.append(output_path)
+        authorization_provided = sum(
+            row["authorization_type"] != "none" for row in rows
+        )
+        authorization_verified = sum(
+            row["authorization_status"] == "verified" for row in rows
+        )
+        authorization_designated = parser_details.get(
+            "authorization_designated_rows",
+            authorization_provided,
+        )
+        if authorization_designated < authorization_provided:
+            raise ValueError(
+                f"{exchange_id}: more signatures than designated rows"
+            )
+        submitted_total = sum(
+            int(row["submitted_balance_atto"] or 0) for row in rows
+        )
         summaries[exchange_id] = {
-            "authorization_verified_rows": sum(
-                row["authorization_status"] == "verified" for row in rows
+            "authorization_designated_rows": authorization_designated,
+            "authorization_failed_rows": (
+                authorization_designated - authorization_verified
             ),
+            "authorization_not_designated_rows": (
+                len(rows) - authorization_designated
+            ),
+            "authorization_provided_rows": authorization_provided,
+            "authorization_verified_rows": authorization_verified,
             "blank_source_rows": blank_rows,
             "configured_destination": destination,
             "configured_destination_status": destination_state,
@@ -698,10 +1103,17 @@ def main():
             "output": str(output_path),
             "output_sha256": file_sha256(output_path),
             "physical_source_rows": physical_rows,
+            "parser_details": parser_details,
             "raw_file": str(raw_path) if raw_path is not None else None,
             "raw_file_sha256": raw_sha256,
+            "submitted_balance_atto": str(submitted_total),
+            "submitted_balance_one": lib.atto_to_one_str(submitted_total),
             "submitted_balance_rows": sum(
                 bool(row["submitted_balance_atto"]) for row in rows
+            ),
+            "submitted_balance_scope": config.get(
+                "submitted_balance_scope",
+                "liquid_shard0",
             ),
         }
     hold_reasons = []
