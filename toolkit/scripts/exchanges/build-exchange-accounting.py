@@ -74,6 +74,7 @@ AUDIT_FIELDS = (
     "last_activity_type",
     "activity_status",
     "activity_age_bucket",
+    "submitted_balance_scope",
     "submitted_balance_atto",
     "submitted_balance_reconciliation",
     "submitted_balance_delta_atto",
@@ -152,6 +153,14 @@ ACTIVITY_BUCKET_ORDER = (
     "older_than_48_months",
     "not_found",
     "not_collected",
+)
+BALANCE_BUCKET_ORDER = (
+    "zero_or_no_cutoff_value",
+    "over_0_under_1",
+    "at_least_1_under_10",
+    "at_least_10_under_100",
+    "at_least_100_under_1000",
+    "at_least_1000",
 )
 
 
@@ -502,19 +511,29 @@ def claim_values(claim, wone):
     return values
 
 
-def submitted_reconciliation(normalized, claim):
+def submitted_reconciliation(normalized, claim, scope):
     submitted = normalized["submitted_balance_atto"]
     if not submitted:
         return "", "not_provided", ""
     submitted_value = int(submitted)
-    cutoff_value = int(claim["liquid_shard0_atto"]) if claim else 0
+    if scope == "liquid_shard0":
+        cutoff_value = int(claim["liquid_shard0_atto"]) if claim else 0
+    elif scope == "liquid_total":
+        cutoff_value = (
+            int(claim["liquid_shard0_atto"])
+            + int(claim["liquid_shard1_atto"])
+            if claim
+            else 0
+        )
+    else:
+        raise ValueError(f"unsupported submitted balance scope: {scope}")
     delta = cutoff_value - submitted_value
     if claim is None:
         status = "claim_not_found"
     elif delta == 0:
-        status = "exact_liquid_shard0_match"
+        status = f"exact_{scope}_match"
     elif delta > 0:
-        status = "cutoff_liquid_higher"
+        status = f"cutoff_{scope}_higher"
     else:
         status = "submitted_balance_higher"
     return str(submitted_value), status, str(delta)
@@ -551,29 +570,30 @@ def build_audit_row(
             f"qualified exchange address missing migration stage: "
             f"{normalized['address_hex']}"
         )
-    migration_stage = (
-        stage_record["stage"]
-        if stage_record is not None
-        else "manual_review"
-        if (
-            not qualifies
-            and config["delivery_policy"] == "manual_current_claim"
-            and values["total_claim"] > 0
+    if config["delivery_policy"] == "manual_current_claim":
+        migration_stage = (
+            "exchange_aggregate" if values["total_claim"] > 0 else ""
         )
-        else "below_threshold"
-        if not qualifies
-        else "stage_pending"
-    )
-    issuance_treatment = (
-        stage_record["treatment"]
-        if stage_record is not None
-        else "issue"
-    )
-    target_allocation = (
-        stage_record["allocation"]
-        if stage_record is not None
-        else values["total_claim"]
-    )
+        issuance_treatment = "issue"
+        target_allocation = values["total_claim"]
+    else:
+        migration_stage = (
+            stage_record["stage"]
+            if stage_record is not None
+            else "below_threshold"
+            if not qualifies
+            else "stage_pending"
+        )
+        issuance_treatment = (
+            stage_record["treatment"]
+            if stage_record is not None
+            else "issue"
+        )
+        target_allocation = (
+            stage_record["allocation"]
+            if stage_record is not None
+            else values["total_claim"]
+        )
     deduction = values["total_claim"] - target_allocation
     if deduction < 0:
         raise ValueError("stage allocation exceeds exchange claim")
@@ -623,7 +643,7 @@ def build_audit_row(
             planned_status = "not_issued"
         elif not planned_wallet and not planned_staked:
             planned_status = (
-                "wone_below_threshold_not_in_current_claim"
+                "wone_not_in_migration_claim"
                 if wone
                 else "no_cutoff_claim"
             )
@@ -650,8 +670,14 @@ def build_audit_row(
     values["planned_staked_to_vault"] = planned_staked
     values["planned_total_entitlement"] = planned_total
     values["remaining_not_airdropped"] = remaining
+    submitted_scope = config.get(
+        "submitted_balance_scope",
+        "liquid_shard0",
+    )
     submitted, reconciliation, delta = submitted_reconciliation(
-        normalized, claim
+        normalized,
+        claim,
+        submitted_scope,
     )
     row = {
         "exchange_id": config["id"],
@@ -680,6 +706,9 @@ def build_audit_row(
             )
             if activity_status == "found"
             else activity_status
+        ),
+        "submitted_balance_scope": (
+            submitted_scope if normalized["submitted_balance_atto"] else ""
         ),
         "submitted_balance_atto": submitted,
         "submitted_balance_reconciliation": reconciliation,
@@ -721,6 +750,88 @@ def balance_bucket(value):
         if value < upper:
             return label
     return "at_least_1000"
+
+
+def amount_statistics(values):
+    values = sorted(int(value) for value in values)
+    if not values:
+        return {
+            "rows": 0,
+            "positive_rows": 0,
+            "zero_rows": 0,
+            "total_atto": "0",
+            "total_one": lib.atto_to_one_str(0),
+            "minimum_atto": None,
+            "minimum_one": None,
+            "minimum_positive_atto": None,
+            "minimum_positive_one": None,
+            "mean_atto_rounded": None,
+            "mean_one": None,
+            "median_atto_rounded": None,
+            "median_one": None,
+            "maximum_atto": None,
+            "maximum_one": None,
+        }
+    if values[0] < 0:
+        raise ValueError("negative balance in exchange statistics")
+    total = sum(values)
+    positive = [value for value in values if value > 0]
+    mean = (total + len(values) // 2) // len(values)
+    middle = len(values) // 2
+    median_numerator = (
+        values[middle] * 2
+        if len(values) % 2
+        else values[middle - 1] + values[middle]
+    )
+    median = (median_numerator + 1) // 2
+    minimum_positive = positive[0] if positive else None
+    return {
+        "rows": len(values),
+        "positive_rows": len(positive),
+        "zero_rows": len(values) - len(positive),
+        "total_atto": str(total),
+        "total_one": lib.atto_to_one_str(total),
+        "minimum_atto": str(values[0]),
+        "minimum_one": lib.atto_to_one_str(values[0]),
+        "minimum_positive_atto": (
+            str(minimum_positive) if minimum_positive is not None else None
+        ),
+        "minimum_positive_one": (
+            lib.atto_to_one_str(minimum_positive)
+            if minimum_positive is not None
+            else None
+        ),
+        "mean_atto_rounded": str(mean),
+        "mean_one": lib.atto_to_one_str(mean),
+        "median_atto_rounded": str(median),
+        "median_one": lib.atto_to_one_str(median),
+        "maximum_atto": str(values[-1]),
+        "maximum_one": lib.atto_to_one_str(values[-1]),
+    }
+
+
+def amount_bucket_stats(rows, field, skip_blank=False):
+    groups = {}
+    for row in rows:
+        raw = row[field]
+        if skip_blank and raw == "":
+            continue
+        value = int(raw or 0)
+        label = balance_bucket(value)
+        group = groups.setdefault(label, {"rows": 0, "total": 0})
+        group["rows"] += 1
+        group["total"] += value
+    return {
+        label: {
+            "rows": values["rows"],
+            "total_atto": str(values["total"]),
+            "total_one": lib.atto_to_one_str(values["total"]),
+        }
+        for label, values in sorted(
+            groups.items(),
+            key=lambda item: BALANCE_BUCKET_ORDER.index(item[0]),
+        )
+    }
 
 
 def grouped_stats(rows, field):
@@ -772,6 +883,18 @@ def summarize_exchange(exchange, rows):
         != totals["remaining_not_airdropped"]
     ):
         raise ValueError("exchange residual component split does not close")
+    if exchange["config"]["delivery_policy"] == "manual_current_claim":
+        incomplete_wone_rows = [
+            row["address_hex"]
+            for row in rows
+            if int(row["wone_balance_atto"])
+            != int(row["wone_airdrop_atto"])
+        ]
+        if incomplete_wone_rows:
+            raise ValueError(
+                "manual aggregate exchange delivery omits WONE for: "
+                + ", ".join(incomplete_wone_rows[:10])
+            )
     balance_rows = [dict(row) for row in rows]
     for row in balance_rows:
         row["balance_bucket"] = balance_bucket(
@@ -790,6 +913,23 @@ def summarize_exchange(exchange, rows):
         memo_status = "initial_wallet_stage_policy"
     else:
         memo_status = "ready_for_exchange_review"
+    submitted_values = [
+        int(row["submitted_balance_atto"])
+        for row in rows
+        if row["submitted_balance_atto"] != ""
+    ]
+    qualification_values = [
+        int(row["qualification_total_atto"]) for row in rows
+    ]
+    routed_values = [
+        int(row["planned_total_entitlement_atto"]) for row in rows
+    ]
+    reconciliation_statuses = {}
+    for row in rows:
+        status = row["submitted_balance_reconciliation"]
+        reconciliation_statuses[status] = (
+            reconciliation_statuses.get(status, 0) + 1
+        )
     return {
         "display_name": exchange["config"]["display_name"],
         "delivery_policy": exchange["config"]["delivery_policy"],
@@ -817,15 +957,56 @@ def summarize_exchange(exchange, rows):
         ),
         "destination": normalization["configured_destination"],
         "destination_status": destination_status,
+        "authorization_designated_rows": normalization.get(
+            "authorization_designated_rows",
+            normalization["authorization_verified_rows"],
+        ),
+        "authorization_failed_rows": normalization.get(
+            "authorization_failed_rows",
+            0,
+        ),
+        "authorization_not_designated_rows": normalization.get(
+            "authorization_not_designated_rows",
+            len(rows) - normalization["authorization_verified_rows"],
+        ),
+        "authorization_provided_rows": normalization.get(
+            "authorization_provided_rows",
+            normalization["authorization_verified_rows"],
+        ),
         "authorization_verified_rows": normalization[
             "authorization_verified_rows"
         ],
-        "submitted_balance_rows": normalization["submitted_balance_rows"],
-        "submitted_balance_exact_rows": sum(
-            row["submitted_balance_reconciliation"]
-            == "exact_liquid_shard0_match"
+        "authorization_verified_qualified_rows": sum(
+            row["qualification_status"] == "qualified"
+            and row["authorization_status"] == "verified"
             for row in rows
         ),
+        "authorization_unverified_qualified_rows": sum(
+            row["qualification_status"] == "qualified"
+            and row["authorization_status"] != "verified"
+            for row in rows
+        ),
+        "submitted_balance_rows": normalization["submitted_balance_rows"],
+        "submitted_balance_scope": normalization.get(
+            "submitted_balance_scope",
+            exchange["config"].get(
+                "submitted_balance_scope",
+                "liquid_shard0",
+            ),
+        ),
+        "submitted_balance_exact_rows": sum(
+            row["submitted_balance_reconciliation"].startswith("exact_")
+            for row in rows
+        ),
+        "submitted_balance_reconciliations": {
+            label: reconciliation_statuses[label]
+            for label in sorted(reconciliation_statuses)
+        },
+        "submitted_balance_statistics": amount_statistics(submitted_values),
+        "qualification_balance_statistics": amount_statistics(
+            qualification_values
+        ),
+        "routed_balance_statistics": amount_statistics(routed_values),
         "remaining_native_not_airdropped_atto": str(remaining_native),
         "remaining_native_not_airdropped_one": lib.atto_to_one_str(
             remaining_native
@@ -843,6 +1024,11 @@ def summarize_exchange(exchange, rows):
         "activity_age": grouped_stats(rows, "activity_age_bucket"),
         "migration_stages": grouped_stats(rows, "migration_stage"),
         "balance_buckets": grouped_stats(balance_rows, "balance_bucket"),
+        "submitted_balance_buckets": amount_bucket_stats(
+            rows,
+            "submitted_balance_atto",
+            skip_blank=True,
+        ),
         "planned_delivery_statuses": grouped_stats(
             rows, "planned_delivery_status"
         ),
@@ -853,6 +1039,10 @@ def one_display(value):
     amount = lib.atto_to_one_str(int(value))
     whole, fraction = amount.split(".")
     return f"{int(whole):,}.{fraction}"
+
+
+def optional_one_display(value):
+    return "n/a" if value is None else one_display(value)
 
 
 def markdown_table(headers, rows):
@@ -871,8 +1061,10 @@ def render_memo(config, summary, cutoff_text, threshold):
     manual = config["delivery_policy"] == "manual_current_claim"
     policy_text = (
         "Manual aggregate delivery to the configured exchange destination. "
-        "Positive current migration claims are explicitly routed even when "
-        "the source wallet is below the ordinary automatic threshold."
+        "Every positive native or WONE claim is explicitly routed regardless "
+        "of the ordinary automatic-wallet threshold or activity stage. "
+        "Threshold overlap is retained only to suppress accidental "
+        "same-address delivery."
         if manual
         else (
             "Ordinary same-address automatic delivery applies only to wallets "
@@ -882,6 +1074,75 @@ def render_memo(config, summary, cutoff_text, threshold):
     )
     destination = summary["destination"] or "Not yet supplied"
     totals = summary["totals"]
+    submitted_stats = summary["submitted_balance_statistics"]
+    qualification_stats = summary["qualification_balance_statistics"]
+    balance_stat_rows = [
+        (
+            "Rows",
+            f"{submitted_stats['rows']:,}",
+            f"{qualification_stats['rows']:,}",
+        ),
+        (
+            "Positive rows",
+            f"{submitted_stats['positive_rows']:,}",
+            f"{qualification_stats['positive_rows']:,}",
+        ),
+        (
+            "Zero/no-value rows",
+            f"{submitted_stats['zero_rows']:,}",
+            f"{qualification_stats['zero_rows']:,}",
+        ),
+        (
+            "Total",
+            one_display(submitted_stats["total_atto"]),
+            one_display(qualification_stats["total_atto"]),
+        ),
+        (
+            "Minimum",
+            optional_one_display(submitted_stats["minimum_atto"]),
+            optional_one_display(qualification_stats["minimum_atto"]),
+        ),
+        (
+            "Minimum positive",
+            optional_one_display(submitted_stats["minimum_positive_atto"]),
+            optional_one_display(
+                qualification_stats["minimum_positive_atto"]
+            ),
+        ),
+        (
+            "Median",
+            optional_one_display(submitted_stats["median_atto_rounded"]),
+            optional_one_display(
+                qualification_stats["median_atto_rounded"]
+            ),
+        ),
+        (
+            "Mean",
+            optional_one_display(submitted_stats["mean_atto_rounded"]),
+            optional_one_display(qualification_stats["mean_atto_rounded"]),
+        ),
+        (
+            "Maximum",
+            optional_one_display(submitted_stats["maximum_atto"]),
+            optional_one_display(qualification_stats["maximum_atto"]),
+        ),
+    ]
+    submitted_bucket_rows = [
+        (
+            label,
+            values["rows"],
+            one_display(values["total_atto"]),
+        )
+        for label, values in summary["submitted_balance_buckets"].items()
+    ]
+    submitted_breakdown = (
+        markdown_table(
+            ("Submitted balance bucket", "Wallets", "Submitted ONE"),
+            submitted_bucket_rows,
+        )
+        if submitted_bucket_rows
+        else "No submitted per-wallet balances were provided."
+    )
     balance_rows = [
         (
             label,
@@ -890,7 +1151,10 @@ def render_memo(config, summary, cutoff_text, threshold):
             one_display(values["planned_wallet_airdrop_atto"]),
             one_display(values["planned_staked_to_vault_atto"]),
         )
-        for label, values in summary["balance_buckets"].items()
+        for label, values in sorted(
+            summary["balance_buckets"].items(),
+            key=lambda item: BALANCE_BUCKET_ORDER.index(item[0]),
+        )
     ]
     activity_rows = [
         (
@@ -930,6 +1194,54 @@ def render_memo(config, summary, cutoff_text, threshold):
             "Review and confirm the address-level audit and destination "
             "out of band before signing any transfer."
         )
+    balance_scope = {
+        "liquid_shard0": "cutoff shard-0 liquid balance",
+        "liquid_total": "combined cutoff shard-0 and shard-1 liquid balance",
+    }.get(
+        summary["submitted_balance_scope"],
+        summary["submitted_balance_scope"],
+    )
+    reconciliation_rows = [
+        (status, rows)
+        for status, rows in summary[
+            "submitted_balance_reconciliations"
+        ].items()
+    ]
+    threshold_scope = (
+        "- Aggregate delivery threshold: none. Ordinary-threshold overlap is "
+        "retained only in the automatic-path exclusion audit."
+        if manual
+        else (
+            "- Inclusive ordinary automatic threshold: "
+            f"`{one_display(threshold)} ONE`"
+        )
+    )
+    outside_delivery_label = (
+        "Value outside aggregate delivery (must be zero)"
+        if manual
+        else "Combined qualification value outside this initial delivery"
+    )
+    threshold_counts = (
+        ""
+        if manual
+        else (
+            "- Wallets meeting the ordinary threshold: "
+            f"{summary['qualified_rows']:,}\n"
+            "- Wallets below the ordinary threshold: "
+            f"{summary['below_threshold_rows']:,}\n"
+        )
+    )
+    activity_policy = (
+        "Activity is audit context only and does not gate this aggregate "
+        "exchange delivery. `not_collected` means the wallet was outside the "
+        "ordinary activity scan; it does not mean the wallet was inactive."
+        if manual
+        else (
+            "Last-activity data was previously collected for the ordinary "
+            "qualifying set. `not_collected` means the source wallet was "
+            "outside that set; it does not mean the wallet was inactive."
+        )
+    )
     return f"""# {config['display_name']} migration allocation memo
 
 Status: `{summary['memo_status']}`
@@ -937,7 +1249,7 @@ Status: `{summary['memo_status']}`
 ## Scope and policy
 
 - Cutoff: `{cutoff_text}`
-- Inclusive ordinary automatic threshold: `{one_display(threshold)} ONE`
+{threshold_scope}
 - Wallet inventory rows: {summary['wallet_rows']:,}
 - Cutoff claim rows found: {summary['claim_rows_found']:,}
 - Cutoff claim rows not found: {summary['claim_rows_not_found']:,}
@@ -956,25 +1268,42 @@ come from the cutoff-pinned Harmony migration claim ledger.
   {one_display(totals['planned_staked_to_vault_atto'])} ONE
 - Total routed ONE-equivalent entitlement:
   {one_display(totals['planned_total_entitlement_atto'])} ONE
-- Remaining combined qualification value not in this delivery:
+- {outside_delivery_label}:
   **{one_display(totals['remaining_not_airdropped_atto'])} ONE**
 - Remaining native ONE: {one_display(summary['remaining_native_not_airdropped_atto'])} ONE
 - Remaining WONE: {one_display(summary['remaining_wone_not_airdropped_atto'])} WONE
 - Native cutoff claim value: {one_display(totals['native_total_claim_atto'])} ONE
 - Cutoff WONE value: {one_display(totals['wone_balance_atto'])} WONE
-- Wallets meeting the ordinary threshold: {summary['qualified_rows']:,}
-- Wallets below the ordinary threshold: {summary['below_threshold_rows']:,}
+{threshold_counts}
 
-## Balance breakdown
+## Wallet balance statistics
 
-Buckets use combined cutoff qualification value
-(`native_total_claim_atto + wone_balance_atto`).
+Submitted values use the exchange-declared `{summary['submitted_balance_scope']}`
+scope. Cutoff native-plus-WONE value is
+`native_total_claim_atto + wone_balance_atto`; for non-Gate exchanges this is
+an aggregate-delivery amount, not an eligibility test. Mean and median are
+rounded to the nearest atto-ONE.
+
+{markdown_table(
+        ('Statistic', 'Submitted ONE', 'Cutoff native + WONE'),
+        balance_stat_rows,
+    )}
+
+## Submitted balance breakdown
+
+{submitted_breakdown}
+
+## Cutoff balance breakdown
+
+Buckets use combined cutoff native-plus-WONE value
+(`native_total_claim_atto + wone_balance_atto`). The bucket boundary controls
+Gate automatic delivery only.
 
 {markdown_table(
         (
             'Balance bucket',
             'Wallets',
-            'Qualification ONE',
+            'Cutoff native + WONE',
             'ERC-20 ONE',
             'Vault principal',
         ),
@@ -983,15 +1312,13 @@ Buckets use combined cutoff qualification value
 
 ## Activity coverage
 
-Last-activity data was previously collected for the ordinary qualifying set.
-`not_collected` means the source wallet was outside that set; it does not mean
-the wallet was inactive.
+{activity_policy}
 
 {markdown_table(
         (
             'Activity status',
             'Wallets',
-            'Qualification ONE',
+            'Cutoff native + WONE',
             'ERC-20 ONE',
             'Vault principal',
         ),
@@ -1004,7 +1331,7 @@ Activity recency uses exclusive calendar-month buckets relative to the cutoff:
         (
             'Last activity',
             'Wallets',
-            'Qualification ONE',
+            'Cutoff native + WONE',
             'ERC-20 ONE',
             'Vault principal',
         ),
@@ -1014,10 +1341,29 @@ Activity recency uses exclusive calendar-month buckets relative to the cutoff:
 ## Submitted-balance reconciliation
 
 - Rows carrying a submitted balance: {summary['submitted_balance_rows']:,}
-- Exact matches to cutoff shard-0 liquid balance:
+- Declared reconciliation scope: {balance_scope}
+- Exact matches to that cutoff scope:
   {summary['submitted_balance_exact_rows']:,}
-- Verified authorization-signature rows:
+
+{markdown_table(
+        ('Reconciliation status', 'Wallets'),
+        reconciliation_rows,
+    )}
+
+## Authorization-signature verification
+
+- Submission-designated signature rows:
+  {summary['authorization_designated_rows']:,}
+- Signature rows provided: {summary['authorization_provided_rows']:,}
+- Signatures cryptographically verified:
   {summary['authorization_verified_rows']:,}
+- Designated rows missing or failing verification:
+  {summary['authorization_failed_rows']:,}
+- Inventory rows not designated for a signature:
+  {summary['authorization_not_designated_rows']:,}
+
+Normalization fails rather than emitting a row when a designated signature,
+recovered signer, signed destination, or signature-source cross-check fails.
 
 ## Required review
 
@@ -1076,15 +1422,19 @@ collected; it is not proof that the wallet was never used.
 
 
 def render_summary_report(policy, summaries, cutoff_text):
-    rows = []
+    delivery_rows = []
+    statistics_rows = []
+    signature_rows = []
+    breakdown_rows = []
+    pending_inventories = []
+    held_destinations = []
     for config in policy["exchanges"]:
         summary = summaries[config["id"]]
-        rows.append(
+        delivery_rows.append(
             (
                 config["display_name"],
                 summary["memo_status"],
                 f"{summary['wallet_rows']:,}",
-                f"{summary['qualified_rows']:,}",
                 one_display(
                     summary["totals"]["planned_wallet_airdrop_atto"]
                 ),
@@ -1099,6 +1449,67 @@ def render_summary_report(policy, summaries, cutoff_text):
                 ),
             )
         )
+        statistics = summary["qualification_balance_statistics"]
+        submitted = summary["submitted_balance_statistics"]
+        statistics_rows.append(
+            (
+                config["display_name"],
+                f"{summary['wallet_rows']:,}",
+                summary["submitted_balance_scope"],
+                f"{submitted['rows']:,}",
+                one_display(submitted["total_atto"]),
+                one_display(statistics["total_atto"]),
+                optional_one_display(statistics["mean_atto_rounded"]),
+                optional_one_display(statistics["median_atto_rounded"]),
+                optional_one_display(statistics["maximum_atto"]),
+            )
+        )
+        signature_rows.append(
+            (
+                config["display_name"],
+                f"{summary['authorization_designated_rows']:,}",
+                f"{summary['authorization_provided_rows']:,}",
+                f"{summary['authorization_verified_rows']:,}",
+                f"{summary['authorization_failed_rows']:,}",
+                f"{summary['authorization_not_designated_rows']:,}",
+            )
+        )
+        for label, values in sorted(
+            summary["balance_buckets"].items(),
+            key=lambda item: BALANCE_BUCKET_ORDER.index(item[0]),
+        ):
+            breakdown_rows.append(
+                (
+                    config["display_name"],
+                    label,
+                    f"{values['rows']:,}",
+                    one_display(values["qualification_total_atto"]),
+                )
+            )
+        if summary["memo_status"] == "awaiting_wallet_inventory":
+            pending_inventories.append(config["display_name"])
+        if (
+            config["destination_required"]
+            and summary["destination_status"] != "configured"
+        ):
+            held_destinations.append(config["display_name"])
+    completion_notes = []
+    if pending_inventories:
+        completion_notes.append(
+            "- Pending wallet inventories: "
+            + ", ".join(pending_inventories)
+            + "."
+        )
+    if held_destinations:
+        completion_notes.append(
+            "- Missing or blank aggregate destinations: "
+            + ", ".join(held_destinations)
+            + "."
+        )
+    if not completion_notes:
+        completion_notes.append(
+            "- All configured inventories and required destinations are present."
+        )
     return f"""# Exchange migration accounting summary
 
 This private finding applies exchange-provided wallet inventories to the
@@ -1107,32 +1518,88 @@ cutoff-pinned migration ledger without re-deriving chain state.
 - Cutoff: `{cutoff_text}`
 - Gate: ordinary same-address destination policy, subject to the wallet-only
   migration stage.
-- Other exchanges: excluded from automatic same-address delivery and routed
-  manually to their configured aggregate destination without overriding stage.
+- Other exchanges: every positive native and WONE claim is routed manually to
+  the configured aggregate destination, regardless of the ordinary wallet
+  threshold or activity, in the release-authorized `exchange_aggregate` stage.
 - A blank destination produces a hold; it never falls back to a source wallet.
 - Exchange-submitted balances are checked but never replace chain accounting.
 - The totals below describe current routed entitlements across stages, not the
   initial migration population.
+
+## Delivery summary
+
+The ordinary threshold is absent from this table because it does not limit
+non-Gate aggregate delivery. Gate's threshold disposition remains in its
+dedicated audit. Non-Gate overlap with the automatic set is retained only in
+the generated exclusion artifact.
 
 {markdown_table(
         (
             'Exchange',
             'Status',
             'Wallets',
-            'Threshold wallets',
             'ERC-20 ONE',
             'Vault principal',
             'Current routed entitlement',
-            'Remaining ONE/WONE value',
+            'Outside current delivery',
         ),
-        rows,
+        delivery_rows,
+    )}
+
+## Wallet and balance statistics
+
+Submitted totals reproduce exchange-provided balance evidence in the declared
+scope. Cutoff statistics use combined native-plus-WONE value
+`native_total_claim_atto + wone_balance_atto`, including zero/no-claim
+inventory rows. This is an aggregate-delivery amount for non-Gate exchanges,
+not an eligibility test. Mean and median are rounded to the nearest atto-ONE.
+
+{markdown_table(
+        (
+            'Exchange',
+            'Wallets',
+            'Submitted scope',
+            'Submitted rows',
+            'Submitted ONE',
+            'Cutoff native + WONE',
+            'Mean ONE',
+            'Median ONE',
+            'Maximum ONE',
+        ),
+        statistics_rows,
+    )}
+
+## Cutoff balance breakdown
+
+{markdown_table(
+        ('Exchange', 'Balance bucket', 'Wallets', 'Cutoff native + WONE'),
+        breakdown_rows,
+    )}
+
+## Signature verification
+
+`Designated` means the exchange submission explicitly identified a row for
+signature proof. A successful normalization emits no invalid designated row.
+
+{markdown_table(
+        (
+            'Exchange',
+            'Designated',
+            'Provided',
+            'Verified',
+            'Missing/failed',
+            'Not designated',
+        ),
+        signature_rows,
     )}
 
 Full per-exchange memos, normalized inputs, address audits, Gate split lists,
 eligibility exclusions, and manual route inputs are hash-pinned in the private
-artifact bundle. Binance and KuCoin remain incomplete until their missing
-inputs are received; blank destination files keep the corresponding manual
-delivery on hold. After route compilation,
+artifact bundle.
+
+{chr(10).join(completion_notes)}
+
+After route compilation,
 `verify-exchange-routing.py` independently compares every positive memo amount
 with the resulting exchange exception rows.
 """
