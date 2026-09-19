@@ -28,6 +28,16 @@ POLICY_DECISION_FIELDS = (
 )
 
 
+def load_module():
+    spec = importlib.util.spec_from_file_location("apply_routes", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ROUTING = load_module()
+
+
 def address(index):
     return f"0x{index:040x}"
 
@@ -46,6 +56,7 @@ def resolved_policy_decisions():
         for decision_id in (
             "initial-wallet-activity-stage",
             "layerzero-nativeoft-reconciliation",
+            "non-gate-exchange-aggregate-stage",
             "reviewed-contract-migration-policy",
             "rollback-exploit-proceeds",
             "wone-holder-redistribution",
@@ -63,6 +74,18 @@ def write_csv(path, fields, rows):
 
 
 class ExplicitRoutingTest(unittest.TestCase):
+    def test_exchange_route_uses_release_authorized_aggregate_stage(self):
+        claim = {"migration_stage": "manual_review"}
+        route = {"reason": "exchange_requested_aggregate_reroute"}
+        self.assertEqual(
+            ROUTING.route_stage(claim, route),
+            "exchange_aggregate",
+        )
+        self.assertEqual(
+            ROUTING.route_stage(claim, {"reason": "other"}),
+            "manual_review",
+        )
+
     def test_partial_route_uses_wallet_then_pro_rata_vault(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

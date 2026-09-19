@@ -586,7 +586,7 @@ class AllocationFixture:
                 "wone-holder-redistribution",
                 redistributed,
                 "wallet_only",
-                "wone_priority_holder_redistribution",
+                "wone_holder_delivery_redistribution",
             ),
             route_row(
                 VERIFY.WONE_RETAINED_ROUTE,
@@ -635,7 +635,7 @@ class AllocationFixture:
                 400,
                 "wone-holder-redistribution",
                 "redistributed",
-                "wone_priority_holder_redistribution",
+                "wone_holder_delivery_redistribution",
             ),
             exception_row(
                 VERIFY.WONE_ADDRESS,
@@ -885,7 +885,7 @@ class VerifyWoneAllocationTest(unittest.TestCase):
             result = self.run_verifier(fixture)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(
-                "WONE-only metadata does not equal the complete threshold set",
+                "WONE-only metadata does not equal the complete delivery set",
                 result.stderr,
             )
 
@@ -915,6 +915,67 @@ class VerifyWoneAllocationTest(unittest.TestCase):
                 "bridge WONE redistribution route.amount_atto",
                 result.stderr,
             )
+
+    def test_loads_hash_pinned_aggregate_exchange_addresses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            addresses = root / "exchange.csv"
+            summary_path = root / "normalization.json"
+            address = "0x" + "55" * 20
+            write_csv(
+                addresses,
+                ("exchange_id", "address_hex"),
+                ({"exchange_id": "example", "address_hex": address},),
+            )
+            normalization = {
+                "schema_version": 1,
+                "exchanges": {
+                    "example": {
+                        "delivery_policy": "manual_current_claim",
+                        "normalized_rows": 1,
+                        "output": str(addresses),
+                        "output_sha256": sha256(addresses),
+                    },
+                    "gate": {
+                        "delivery_policy": "automatic_threshold",
+                        "normalized_rows": 0,
+                        "output": str(root / "unused.csv"),
+                        "output_sha256": "0" * 64,
+                    },
+                },
+            }
+            write_json(summary_path, normalization)
+            migration = {
+                "aggregate_delivery_summary": str(summary_path),
+                "aggregate_delivery_summary_sha256": sha256(summary_path),
+                "aggregate_delivery_sources": [
+                    {
+                        "exchange_id": "example",
+                        "path": str(addresses),
+                        "sha256": sha256(addresses),
+                        "addresses": 1,
+                    }
+                ],
+                "aggregate_delivery_addresses_requested": 1,
+                "aggregate_delivery_addresses_active": 1,
+                "aggregate_delivery_addresses_suppressed": [],
+            }
+            paths = {
+                "aggregate_delivery_summary": summary_path.resolve(),
+                "aggregate_delivery_source_0": addresses.resolve(),
+            }
+            hashes = {
+                name: sha256(path) for name, path in paths.items()
+            }
+            loaded, stats = VERIFY.load_aggregate_delivery_addresses(
+                migration,
+                set(),
+                paths,
+                hashes,
+            )
+            self.assertEqual(loaded, {address})
+            self.assertEqual(stats["active"], 1)
+            self.assertEqual(stats["sources"], ["example"])
 
 
 if __name__ == "__main__":

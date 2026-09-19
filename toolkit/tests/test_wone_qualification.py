@@ -71,6 +71,19 @@ class WoneQualificationTest(unittest.TestCase):
         self.assertEqual(result["wone_airdrop_atto"], "0")
         self.assertEqual(result["total_claim_atto"], str(600 * scale))
 
+    def test_aggregate_exchange_receives_below_threshold_wone(self):
+        scale = self.module.ATTO_PER_ONE
+        result = self.module.apply_overlay(
+            self.row(500 * scale, 100 * scale),
+            399 * scale,
+            1000 * scale,
+            aggregate_delivery=True,
+        )
+        self.assertEqual(result["qualification_total_atto"], str(999 * scale))
+        self.assertEqual(result["wone_airdrop_atto"], str(399 * scale))
+        self.assertEqual(result["wallet_airdrop_atto"], str(899 * scale))
+        self.assertEqual(result["total_claim_atto"], str(999 * scale))
+
     def test_native_qualifier_receives_all_wone(self):
         scale = self.module.ATTO_PER_ONE
         result = self.module.apply_overlay(
@@ -118,7 +131,7 @@ class WoneQualificationTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ValueError,
-            "does not equal the complete threshold set",
+            "does not equal the complete delivery set",
         ):
             self.module.require_complete_new_holder_metadata(
                 holders,
@@ -296,7 +309,7 @@ class WoneQualificationTest(unittest.TestCase):
                 text=True,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("complete threshold set", result.stderr)
+            self.assertIn("complete delivery set", result.stderr)
             self.assertFalse(output_path.exists())
             self.assertFalse(Path(str(output_path) + ".partial").exists())
 

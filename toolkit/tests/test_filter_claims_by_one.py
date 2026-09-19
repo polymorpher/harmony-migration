@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import json
 import subprocess
 import sys
@@ -160,6 +161,101 @@ class FilterClaimsByOneTest(unittest.TestCase):
                 metadata["threshold_field"],
                 "qualification_total_atto",
             )
+
+    def test_aggregate_exchange_wone_does_not_enter_threshold_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "input.csv"
+            output = root / "output.csv"
+            summary = root / "summary.json"
+            exchange = root / "exchange.csv"
+            normalization = root / "normalization.json"
+            address = "0x" + "11" * 20
+            scale = 10**18
+            with exchange.open("w", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=("exchange_id", "address_hex"),
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {"exchange_id": "example", "address_hex": address}
+                )
+            exchange_hash = hashlib.sha256(exchange.read_bytes()).hexdigest()
+            normalization.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "exchanges": {
+                            "example": {
+                                "delivery_policy": "manual_current_claim",
+                                "normalized_rows": 1,
+                                "output": str(exchange),
+                                "output_sha256": exchange_hash,
+                            }
+                        },
+                    }
+                )
+            )
+            fields = (
+                "secure_key",
+                "address",
+                "wallet_airdrop_atto",
+                "staked_to_vault_atto",
+                "native_total_claim_atto",
+                "wone_balance_atto",
+                "wone_airdrop_atto",
+                "qualification_total_atto",
+                "total_claim_atto",
+            )
+            with source.open("w", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=fields,
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "secure_key": "0x01",
+                        "address": address,
+                        "wallet_airdrop_atto": str(899 * scale),
+                        "staked_to_vault_atto": str(100 * scale),
+                        "native_total_claim_atto": str(600 * scale),
+                        "wone_balance_atto": str(399 * scale),
+                        "wone_airdrop_atto": str(399 * scale),
+                        "qualification_total_atto": str(999 * scale),
+                        "total_claim_atto": str(999 * scale),
+                    }
+                )
+            subprocess.run(
+                (
+                    sys.executable,
+                    str(SCRIPT),
+                    "--input",
+                    str(source),
+                    "--output",
+                    str(output),
+                    "--summary",
+                    str(summary),
+                    "--aggregate-delivery-summary",
+                    str(normalization),
+                    "--minimum-one",
+                    "1000",
+                    "--comparison",
+                    "ge",
+                ),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            with output.open(newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            metadata = json.loads(summary.read_text())
+            self.assertEqual(rows, [])
+            self.assertEqual(metadata["input_rows"], 1)
+            self.assertEqual(metadata["output_rows"], 0)
 
 
 if __name__ == "__main__":
