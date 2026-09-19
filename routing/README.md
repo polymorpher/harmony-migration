@@ -47,11 +47,14 @@ Place manual additions in separate files under `routing/local/`, for example:
 - `generated/validator-governor-exceptions.csv` — sparse vault-governor
   exceptions, kept separate from validator wallet delivery
 - `generated/validator-vault-stages.csv` — complete validator-vault assets
-  partitioned into initial, next-stage, deferred, not-issued, and post-policy
-  totals
+  partitioned into initial, exchange-aggregate, next-stage, deferred,
+  not-issued, and post-policy totals
 - `generated/initial-stage/` — materialized initial wallet destinations,
   vault-share beneficiaries, validator assets/governors, unresolved gates, and
   verification summary
+- `artifacts/exchange-accounting-20260917/exchange-*-deliveries.csv` —
+  materialized release-authorized non-Gate ERC-20 and per-validator vault-share
+  aggregate deliveries
 - `generated/unresolved-routing.csv` — generated hold queue; never edit it
 - `generated/routing-summary.json` — conservation and release-gate summary
 
@@ -77,11 +80,11 @@ stage and destination policies.
 `build-wone-routes.py` reads the immutable `bridge-reserves.base.csv` and the
 verified WONE qualification summary, then writes `bridge-reserves.csv` with
 two additional exact source routes:
-the amount paired with current qualified-holder WONE airdrops is
-`redistributed`, while the below-threshold/excluded remainder is
-`not_issuing` and retained in the 2050 premint reserve. Their sum must
-equal the WONE contract's shard-0 native reserve. Same-address shard-1 ONE is
-not backing and falls through to reviewed-contract non-issuance.
+the amount paired with ordinary-threshold and aggregate-exchange WONE delivery
+is `redistributed`, while the remainder is `not_issuing` and retained in the
+2050 premint reserve. Their sum must equal the WONE contract's shard-0 native
+reserve. Same-address shard-1 ONE is not backing and falls through to
+reviewed-contract non-issuance.
 
 `build-migration-stage-policy.py` generates the address-level stage policy
 after applying exact deductions without retesting the snapshot threshold.
@@ -107,25 +110,26 @@ consumes every remaining direct-wallet and staked-vault component. No generic
 contract-recovery-custody destination remains.
 
 `build-exchange-accounting.py` writes `exchanges.csv` with one `ALL`,
-`wallet_first_pro_rata_vault` route for each positive current non-Gate exchange
-claim and writes `exchange-destinations.csv` separately. Qualifying non-Gate
-wallets are also removed from the implicit automatic category. Gate is omitted
-from both files and stays under the ordinary inclusive same-address
-destination policy, subject to the wallet stage.
+`wallet_first_pro_rata_vault` route for each positive native or WONE non-Gate
+exchange claim and writes `exchange-destinations.csv` separately. The ordinary
+threshold does not limit aggregate entitlement; it only identifies non-Gate
+overlap to remove from the implicit automatic category. Gate is omitted from
+both files and stays under the ordinary inclusive same-address destination
+policy, subject to the wallet stage.
 Exchange routes use priority `300`: reviewed incident/non-issuance routes apply
 first, while later reserve or generic contract handling cannot silently take
-an exchange-routed remainder. The route does not override
-`migration_stage`; below-threshold routes remain `manual_review` until
-separately approved.
+an exchange-routed remainder. Confirmed routes compile into the
+release-authorized `exchange_aggregate` stage and therefore do not inherit
+individual source threshold, activity, or ordinary wallet stage.
 
 The routing command accepts both `--routes` and `--destinations` repeatedly.
 Files are merged by `priority`, then `route_id`; file order is irrelevant, and
 destination identifiers must remain globally unique. Use `--replace` when
 regenerating the exception outputs after an approved input change.
 `--migration-stages` is required and must cover the complete inclusive
-threshold set exactly. Explicitly routed below-threshold claims remain
-`manual_review` until their stage is reconciled; a ready destination alone
-does not move them into the initial stage.
+threshold set exactly. Explicit non-exchange below-threshold claims remain
+`manual_review`; confirmed non-Gate exchange claims use the separate
+`exchange_aggregate` stage and never enter the ordinary initial stage.
 
 ## Route input columns
 
@@ -163,9 +167,10 @@ contain:
 - `component` — `wallet_airdrop` or `vault_shares`;
 - source and optional validator address/secure-key fields;
 - `source_category` and `source_code_bearing`;
-- `migration_stage` — `initial`, `next_stage`, `deferred`, or the explicit
-  below-threshold state `manual_review`; terminal rows may retain an associated
-  stage but never invent one;
+- `migration_stage` — `initial`, release-authorized `exchange_aggregate`,
+  `next_stage`, `deferred`, or the explicit below-threshold state
+  `manual_review`; terminal rows may retain an associated stage but never
+  invent one;
 - `issuance_treatment` — `issue`, `not_issued`, or `redistributed`;
 - `amount_atto` and `exception_type`;
 - route priority, destination, status, reason, and evidence.
@@ -196,15 +201,18 @@ the generated CSVs, unresolved totals, not-issued, redistributed, and
 remaining all-stage totals, per-stage totals and readiness, the WONE reserve
 split, inactive routes, pending stage review, and pending policy decisions.
 `stage_readiness` scopes held amounts, governor holds, and policy gates to each
-stage. The global status is conservative; an unresolved next-stage destination
-does not by itself change `initial_stage_status`.
+stage. `exchange_aggregate` is independently release-authorized when every
+configured exchange destination is ready. The global status is conservative;
+an unresolved next-stage destination does not by itself change
+`initial_stage_status` or exchange readiness.
 
 `materialize-initial-stage.py` expands implicit code-less wallet delivery,
 applies explicit initial destinations, subtracts terminal wallet/vault
-non-issuance, and filters out next-stage, deferred, and manual-review rows. It
-also builds the initial validator-vault asset and share plans and verifies them
-against `stage_readiness.initial`. Its output remains held while any initial
-destination, governor, or stage-scoped policy gate is unresolved.
+non-issuance, and filters out exchange-aggregate, next-stage, deferred, and
+manual-review rows. It also builds the initial validator-vault asset and share
+plans and verifies them against `stage_readiness.initial`. Its output remains
+held while any initial destination, governor, or stage-scoped policy gate is
+unresolved.
 
 ## Destination input columns
 
@@ -225,8 +233,8 @@ validator vault's deployed assets and shares by that exact amount.
 
 `wone-holder-redistribution` is the only destination allowed to have
 `redistributed` status. It also has no address. It is a source offset paired
-exactly with WONE already included in qualified-holder wallet airdrops, not a
-second recipient.
+exactly with WONE already included in ordinary-threshold or aggregate-exchange
+wallet delivery, not a second recipient.
 
 ## Validator-governor input columns
 
@@ -243,12 +251,12 @@ explicit claim route defaults to governor hold until `validator-governors.csv`
 supplies an approved destination.
 
 `validator-vault-stages.csv` starts from each base vault's full active
-principal. It records represented initial, next-stage, qualified-deferred,
-manual-review, and not-issued assets plus the uncompiled below-threshold
-deferred remainder. `post_policy_assets_atto` equals base assets minus
-not-issued assets. Only `initial_assets_atto` belongs to the initial stage;
-next-stage or deferred shares cannot be released merely because their
-validator vault exists.
+principal. It records represented initial, exchange-aggregate, next-stage,
+qualified-deferred, manual-review, and not-issued assets plus the uncompiled
+below-threshold deferred remainder. `post_policy_assets_atto` equals base assets
+minus not-issued assets. Initial and exchange-aggregate assets have separate
+readiness; next-stage or deferred shares cannot be released merely because
+their validator vault exists.
 
 ## Policy-decision gate
 
@@ -266,15 +274,17 @@ routing summary on hold.
 
 The file must include `rollback-exploit-proceeds`,
 `initial-wallet-activity-stage`, `reviewed-contract-migration-policy`,
-`wone-holder-redistribution`, and `layerzero-nativeoft-reconciliation`, as
-created by `init-local-routing.py`. Missing required decisions reject the
-input, including an empty or header-only file. Additional decisions are
-allowed and also keep routing on hold while pending.
+`non-gate-exchange-aggregate-stage`, `wone-holder-redistribution`, and
+`layerzero-nativeoft-reconciliation`, as created by
+`init-local-routing.py`. Missing required decisions reject the input,
+including an empty or header-only file. Additional decisions are allowed and
+also keep routing on hold while pending.
 
-The WONE policy is resolved: add WONE to the current inclusive threshold and
-wallet amount, offset the matching source reserve as `redistributed`, and mark
-the remaining reserve `not_issuing`. `build-wone-routes.py` derives both exact
-amounts from the verified holder overlay; no destination address is used.
+The WONE policy is resolved: add WONE to ordinary inclusive-threshold rows and
+to non-Gate aggregate-exchange rows, offset the matching source reserve as
+`redistributed`, and mark the remaining reserve `not_issuing`.
+`build-wone-routes.py` derives both exact amounts from the verified holder
+overlay; no destination address is used.
 
 LayerZero NativeOFT contracts are separate because they directly hold native
 ONE. Their next-stage eligibility is resolved. The remaining pending gate is
@@ -285,9 +295,10 @@ before a destination is approved.
 
 - Non-issuance, treasury, burn, inaccessible, and perpetrator routes take
   precedence over same-address delivery.
-- Qualifying non-Gate exchange wallets may not remain implicit automatic
-  deliveries; every positive current claim in a received non-Gate inventory
-  must have one exchange route, and every blank exchange destination is held.
+- Non-Gate exchange wallets overlapping the ordinary threshold may not remain
+  implicit automatic deliveries; every positive native or WONE claim in a
+  received non-Gate inventory must have one exchange route regardless of that
+  threshold, and every blank exchange destination is held.
 - Gate receives no exchange route and remains subject to the ordinary
   threshold and account classification.
 - Ordinary code-less EOAs alone use an implicit same-address default.
@@ -305,7 +316,9 @@ before a destination is approved.
   must sum back to the expanded wallet and vault totals.
 
 The authoritative routing policy consists of the reviewed sparse inputs and
-their generated exception outputs under `routing/local/`. It may feed a later
-deployment build only when the summary reports zero inactive routes, zero
-unresolved wallet or vault-share amounts, no missing validator governor, and no
-pending policy decision.
+their generated exception outputs under `routing/local/`. The conservative
+all-stage build requires zero inactive routes, unresolved amounts, missing
+governors, and pending policy decisions. A scoped deployment may proceed when
+its own `stage_readiness` entry and independent materializer are ready; this is
+how `exchange_aggregate` remains releasable while unrelated ordinary-stage
+policy gates are pending.

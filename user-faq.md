@@ -18,10 +18,11 @@ Wallets with below 1,000 ONE may claim from a claim portal at a later time, or w
 If you own ONE through an exchange, there is normally nothing you need to do.
 We are coordinating directly with participating exchanges. Exchange-controlled
 wallets that requested consolidation will be excluded from the ordinary
-same-address automatic airdrop and transferred manually to the exchange's
-confirmed Ethereum destination. Gate did not request consolidation, so its
-wallets continue through the ordinary at-least-1,000-ONE wallet policy,
-including the six-month initial-stage rule.
+same-address automatic airdrop; every positive native ONE or WONE claim is
+aggregated into one approved exchange delivery at the confirmed Ethereum
+destination without individual threshold or activity-stage gating. Gate did
+not request consolidation, so its wallets continue through the ordinary
+at-least-1,000-ONE wallet policy, including the six-month initial-stage rule.
 Your exchange remains responsible for crediting your account; contact it for
 its customer timeline.
 

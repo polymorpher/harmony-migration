@@ -42,17 +42,19 @@ token and vault-share creation.
 
 Exchange-provided wallet inventories add a separate delivery overlay. Gate
 remains under the ordinary inclusive threshold and same-address rules because
-it did not request rerouting. Qualifying wallets reported by other exchanges
-are removed from the implicit automatic category, and their positive current
-migration claims—including threshold-deferred native claims—are routed
-manually to a confirmed aggregate exchange destination. A missing destination
+it did not request rerouting. Other exchanges' submitted native ONE wallet
+holdings are aggregated at a confirmed destination. Any overlap with the
+ordinary threshold set may be removed from implicit same-address delivery, but
+that overlap is not an exchange entitlement calculation. A missing destination
 is a hold and never falls back to the source wallet.
+
+Before any exchange-only refresh, read `docs/EXCHANGE_UPDATE_SCOPE.md`. It
+defines the fast path and prevents accidental WONE/global-policy regeneration.
 
 WONE uses a separate conservation overlay. The source reserve paired with
 qualified-holder WONE is terminal `redistributed`; the remaining
 below-threshold/excluded reserve is `not_issuing` and retained in the 2050
-premint reserve. This prevents the WONE contract and its holders from both
-receiving the same backing.
+premint reserve. Exchange inventory updates do not modify this overlay.
 
 The initial stage contains eligible wallets with indexed activity in the six
 calendar months before the cutoff. Reviewed multisig, LayerZero collateral,

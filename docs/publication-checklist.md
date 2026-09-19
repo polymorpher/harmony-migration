@@ -33,6 +33,9 @@ Before publishing the migration allocation:
    materialized initial-stage summary to report `status: ready`, with no
    initial held destination, governor, or scoped policy gate. Retain global
    `status` as the conservative all-stage gate.
+   For the non-Gate exchange batch, independently require
+   `stage_readiness.exchange_aggregate` and the materialized exchange summary
+   to report `ready`.
    Confirm that expanded claims equal issuable plus not-issued plus
    redistributed source amounts exactly.
    Confirm that migration-stage policy covers the threshold population exactly,
@@ -45,20 +48,29 @@ Before publishing the migration allocation:
    Confirm that generated multisig holds have no common fillable destination;
    every approved Safe route is address-specific and precedes priority 500.
    Confirm that every qualifying non-Gate exchange wallet is absent from the
-   implicit automatic category, every positive current non-Gate exchange claim
-   has exactly one manual route, and blank exchange destinations remain holds.
+   implicit automatic category, every positive native or WONE claim in a
+   non-Gate inventory has exactly one manual route regardless of the ordinary
+   threshold, all such routes compile into a release-authorized
+   `exchange_aggregate` stage, the materialized exchange wallet/share outputs
+   close to that stage exactly, and blank exchange destinations remain holds.
    Confirm separately that Gate has no exchange reroute, that only its ordinary
    qualifying automatic rows receive same-address delivery, and that the
    airdropped/not-airdropped address lists and residual-value total close to
    its complete normalized inventory.
+   Confirm each submitted balance against its declared shard scope. For an
+   exchange submission with signature-designated rows, require the designated,
+   provided, and cryptographically verified sets to match, with zero failed or
+   missing proof rows and a signed destination equal to the configured
+   destination.
 6. State explicitly whether identified rollback-exploit proceeds are honored
    as state claims or redirected. Do not imply that the existing treasury
    inventory covers that incident.
 7. Reconcile the WONE holder ledger to `totalSupply()` and the native reserve.
-   Confirm that the qualified-holder amount is added once to wallet rows and
-   offset once as `redistributed`, while the remainder is `not_issuing` and
-   retained in the 2050 premint reserve. Confirm that WONE held by an excluded
-   contract is not backed out a second time.
+   Confirm that ordinary-threshold and non-Gate aggregate-exchange amounts are
+   added once to wallet rows and offset once as `redistributed`, while the
+   remainder is `not_issuing` and retained in the 2050 premint reserve.
+   Confirm that WONE held by an excluded contract is not backed out a second
+   time.
 8. Separately reconcile each LayerZero NativeOFT reserve against remote supply
    and messages in flight at pinned blocks before approving its next-stage
    destination.

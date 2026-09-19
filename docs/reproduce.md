@@ -59,6 +59,7 @@ python3 -m py_compile \
   toolkit/scripts/claims/*.py \
   toolkit/scripts/cutoff/*.py \
   toolkit/scripts/contract-review/*.py \
+  toolkit/scripts/exchanges/*.py \
   toolkit/scripts/routing/*.py \
   toolkit/scripts/forensics/*.py \
   scripts/*.py
@@ -242,9 +243,23 @@ bin/wone-holders \
   -summary "$OUT/wone/wone-holders-cutoff-summary.json"
 ```
 
-Resolve cutoff metadata for WONE-only addresses that can meet the threshold,
-then apply the same verified overlay to the plain and metadata-complete native
-ledgers:
+Before applying WONE, normalize the private exchange submissions. This is
+required because non-Gate aggregate delivery includes every positive WONE
+balance regardless of the ordinary wallet threshold:
+
+```sh
+python3 toolkit/scripts/exchanges/normalize-exchange-wallets.py \
+  --policy exchanges/exchange-policy.json \
+  --raw-dir exchanges/wallets-raw \
+  --destinations-dir exchanges/destinations \
+  --output-dir exchanges/wallets-standardized \
+  --summary exchanges/wallets-standardized/summary.json \
+  --replace
+```
+
+Resolve cutoff metadata for WONE-only addresses that can meet the threshold or
+belong to a non-Gate aggregate-delivery inventory, then apply the same verified
+overlay to the plain and metadata-complete native ledgers:
 
 ```sh
 python3 toolkit/scripts/claims/build-wone-new-holder-metadata.py \
@@ -255,6 +270,7 @@ python3 toolkit/scripts/claims/build-wone-new-holder-metadata.py \
   --block-hash 0x23572e11f6ef9afe4c27ab3102f15b99fd7277ae5f685ccaef0ae571fe7ee0b6 \
   --state-root 0x5e1927beb00c17c341d02483fbe81a884cc45af1ecfb673366e685aca4632ec3 \
   --minimum-one 1000 \
+  --aggregate-delivery-summary exchanges/wallets-standardized/summary.json \
   --output "$OUT/wone/wone-only-qualified-metadata.csv" \
   --summary "$OUT/wone/wone-only-qualified-metadata-summary.json"
 
@@ -263,6 +279,7 @@ python3 toolkit/scripts/claims/apply-wone-qualification.py \
   --wone-holders "$OUT/wone/wone-holders-cutoff.csv" \
   --wone-summary "$OUT/wone/wone-holders-cutoff-summary.json" \
   --new-holder-metadata "$OUT/wone/wone-only-qualified-metadata.csv" \
+  --aggregate-delivery-summary exchanges/wallets-standardized/summary.json \
   --minimum-one 1000 \
   --exclude-address 0x000000000000000000000000000000000000dEaD \
   --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD \
@@ -276,6 +293,7 @@ python3 toolkit/scripts/claims/apply-wone-qualification.py \
   --wone-holders "$OUT/wone/wone-holders-cutoff.csv" \
   --wone-summary "$OUT/wone/wone-holders-cutoff-summary.json" \
   --new-holder-metadata "$OUT/wone/wone-only-qualified-metadata.csv" \
+  --aggregate-delivery-summary exchanges/wallets-standardized/summary.json \
   --minimum-one 1000 \
   --exclude-address 0x000000000000000000000000000000000000dEaD \
   --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD \
@@ -286,8 +304,8 @@ python3 toolkit/scripts/claims/apply-wone-qualification.py \
 ```
 
 The WONE contract is automatically excluded as a recipient. The overlay adds
-WONE only to the current qualifying wallet rows and records the exact reserve
-amount left not issued.
+WONE to ordinary qualifying rows and normalized non-Gate aggregate-exchange
+rows, then records the exact reserve amount left not issued.
 
 ## 10. Apply the 1,000 ONE policy
 
@@ -298,6 +316,7 @@ python3 toolkit/scripts/claims/filter-claims-by-one.py \
   --input "$OUT/claims/all-address-migration-claims-cutoff.csv" \
   --output "$OUT/claims/migration-claims-at-least-1000-one.csv" \
   --summary "$OUT/claims/migration-claims-at-least-1000-one-summary.json" \
+  --aggregate-delivery-summary exchanges/wallets-standardized/summary.json \
   --minimum-one 1000 \
   --comparison ge
 ```
@@ -309,6 +328,7 @@ python3 toolkit/scripts/claims/filter-claims-by-one.py \
   --input "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
   --output "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
   --summary "$OUT/claims/migration-claims-at-least-1000-one-metadata-filter-summary.json" \
+  --aggregate-delivery-summary exchanges/wallets-standardized/summary.json \
   --minimum-one 1000 \
   --comparison ge
 ```
@@ -417,22 +437,14 @@ CSV as its input. The review must produce
 `validator-policy-accounts.csv` from the two independent validator-wrapper
 checks.
 
-Normalize the private exchange submissions and bootstrap the non-Gate
-exclusion/manual-route inputs. This first report pass intentionally omits final
-policy categories; it is replaced after the final split. This operator-only
-step requires the ignored private `exchanges/` directory and is not available
-in the public source package:
+Using the exchange normalization generated before the WONE overlay, bootstrap
+the non-Gate exclusion/manual-route inputs. This first report pass
+intentionally omits final policy categories; it is replaced after the final
+split. This operator-only step requires the ignored private `exchanges/`
+directory and is not available in the public source package:
 
 ```sh
 python3 toolkit/scripts/routing/init-local-routing.py  # once, in a new clone
-
-python3 toolkit/scripts/exchanges/normalize-exchange-wallets.py \
-  --policy exchanges/exchange-policy.json \
-  --raw-dir exchanges/wallets-raw \
-  --destinations-dir exchanges/destinations \
-  --output-dir exchanges/wallets-standardized \
-  --summary exchanges/wallets-standardized/summary.json \
-  --replace
 
 python3 toolkit/scripts/exchanges/build-exchange-accounting.py \
   --policy exchanges/exchange-policy.json \
@@ -446,6 +458,12 @@ python3 toolkit/scripts/exchanges/build-exchange-accounting.py \
   --destinations-output routing/local/exchange-destinations.csv \
   --replace
 ```
+
+The normalizer records per-exchange inventory, submitted-balance, and
+signature-verification statistics. Format-specific checks include exact
+multi-shard merge/total reconciliation and cross-verification of any separate
+signature proof artifact. Invalid designated signatures fail the run instead
+of becoming accepted normalized rows.
 
 Apply the final destination split. Verified validator-wrapper accounts are
 allowed in the automatic output; other code-bearing rows remain in genuine
@@ -647,6 +665,18 @@ python3 toolkit/scripts/exchanges/verify-exchange-routing.py \
   --output artifacts/exchange-accounting-20260917/routing-verification.json \
   --replace
 
+python3 toolkit/scripts/exchanges/build-exchange-native-policy.py \
+  --audits-dir artifacts/exchange-accounting-20260917/audits \
+  --native-claims artifacts/cutoff-20260910/claims/all-address-native-claims-cutoff-metadata.csv \
+  --delegations artifacts/cutoff-20260910/state/staked-to-vault-by-delegation-rpc.csv \
+  --vaults artifacts/contract-review-20260911/out/base-validator-vault-deposits.csv \
+  --gate-addition exchanges/wallets-raw/gate-addition.txt \
+  --gate-destination exchanges/destinations/gate.txt \
+  --output-dir artifacts/exchange-accounting-20260917 \
+  --summary artifacts/exchange-accounting-20260917/exchange-native-summary.json \
+  --report artifacts/exchange-accounting-20260917/EXCHANGE_AGGREGATE_DELIVERY_2026-09-18.md \
+  --replace
+
 python3 toolkit/scripts/claims/verify-migration-stage-policy.py \
   --stage-policy artifacts/migration-policy-20260917/migration-stage-policy.csv \
   --stage-summary artifacts/migration-policy-20260917/migration-stage-summary.json \
@@ -717,7 +747,10 @@ does not repeat ordinary code-less EOA same-address delivery; the materializer
 adds those rows and filters every non-initial or non-issued allocation.
 Release the initial plan only when `stage_readiness.initial` and the
 materializer summary both report `status: ready`. The global routing status is
-the conservative all-stage gate. See `routing/README.md` for the file contracts.
+the conservative all-stage gate. Release the non-Gate exchange batch only when
+`stage_readiness.exchange_aggregate`, exchange routing verification, and the
+exchange aggregate materializer all report `ready`/`passed`. See
+`routing/README.md` for the file contracts.
 
 The deployment build must exclude every row with
 `destination_status: not_issuing` or `redistributed`. A redistributed row is a

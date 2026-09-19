@@ -154,9 +154,10 @@ from the shard-0 archival node and reconciled the result exactly to both WONE
 
 The current inclusive threshold now uses native total claim plus WONE balance.
 Qualified rows receive their WONE amount in the direct wallet component. The
+September 18 exchange correction also includes WONE held by normalized
+non-Gate aggregate-delivery wallets regardless of that ordinary threshold. The
 matching WONE source reserve is classified as `redistributed`, while the
-below-threshold/excluded remainder is `not_issuing` and retained in the 2050
-premint reserve.
+remaining backing is `not_issuing` and retained in the 2050 premint reserve.
 
 The WONE contract's self-held WONE is excluded from recipient delivery.
 LayerZero's NativeOFT contracts remain a separate native-ONE reconciliation;
@@ -166,24 +167,34 @@ they do not hold WONE in this ledger.
 
 The September 17 exchange update normalized the private inventories received
 from Binance.US, Gate, MEXC, and OKX, while retaining Binance and KuCoin as
-explicitly incomplete inputs. Address conversion, duplicate/overlap checks,
-exact submitted-balance reconciliation, and supplied signature verification
-were performed before any delivery policy was generated.
+explicitly incomplete inputs. The September 18 update added KuCoin's two-shard
+inventory, separate signature proof, and aggregate destination, as well as the
+Binance.US aggregate destination. Binance remains the only missing wallet
+inventory and the only exchange with an unresolved aggregate destination.
+
+Address conversion, duplicate/overlap checks, exact submitted-balance
+reconciliation, and supplied signature verification are performed before any
+delivery policy is generated. KuCoin's importer additionally merges duplicate
+addresses across its shard sheets, reproduces the workbook's exact per-shard
+and combined totals, checks its pinned cutoff identity, and requires its
+signature worksheet and DOCX proof to agree before EIP-191 recovery.
 
 Gate did not request aggregate rerouting and remains under the ordinary
-inclusive threshold. Qualifying wallets reported by other exchanges were
-removed from implicit same-address delivery; their positive current migration
-claims were converted to manual aggregate routes. Missing destinations remain
-holds. Per-exchange memos and a complete Gate airdropped/not-airdropped audit
-were generated from existing cutoff and activity artifacts rather than a new
-chain scan.
+inclusive threshold. Wallets reported by other exchanges receive every
+positive native and WONE claim through manual aggregate routes; the threshold
+is used only to remove overlap from implicit same-address delivery. Missing
+destinations remain holds. Per-exchange memos and a complete Gate
+airdropped/not-airdropped audit were generated from existing cutoff and
+activity artifacts rather than a new chain scan.
 
 ## 13. Migration-stage and reviewed-contract policy
 
 The September 17 policy fixed threshold membership before deductions and
 limited the initial stage to positive eligible wallets with six-month indexed
-activity. Exchange/manual routing remained a destination category rather than
-non-issuance.
+activity. The September 18 exchange correction separated confirmed non-Gate
+aggregation into its own release-authorized `exchange_aggregate` stage:
+individual source threshold, activity, and ordinary stage do not gate that
+delivery. Gate remains in the ordinary wallet stages.
 
 Reviewed multisig, LayerZero collateral, and 1wallet allocations moved to the
 next stage regardless of activity. The 1wallet group uses recovery-multisig

@@ -23,10 +23,10 @@ The native total combines liquid, active stake/delegation, pending
 undelegation, unclaimed reward, and supported cross-shard components by secure
 key. WONE comes from the separately verified cutoff holder ledger.
 
-The direct `wallet_airdrop_atto` includes the complete WONE balance for a
-current qualifying row and excludes active stake/delegation. That active amount
-is `staked_to_vault_atto` and is represented by shares in the corresponding
-validator vault:
+The direct `wallet_airdrop_atto` includes the complete WONE balance for an
+ordinary qualifying row or a non-Gate aggregate-exchange row and excludes
+active stake/delegation. That active amount is `staked_to_vault_atto` and is
+represented by shares in the corresponding validator vault:
 
 ```text
 total_claim_atto
@@ -35,15 +35,18 @@ total_claim_atto
 ```
 
 The WONE contract's matching shard-0 native reserve is not issued to the
-contract. The qualified-holder portion is classified as `redistributed`; the
-remaining below-threshold/excluded backing is `not_issuing` and retained in the
-2050 premint reserve.
+contract. The portion paired with ordinary-threshold and aggregate-exchange
+delivery is classified as `redistributed`; the remaining backing is
+`not_issuing` and retained in the 2050 premint reserve.
 
-Threshold membership is determined from the snapshot qualification total
-before non-issuance deductions or routing adjustments. The threshold controls
-migration eligibility and staging; it is not retested against a smaller net
-allocation. Validator vaults retain backing for active principal belonging to
-deferred accounts until their stage is authorized.
+Ordinary threshold membership is determined from the snapshot qualification
+total before non-issuance deductions or routing adjustments. It controls the
+ordinary wallet path and staging and is not retested against a smaller net
+allocation. Non-Gate exchange aggregation is an explicit delivery exception:
+the threshold is used only to remove overlap from automatic same-address
+delivery, not to limit the exchange's aggregate entitlement. Validator vaults
+retain backing for active principal belonging to deferred accounts until their
+stage is authorized.
 
 The historical `$1` experiment depended on a time-specific market price and was
 not selected for migration. It is retained only in the as-run audit history.
@@ -65,6 +68,7 @@ python3 toolkit/scripts/claims/filter-claims-by-one.py \
   --input all-address-migration-claims-cutoff.csv \
   --output migration-claims-at-least-1000-one.csv \
   --summary migration-claims-at-least-1000-one.json \
+  --aggregate-delivery-summary exchanges/wallets-standardized/summary.json \
   --minimum-one 1000 \
   --comparison ge
 
@@ -73,6 +77,7 @@ python3 toolkit/scripts/claims/filter-claims-by-one.py \
   --input all-address-migration-claims-cutoff.csv \
   --output migration-claims-over-1000-one.csv \
   --summary migration-claims-over-1000-one.json \
+  --aggregate-delivery-summary exchanges/wallets-standardized/summary.json \
   --minimum-one 1000 \
   --comparison gt
 ```
@@ -92,17 +97,15 @@ through `--exclude-addresses-file`. This moves those qualifying rows into the
 policy-routed category without changing their balances.
 
 The `excluded_address` routing category is not a non-issuance decision.
-Exchange/manual rows that otherwise satisfy the initial wallet activity policy
-remain in the initial reporting cohort, while their approved destinations and
-readiness checks remain authoritative.
+For non-Gate exchanges it is only bookkeeping that suppresses implicit
+same-address delivery. Confirmed exchange rows compile into
+`exchange_aggregate` instead of the ordinary initial/deferred cohorts.
 
-The generated manual exchange routes also name positive current migration
-claims below the automatic threshold. The route engine loads those deferred
-native claims but records them as `manual_review`; a configured destination
-does not silently activate them in the initial stage. A below-threshold WONE
-balance that is not part of `total_claim_atto` remains outside that route and
-is reported as residual value. Missing inventories, destinations, or stage
-approval are holds.
+The generated manual exchange routes name every positive native or WONE claim,
+including rows below the automatic threshold. Those rows receive full
+aggregate entitlement in the separately release-authorized
+`exchange_aggregate` stage; they never enter the ordinary initial stage.
+Missing inventories or destinations remain holds.
 
 Exchange-submitted balances establish ownership and provide a reconciliation
 check. They never replace the cutoff-pinned claim ledger. Raw inventories,
@@ -118,44 +121,49 @@ events and reconciled to both WONE `totalSupply()` and the WONE contract's
 native reserve. LayerZero's Harmony NativeOFT contracts hold native ONE
 directly and have no WONE balance in this ledger.
 
-`apply-wone-qualification.py` verifies the full holder file but adds
-`wone_airdrop_atto` only for the current inclusive threshold set. It also
-excludes the WONE contract's own self-held WONE from recipient delivery.
+`apply-wone-qualification.py` verifies the full holder file and adds
+`wone_airdrop_atto` for the current inclusive threshold set plus normalized
+non-Gate exchange wallets selected for aggregate delivery. It also excludes
+the WONE contract's own self-held WONE from recipient delivery.
 
 The source reserve closes as:
 
 ```text
 WONE reserve
-= redistributed qualified-holder WONE
+= redistributed ordinary-threshold and aggregate-exchange WONE
 + retained not-issued remainder
 ```
 
 `redistributed` is not an address or a second issuance. It is the terminal
-source offset paired with WONE amounts already added to qualified-holder
-wallet rows.
+source offset paired with WONE amounts already added to ordinary-threshold or
+aggregate-exchange wallet rows.
 
 ## Initial and later stages
 
 Migration stage is recorded separately from account classification,
 issuance treatment, destination, and destination readiness. `migration_stage`
-is `initial`, `next_stage`, or `deferred` only when an allocation remains;
-`issuance_treatment` records `issue` or `not_issued`:
+is `initial`, `exchange_aggregate`, `next_stage`, or `deferred` only when an
+allocation remains; `issuance_treatment` records `issue` or `not_issued`:
 
-1. The initial stage contains positive eligible **wallet** allocations with
+1. `exchange_aggregate` contains every positive native ONE, WONE, and
+   vault-share entitlement in a confirmed non-Gate inventory. It is
+   release-authorized without individual threshold or activity gating.
+2. The initial stage contains positive eligible **wallet** allocations with
    indexed activity in the six calendar months before the cutoff, inclusive of
    `2026-03-10T14:00:00Z`.
-2. Reviewed multisigs, the two reviewed LayerZero bridge-collateral contracts,
+3. Reviewed multisigs, the two reviewed LayerZero bridge-collateral contracts,
    and reviewed 1wallet allocations are eligible but reserved for the next
    stage regardless of activity.
-3. SmartVault and all other reviewed genuine-contract allocations are not
+4. SmartVault and all other reviewed genuine-contract allocations are not
    issued and remain in the 2050 premint reserve.
-4. Wallets outside the six-month window remain deferred; absence of indexed
+5. Wallets outside the six-month window remain deferred; absence of indexed
    activity is not proof of abandonment.
 
 The 1wallet category uses next-stage recovery-multisig handling, but no
 destination is considered ready without cutoff ownership/recovery evidence.
 SmartVault is a separate wallet family and does not share that treatment.
-The initial reporting cohort is not an unconditional same-address deployment
+The initial reporting cohort excludes the separately authorized non-Gate
+exchange aggregate stage and is not an unconditional same-address deployment
 manifest.
 
 ## Code-bearing and validator accounts

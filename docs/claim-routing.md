@@ -25,8 +25,9 @@ Apply routing decisions in this order:
 2. apply explicitly approved non-issuance, treasury, and incident-recovery
    rules;
 3. exclude qualifying non-Gate exchange wallets from the implicit automatic
-   path and apply exchange aggregate routes, including explicitly named
-   positive deferred native claims; Gate remains under the ordinary threshold;
+   path and apply exchange aggregate routes to every positive native and WONE
+   claim regardless of the ordinary threshold; Gate remains under that
+   threshold;
 4. identify Harmony validator-wrapper accounts and treat them as
    key-controlled accounts;
 5. apply the six-month activity rule only to eligible wallets for the initial
@@ -147,10 +148,12 @@ The exchange route builder uses the cutoff ledger for payout amounts and the
 exchange submission only for membership, destination authorization, and
 reconciliation. Gate receives no generated exchange route. Its qualifying
 ordinary wallets use the same-address destination policy only when their
-migration stage is `initial`. Other exchange routes retain their separately
-assigned stage; explicitly named below-threshold claims remain
-`manual_review`. The private Gate audit joins the stage policy before labeling
-an address as initially delivered.
+migration stage is `initial`. Every positive native and WONE claim in a
+non-Gate inventory is included in aggregate delivery without an ordinary
+threshold test. Those routes compile into the independently release-authorized
+`exchange_aggregate` stage, regardless of individual source activity or
+ordinary stage. The private Gate audit joins the ordinary stage policy before
+labeling an address as initially delivered.
 
 Generated routing is sparse:
 
@@ -200,7 +203,9 @@ assets. The route data preserves the actual identity and policy reason.
 These are release gates in `routing/local/policy-decisions.csv`. The routing
 summary records both a conservative global status and stage-scoped readiness.
 The LayerZero gate applies to the next stage; a policy decision that can affect
-wallet claims remains an initial-stage gate.
+ordinary wallet claims remains an initial-stage gate. Confirmed non-Gate
+exchange delivery uses its own scoped readiness and is not blocked by ordinary
+threshold, activity, or initial-stage policy gates.
 
 ### WONE holder redistribution
 
@@ -213,15 +218,15 @@ airdrop. The source reserve is then split exactly:
 
 ```text
 WONE shard-0 native reserve
-= qualified-holder redistribution
+= ordinary-threshold and aggregate-exchange redistribution
 + retained not-issued remainder
 ```
 
 The first route has terminal status `redistributed`. It has no destination
-address because the corresponding ONE is already present in qualified-holder
-wallet rows. The second route is terminal `not_issuing`; no replacement token
-is created for the below-threshold/excluded remainder, which remains in the
-2050 premint reserve.
+address because the corresponding ONE is already present in
+ordinary-threshold or aggregate-exchange wallet rows. The second route is
+terminal `not_issuing`; no replacement token is created for the remainder,
+which remains in the 2050 premint reserve.
 
 `build-wone-routes.py` derives both exact amounts from the verified holder
 overlay. The WONE contract's self-held WONE is excluded as a circular system

@@ -44,8 +44,9 @@ Components:
   reward, and supported pending cross-shard value; excludes active
   stake/delegation.
 - `wone_balance` — cutoff WONE balance used for qualification.
-- `wone_airdrop` — WONE balance added to the current wallet amount only when
-  the inclusive qualification threshold is met.
+- `wone_airdrop` — WONE balance added to the current wallet amount when the
+  inclusive ordinary threshold is met or the wallet belongs to a normalized
+  non-Gate aggregate-delivery inventory.
 - `wallet_airdrop` — `native_wallet_airdrop + wone_airdrop`.
 - `staked_to_vault` — active stake/delegation moved to validator ERC-4626
   vaults and represented to delegators as vault shares.
@@ -77,8 +78,9 @@ cutoff block. The resulting
 `all-address-migration-claims-cutoff-metadata.csv` companion explicitly
 resolves every blank shard-0 code field to either the empty-code hash or its
 actual code hash, including native below-threshold rows. WONE-only addresses
-are added to this current-migration ledger only when they meet the combined
-threshold; the complete holder census remains a separate artifact.
+are added to this current-migration ledger when they meet the combined
+threshold or belong to a normalized non-Gate aggregate-delivery inventory; the
+complete holder census remains a separate artifact.
 
 Contract review emits `contract-review-policy.csv` and
 `validator-policy-accounts.csv` as the deterministic cutoff-pinned inputs to
@@ -186,9 +188,9 @@ automatically classified as perpetrators or routed to `not-issuing`.
 - `policy_group` — wallet, validator wallet, multisig, LayerZero collateral,
   1wallet, SmartVault, or other reviewed contract;
 - `routing_category` — automatic policy, exchange/manual, or contract policy;
-- `migration_stage` — `initial`, `next_stage`, or `deferred`; blank when no
-  allocation remains. Compiled explicitly routed below-threshold rows use
-  `manual_review`;
+- `migration_stage` — `initial`, release-authorized `exchange_aggregate`,
+  `next_stage`, or `deferred`; blank when no allocation remains. Other
+  explicitly routed below-threshold rows use `manual_review`;
 - `issuance_treatment` — `issue` or `not_issued` in the stage ledger and
   `issue`, `not_issued`, or `redistributed` in compiled routing;
 - gross, prior-deduction, WONE-source-offset, reviewed-contract
@@ -233,7 +235,8 @@ Private files under `exchanges/wallets-standardized/` use one row per submitted
 source wallet. Core fields are:
 
 - `exchange_id`, `source_file`, `source_sha256`, `source_sheet`, and
-  `source_row` — raw-input provenance;
+  `source_row` — raw-input provenance. A semicolon-separated sheet/row value
+  records a canonical wallet merged from more than one submitted shard row;
 - `address_hex` and `address_one` — canonical equivalent account identities;
 - `submitted_balance_raw`, `submitted_balance_unit`, and
   `submitted_balance_atto` — optional exchange-supplied reconciliation value;
@@ -241,6 +244,12 @@ source wallet. Core fields are:
   aggregate destination state; and
 - authorization type, destination, message/signature hashes, and verification
   status where the submission contains signed evidence.
+
+The normalization summary records each exchange's submitted-balance scope,
+aggregate submitted amount, signature-designated/provided/verified/failed
+counts, and parser-specific source metadata. For a separate proof artifact it
+also records that artifact's SHA-256. Invalid designated signatures fail
+normalization and are never emitted as accepted rows.
 
 The normalized files do not decide payout amounts. Address audits under
 `artifacts/exchange-accounting-20260917/audits/` join each submitted wallet to
@@ -255,16 +264,16 @@ and final eligibility category. They add:
   `planned_staked_to_vault_atto`, `planned_total_entitlement_atto`, and
   `remaining_not_airdropped_atto`;
 - prior last-activity evidence or explicit `not_collected` coverage;
-- submitted-balance reconciliation and exact signed delta; and
+- submitted-balance scope, reconciliation, and exact signed delta; and
 - all native wallet, WONE, vault, qualification, and current-claim components.
 
 For a manual exchange route, `planned_wallet_airdrop_atto` is the direct ERC-20
 ONE transfer amount, while `planned_staked_to_vault_atto` remains vault-share
 principal. Their sum, `planned_total_entitlement_atto`, equals current
-`total_claim_atto`. It can include a below-threshold native claim, but it does
-not fabricate WONE that remains outside the current claim. For Gate all three
-planned fields are nonzero only when the wallet passes the threshold and
-remains in the automatic category.
+`total_claim_atto`. For non-Gate aggregate delivery, that current claim
+includes every positive native and WONE amount regardless of the ordinary
+wallet threshold. For Gate all three planned fields are nonzero only when the
+wallet passes the threshold and remains in the automatic category.
 
 ## Sparse routing outputs
 
@@ -276,9 +285,9 @@ code-less EOA implicit default:
 - `source_category` — `ordinary_eoa`, `validator_account`,
   `contract_review`, `excluded`, or `deferred`;
 - `source_code_bearing` — whether cutoff metadata contains non-empty code;
-- `migration_stage` — `initial`, `next_stage`, `deferred`, or `manual_review`;
-  terminal rows keep an associated stage only when they deduct part of a staged
-  allocation;
+- `migration_stage` — `initial`, `exchange_aggregate`, `next_stage`,
+  `deferred`, or `manual_review`; terminal rows keep an associated stage only
+  when they deduct part of a staged allocation;
 - `issuance_treatment` — `issue`, terminal `not_issued`, or source
   `redistributed`;
 - `amount_atto` — the affected wallet amount or vault-share principal;
@@ -306,6 +315,7 @@ explicit governor overrides and safety holds only.
 `validator-vault-stages.csv` partitions every base vault's assets into:
 
 - `initial_assets_atto`;
+- `exchange_aggregate_assets_atto`;
 - `next_stage_assets_atto`;
 - `qualified_deferred_assets_atto`;
 - `manual_review_assets_atto`;
@@ -320,6 +330,14 @@ The files under `generated/initial-stage/` materialize only
 `migration_stage = initial` and `issuance_treatment = issue`. They contain
 wallet destinations, per-validator share beneficiaries, validator assets and
 governors, unresolved items, and a hash-bound summary.
+
+`exchange-native-deliveries.csv` contains one native ONE destination total per
+non-Gate exchange. The Binance.US policy is expanded in
+`binance-us-wallet-deliveries.csv`,
+`binance-us-delegation-withdrawals.csv`, and
+`binance-us-validator-vault-adjustments.csv`, which show the same delegated
+principal added to the source wallet's direct aggregate amount and subtracted
+from each affected validator vault.
 
 `unresolved-routing.csv` is the generated subset whose destination status is
 not `ready`. It is never a routing input and must not be edited.

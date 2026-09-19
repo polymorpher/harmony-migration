@@ -61,9 +61,10 @@ qualification_total
 = native_total_claim + wone_balance
 ```
 
-For a row that meets the inclusive threshold, its complete WONE balance enters
-the current wallet airdrop. Otherwise `wone_airdrop` is zero for this
-migration. The destination split is:
+For a row that meets the inclusive threshold, or belongs to a normalized
+non-Gate aggregate-delivery inventory, its complete WONE balance enters the
+current wallet amount. Otherwise `wone_airdrop` is zero. The destination split
+is:
 
 ```text
 native_wallet_airdrop
@@ -84,11 +85,11 @@ total_claim
 = wallet_airdrop + staked_to_vault
 ```
 
-The native ledger remains separately reproducible. Adding WONE to qualified
-holder rows creates an expanded routing input, so the WONE contract's shard-0
-native reserve is removed exactly once at the source: the amount paired with
-current holder airdrops is `redistributed`, and the below-threshold/excluded
-remainder is `not_issuing` and retained in the 2050 premint reserve.
+The native ledger remains separately reproducible. Adding WONE to
+ordinary-threshold and aggregate-exchange rows creates an expanded routing
+input, so the WONE contract's shard-0 native reserve is removed exactly once at
+the source: the amount paired with current delivery is `redistributed`, and
+the remainder is `not_issuing` and retained in the 2050 premint reserve.
 Same-address shard-1 ONE is not WONE backing and is included in reviewed
 contract non-issuance.
 
@@ -193,9 +194,15 @@ duplicates and cross-exchange overlap, and joined to the already-generated
 cutoff, WONE, activity, and policy ledgers. Gate keeps the ordinary threshold
 and same-address destination behavior but remains subject to the wallet stage.
 Qualifying non-Gate wallets are removed from the implicit automatic class,
-while explicit aggregate routes can load positive below-threshold native
-claims only as `manual_review`. Submitted balances are reconciled but never
-substitute for chain state, and a blank aggregate destination is a hold.
+while explicit aggregate routes load every positive native and WONE claim,
+including below-threshold rows, into a release-authorized
+`exchange_aggregate` stage that bypasses individual threshold and activity
+gating. Submitted balances are reconciled but never substitute for chain
+state, and a blank aggregate destination is a hold.
+Multi-shard submissions are merged by canonical address and reconciled against
+the matching combined liquid scope. When a submission designates signed rows,
+the signed destination, recovered signer, source-row marker, and any separate
+proof artifact must all agree before normalization succeeds.
 
 Incident evidence preserves separate roles for explicitly reported
 perpetrators, transaction-linked theft recipients, and reported victims.

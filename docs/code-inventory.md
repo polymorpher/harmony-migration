@@ -17,9 +17,10 @@
   and transfer logs from an archival node and require exact supply/reserve
   closure
 - `toolkit/scripts/claims/build-wone-new-holder-metadata.py` — resolve cutoff
-  code and nonce for WONE-only threshold candidates
-- `toolkit/scripts/claims/apply-wone-qualification.py` — add qualified WONE to
-  wallet rows while preserving native claim fields and reserve conservation
+  code and nonce for WONE-only threshold or aggregate-exchange candidates
+- `toolkit/scripts/claims/apply-wone-qualification.py` — add
+  ordinary-threshold and aggregate-exchange WONE to wallet rows while
+  preserving native claim fields and reserve conservation
 - `toolkit/scripts/claims/build-wone-report.py` — render the integrated WONE
   holder, qualification, reserve-split, and routing finding
 - `toolkit/scripts/claims/build-pre-wone-archive-manifest.py` — map immutable
@@ -46,8 +47,9 @@
   deductions, separate wallets from genuine contracts, assign migration stage,
   and render the exact wallet-only activity reconciliation
 - `toolkit/scripts/claims/verify-migration-stage-policy.py` — independently
-  re-sum stage, issuance treatment, wallet/vault components, activity,
-  contract groups, and compiled routing closure
+  re-sum ordinary stage, exchange-aggregate overrides, issuance treatment,
+  wallet/vault components, activity, contract groups, and compiled routing
+  closure
 - `toolkit/scripts/claims/vault-share-ledger-rpc.py` — independent historical
   RPC export of per-validator active delegation
 - `toolkit/scripts/claims/verify-vault-delegations.py` — byte-for-byte database
@@ -63,16 +65,22 @@
 
 ## Exchange accounting
 
+- `docs/EXCHANGE_UPDATE_SCOPE.md` — mandatory exchange-only fast-path and
+  explicit boundary against WONE/global-policy regeneration
 - `toolkit/scripts/exchanges/normalize-exchange-wallets.py` — deterministic
-  CSV/XLSX ingestion, address normalization, overlap checks, exact balance
-  parsing, and MEXC EIP-191 signer verification
+  CSV/XLSX/DOCX ingestion, address normalization, overlap checks, exact
+  single- and multi-shard balance parsing, MEXC EIP-191 signer verification,
+  and KuCoin workbook/proof cross-verification
 - `toolkit/scripts/exchanges/build-exchange-accounting.py` — reuse the cutoff
   claim, WONE, activity, and policy ledgers to build exchange memos, address
-  audits, Gate split lists, non-Gate eligibility exclusions, and manual route
-  inputs
+  audits, wallet/balance/signature statistics, Gate split lists, non-Gate
+  eligibility exclusions, and manual route inputs
 - `toolkit/scripts/exchanges/verify-exchange-routing.py` — independently require
   every memo amount and positive manual source to match the compiled exchange
   routing exceptions, while proving Gate has no exchange route
+- `toolkit/scripts/exchanges/build-exchange-native-policy.py` — fast
+  exchange-local native ONE summary, separate Gate reconciliation, and
+  Binance.US per-wallet/delegation/vault adjustment artifacts
 
 The runtime configuration, raw/normalized inventories, destinations, and
 operator README under `exchanges/` are private and intentionally absent from
@@ -195,8 +203,9 @@ See `docs/contract-account-review.md`.
   historical USD-difference bundle verifier; restored with the result package
   because it embeds expected output identities
 - `toolkit/scripts/claims/verify-wone-allocation.py` — independently verify the
-  complete WONE holder overlay, threshold subset, reserve split, NativeOFT
-  separation, and shard-1 reviewed-contract non-issuance
+  complete WONE holder overlay, threshold subset, aggregate-exchange
+  exception, reserve split, NativeOFT separation, and shard-1 reviewed-contract
+  non-issuance
 - `scripts/check-numerical-embargo.py` — rejects publishable result values and
   private finding and exchange-input paths
 - `scripts/check-public-package.py` — rejects private machine paths, binary
