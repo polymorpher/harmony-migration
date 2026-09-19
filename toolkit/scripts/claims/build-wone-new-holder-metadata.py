@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Resolve cutoff metadata for WONE-only addresses above the threshold."""
+"""Resolve cutoff metadata for WONE-only threshold or aggregate recipients."""
 
 import argparse
 import csv
@@ -40,6 +40,13 @@ def parse_args():
     parser.add_argument("--block", required=True, type=int)
     parser.add_argument("--block-hash", required=True)
     parser.add_argument("--state-root", required=True)
+    parser.add_argument(
+        "--aggregate-delivery-summary",
+        help=(
+            "exchange normalization summary whose manual-delivery wallets "
+            "must receive WONE independently of the ordinary threshold"
+        ),
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--minimum-one", type=int, default=1000)
@@ -63,6 +70,62 @@ def normalize_address(value):
     return address
 
 
+def load_aggregate_delivery_addresses(path):
+    if not path:
+        return set(), []
+    with open(path, encoding="utf-8") as source:
+        summary = json.load(source)
+    if summary.get("schema_version") != 1:
+        raise ValueError("unsupported exchange normalization summary")
+    addresses = set()
+    sources = []
+    for exchange_id, exchange in sorted(
+        summary.get("exchanges", {}).items()
+    ):
+        if exchange.get("delivery_policy") != "manual_current_claim":
+            continue
+        output_path = Path(exchange["output"])
+        expected_hash = exchange["output_sha256"]
+        if file_sha256(output_path) != expected_hash:
+            raise ValueError(
+                f"{exchange_id}: normalized exchange source hash mismatch"
+            )
+        source_addresses = set()
+        with output_path.open(newline="", encoding="utf-8") as source:
+            reader = csv.DictReader(source)
+            if not {"exchange_id", "address_hex"} <= set(
+                reader.fieldnames or ()
+            ):
+                raise ValueError(
+                    f"{output_path}: missing normalized exchange fields"
+                )
+            for line, row in enumerate(reader, start=2):
+                if row["exchange_id"] != exchange_id:
+                    raise ValueError(
+                        f"{output_path}:{line}: exchange id mismatch"
+                    )
+                address = normalize_address(row["address_hex"])
+                if address in source_addresses or address in addresses:
+                    raise ValueError(
+                        f"{output_path}:{line}: duplicate exchange address"
+                    )
+                source_addresses.add(address)
+                addresses.add(address)
+        if len(source_addresses) != int(exchange["normalized_rows"]):
+            raise ValueError(
+                f"{exchange_id}: normalized exchange row count mismatch"
+            )
+        sources.append(
+            {
+                "exchange_id": exchange_id,
+                "path": str(output_path),
+                "sha256": expected_hash,
+                "addresses": len(source_addresses),
+            }
+        )
+    return addresses, sources
+
+
 def code_hash(code):
     raw = bytes.fromhex(code[2:])
     return "0x" + lib.keccak256(raw).hex()
@@ -84,7 +147,13 @@ def main():
         normalize_address(address) for address in args.exclude_address
     }
     excluded.add(WONE_ADDRESS)
+    aggregate_delivery, aggregate_sources = (
+        load_aggregate_delivery_addresses(args.aggregate_delivery_summary)
+    )
+    aggregate_delivery -= excluded
     candidates = {}
+    threshold_holders = 0
+    aggregate_delivery_holders = 0
     with open(args.wone_holders, newline="") as source:
         reader = csv.DictReader(source)
         for line, row in enumerate(reader, start=2):
@@ -92,7 +161,13 @@ def main():
             amount = int(row["wone_balance_atto"])
             if amount < 0:
                 raise ValueError(f"negative WONE at line {line}")
-            if amount >= threshold and address not in excluded:
+            if address in excluded:
+                continue
+            if amount >= threshold:
+                threshold_holders += 1
+                candidates[address] = amount
+            elif address in aggregate_delivery:
+                aggregate_delivery_holders += 1
                 candidates[address] = amount
 
     native_matches = 0
@@ -178,7 +253,20 @@ def main():
         "wone_holders": args.wone_holders,
         "wone_holders_sha256": file_sha256(args.wone_holders),
         "minimum_atto": str(threshold),
-        "wone_holders_at_or_above_threshold": len(candidates) + native_matches,
+        "aggregate_delivery_summary": args.aggregate_delivery_summary,
+        "aggregate_delivery_summary_sha256": (
+            file_sha256(args.aggregate_delivery_summary)
+            if args.aggregate_delivery_summary
+            else None
+        ),
+        "aggregate_delivery_sources": aggregate_sources,
+        "wone_holders_at_or_above_threshold": threshold_holders,
+        "aggregate_delivery_wone_holders_below_threshold": (
+            aggregate_delivery_holders
+        ),
+        "metadata_candidate_holders": (
+            threshold_holders + aggregate_delivery_holders
+        ),
         "native_claim_matches": native_matches,
         "wone_only_rows": len(rows),
         "code_bearing_rows": code_bearing,

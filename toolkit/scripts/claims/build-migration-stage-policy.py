@@ -271,16 +271,21 @@ def render_report(result):
     windows = result["wallet_activity_windows"]
     deferred = result["deferred_wallets"]
     allocation = result["allocation"]
-    return f"""# Migration stage policy reconciliation
+    return f"""# Ordinary migration-stage policy reconciliation
 
 Generated from the inclusive snapshot-qualified population. Account
 classification, migration stage, destination readiness, and issuance treatment
-are separate decisions.
+are separate decisions. Confirmed non-Gate exchange routes later override
+individual ordinary stages with the release-authorized `exchange_aggregate`
+stage.
 
 ## Confirmed stage policy
 
 - Initial stage: positive eligible wallets with indexed activity on or after
   `{result["initial_window"]["since_time_utc"]}`.
+- Exchange override at route compilation: every positive entitlement in a
+  confirmed non-Gate inventory moves to `exchange_aggregate`, regardless of
+  the ordinary threshold or activity result shown here.
 - Next stage regardless of activity: reviewed multisigs, the two reviewed
   LayerZero collateral contracts, and reviewed 1wallet allocations.
 - Not issued: SmartVault and the remaining reviewed genuine contracts.
@@ -316,18 +321,19 @@ It is not an inactivity detector or a finding about beneficial ownership.
 {markdown_table(
     ("Allocation bucket", "Addresses", "ONE"),
     (
-        ("Initial wallets", f'{result["initial_wallets"]["addresses"]:,}', one(allocation["initial_wallets_atto"])),
+        ("Ordinary initial wallets before exchange override", f'{result["initial_wallets"]["addresses"]:,}', one(allocation["initial_wallets_atto"])),
         ("Next-stage reviewed contracts", f'{contracts["approved"]["addresses"]:,}', one(allocation["next_stage_contracts_atto"])),
         ("Deferred wallets", "not a recipient manifest", one(allocation["deferred_wallets_atto"])),
         ("Total migration allocation", "", one(allocation["total_migration_atto"])),
     ),
 )}
 
-The initial wallet cohort contains
+Before explicit routing, the ordinary initial wallet cohort contains
 `{result["initial_wallets"]["automatic_policy_addresses"]:,}` automatic-policy
 rows and `{result["initial_wallets"]["manual_routing_addresses"]:,}`
-exchange/manual rows. Routing category does not change eligibility, and this
-report is not an unconditional same-address distribution manifest.
+exchange/manual rows. Confirmed non-Gate rows are removed from this cohort when
+routing compiles the separate exchange stage. This report is not an
+unconditional same-address distribution manifest.
 
 ## Wallet activity windows
 
@@ -352,13 +358,16 @@ report is not an unconditional same-address distribution manifest.
     ),
 )}
 
-Deferred wallets reconcile as:
+Ordinary deferred value before exchange overrides reconciles as:
 
 - below snapshot threshold: `{one(deferred["below_threshold_atto"])} ONE`;
 - qualified, older than six months:
   `{one(deferred["older_than_initial_window_atto"])} ONE`;
 - qualified, no indexed activity:
   `{one(deferred["no_indexed_activity_atto"])} ONE`.
+
+The compiled routing summary moves all confirmed non-Gate exchange value out of
+these ordinary buckets and into `exchange_aggregate`.
 
 ## Conservation
 
@@ -428,7 +437,10 @@ def main():
     identities, policy_state = load_contract_review(args.contract_review)
     reserve = int(migration_summary["wone_reserve_atto"])
     redistributed = int(
-        migration_summary["wone_redistributed_to_priority_atto"]
+        migration_summary.get(
+            "wone_redistributed_to_recipients_atto",
+            migration_summary["wone_redistributed_to_priority_atto"],
+        )
     )
     retained_wone = int(
         migration_summary["wone_retained_not_issued_atto"]
@@ -805,6 +817,8 @@ def main():
         "status": "passed",
         "policy": (
             "inclusive snapshot threshold; six-month initial wallet stage; "
+            "confirmed non-Gate routes override ordinary stages with a "
+            "release-authorized exchange aggregate; "
             "reviewed multisig, LayerZero, and 1wallet allocations next stage; "
             "SmartVault and other reviewed contracts not issued"
         ),

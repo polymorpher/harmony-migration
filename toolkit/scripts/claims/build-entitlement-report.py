@@ -73,7 +73,7 @@ def main():
             one(components["native_wallet_airdrop"]),
         ),
         (
-            "Qualified-holder WONE airdrop",
+            "Ordinary-threshold and aggregate-exchange WONE delivery",
             one(components["wone_airdrop"]),
         ),
         ("Direct wallet airdrop", one(components["wallet_airdrop"])),
@@ -176,6 +176,8 @@ native claims below the threshold.
 - initial-stage status: `{routing["initial_stage_status"]}`
 - initial-stage blockers:
   `{", ".join(routing["stage_readiness"]["initial"]["blockers"]) or "none"}`
+- non-Gate exchange aggregate status:
+  `{routing["stage_readiness"]["exchange_aggregate"]["status"]}`
 - prioritized claims checked: `{routing["priority_claims"]}`
 - explicitly routed deferred claims:
   `{routing["explicitly_routed_deferred_claims"]}`
@@ -194,7 +196,8 @@ native claims below the threshold.
   `{one(routing["not_issued_wallet_airdrop_atto"])} ONE`
 - not-issued staked-to-vault amount:
   `{one(routing["not_issued_staked_to_vault_atto"])} ONE`
-- WONE reserve redistributed to current qualified-holder airdrops:
+- WONE reserve redistributed to ordinary-threshold and aggregate-exchange
+  delivery:
   `{one(routing["wone_redistributed_to_holders_atto"])} ONE`
 - WONE reserve remainder retained as not issued:
   `{one(routing["wone_retained_not_issued_atto"])} ONE`
@@ -204,11 +207,13 @@ native claims below the threshold.
   `{one(routing["issuable_total_claim_atto"])} ONE`
 - initial-stage allocation:
   `{one(routing["stage_totals"]["initial"]["total_claim_atto"])} ONE`
+- release-authorized non-Gate exchange aggregate:
+  `{one(routing["stage_totals"]["exchange_aggregate"]["total_claim_atto"])} ONE`
 - next-stage allocation:
   `{one(routing["stage_totals"]["next_stage"]["total_claim_atto"])} ONE`
 - qualified deferred-wallet allocation:
   `{one(routing["stage_totals"]["deferred"]["total_claim_atto"])} ONE`
-- explicitly routed below-threshold claims pending stage review:
+- other explicitly routed below-threshold claims pending stage review:
   `{routing["pending_stage_review_claims"]}` rows,
   `{one(routing["stage_totals"]["manual_review"]["total_claim_atto"])} ONE`
 - unresolved validator governors: `{routing["unresolved_governors"]}`
@@ -222,9 +227,10 @@ validator-governor, and policy-gate totals; a later-stage hold does not by
 itself change initial-stage readiness.
 
 `redistributed` is a terminal source offset paired exactly with WONE already
-added to qualified-holder wallet rows. It is not itself another destination or
-issuance. `not_issuing` is also terminal, but unlike redistribution those exact
-amounts receive no token and remain in the 2050 premint reserve. A
+added to ordinary-threshold or aggregate-exchange wallet rows. It is not itself
+another destination or issuance. `not_issuing` is also terminal, but unlike
+redistribution those exact amounts receive no token and remain in the 2050
+premint reserve. A
 not-issued staked row also removes the corresponding vault deposit assets and
 shares. Existing partial-row remainders continue to their ordinary destinations.
 

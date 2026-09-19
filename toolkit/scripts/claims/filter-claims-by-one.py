@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 
 ATTO_PER_ONE = 10**18
@@ -33,6 +34,13 @@ def parse_args():
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", required=True)
+    parser.add_argument(
+        "--aggregate-delivery-summary",
+        help=(
+            "exchange normalization summary authorizing below-threshold "
+            "WONE in manual aggregate-delivery rows"
+        ),
+    )
     parser.add_argument("--minimum-one", required=True, type=parse_one)
     parser.add_argument(
         "--comparison",
@@ -51,6 +59,61 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
+def load_aggregate_delivery_addresses(path):
+    if not path:
+        return set()
+    with open(path, encoding="utf-8") as source:
+        summary = json.load(source)
+    if summary.get("schema_version") != 1:
+        raise ValueError("unsupported exchange normalization summary")
+    addresses = set()
+    for exchange_id, exchange in sorted(
+        summary.get("exchanges", {}).items()
+    ):
+        if exchange.get("delivery_policy") != "manual_current_claim":
+            continue
+        output_path = Path(exchange["output"])
+        if file_sha256(output_path) != exchange["output_sha256"]:
+            raise ValueError(
+                f"{exchange_id}: normalized exchange source hash mismatch"
+            )
+        source_rows = 0
+        with output_path.open(newline="", encoding="utf-8") as source:
+            reader = csv.DictReader(source)
+            if not {"exchange_id", "address_hex"} <= set(
+                reader.fieldnames or ()
+            ):
+                raise ValueError(
+                    f"{output_path}: missing normalized exchange fields"
+                )
+            for line, row in enumerate(reader, start=2):
+                if row["exchange_id"] != exchange_id:
+                    raise ValueError(
+                        f"{output_path}:{line}: exchange id mismatch"
+                    )
+                address = row["address_hex"].strip().lower()
+                if (
+                    len(address) != 42
+                    or not address.startswith("0x")
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in address[2:]
+                    )
+                ):
+                    raise ValueError(f"{output_path}:{line}: invalid address")
+                if address in addresses:
+                    raise ValueError(
+                        f"{output_path}:{line}: duplicate exchange address"
+                    )
+                addresses.add(address)
+                source_rows += 1
+        if source_rows != int(exchange["normalized_rows"]):
+            raise ValueError(
+                f"{exchange_id}: normalized exchange row count mismatch"
+            )
+    return addresses
+
+
 def main():
     args = parse_args()
     for path in (args.output, args.summary):
@@ -65,6 +128,9 @@ def main():
     staked_to_vault_atto = 0
     wone_airdrop_atto = 0
     previous_key = None
+    aggregate_delivery = load_aggregate_delivery_addresses(
+        args.aggregate_delivery_summary
+    )
     with open(args.input, newline="") as source, open(
         args.output + ".partial", "x", newline=""
     ) as output:
@@ -125,9 +191,13 @@ def main():
                     raise ValueError(
                         f"qualification total mismatch at line {line}"
                     )
+                address = row.get("address", "").strip().lower()
                 expected_wone = (
                     wone_balance
-                    if qualification_value >= args.minimum_one
+                    if (
+                        qualification_value >= args.minimum_one
+                        or address in aggregate_delivery
+                    )
                     else 0
                 )
                 if (
@@ -164,6 +234,12 @@ def main():
         "output_sha256": file_sha256(args.output),
         "comparison": args.comparison,
         "minimum_atto": str(args.minimum_one),
+        "aggregate_delivery_summary": args.aggregate_delivery_summary,
+        "aggregate_delivery_summary_sha256": (
+            file_sha256(args.aggregate_delivery_summary)
+            if args.aggregate_delivery_summary
+            else None
+        ),
         "input_rows": input_rows,
         "output_rows": output_rows,
         "exact_threshold_rows": exact_threshold_rows,

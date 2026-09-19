@@ -297,6 +297,39 @@ def main():
         != global_total
     ):
         raise ValueError("stage allocation does not close")
+    override_totals = Counter()
+    exchange_override_total = 0
+    for label, override in routing.get("stage_overrides", {}).items():
+        source_stage = override["source_stage"]
+        target_stage = override["target_stage"]
+        wallet = int(override["wallet_airdrop_atto"])
+        staked = int(override["staked_to_vault_atto"])
+        total = int(override["total_claim_atto"])
+        if (
+            target_stage != "exchange_aggregate"
+            or min(wallet, staked, total) < 0
+            or wallet + staked != total
+            or label != f"{source_stage}_to_{target_stage}"
+        ):
+            raise ValueError("invalid exchange stage override")
+        override_totals[source_stage] += total
+        exchange_override_total += total
+    exchange_stage = routing["stage_totals"].get("exchange_aggregate")
+    if (
+        exchange_stage is None
+        or int(exchange_stage["total_claim_atto"])
+        != exchange_override_total
+    ):
+        raise ValueError("compiled exchange aggregate stage mismatch")
+    exchange_readiness = routing["stage_readiness"].get(
+        "exchange_aggregate"
+    )
+    if (
+        exchange_readiness is None
+        or exchange_readiness["status"] != "ready"
+        or not exchange_readiness["release_authorized"]
+    ):
+        raise ValueError("exchange aggregate stage is not release-ready")
     for stage in ("initial", "next_stage"):
         expected = int(
             allocation[
@@ -307,11 +340,16 @@ def main():
         )
         if stages[stage]["allocation_atto"] != expected:
             raise ValueError(f"{stage} allocation mismatch")
-        if int(routing["stage_totals"][stage]["total_claim_atto"]) != expected:
+        compiled_expected = expected - override_totals[stage]
+        if (
+            int(routing["stage_totals"][stage]["total_claim_atto"])
+            != compiled_expected
+        ):
             raise ValueError(f"compiled {stage} allocation mismatch")
     if (
         int(routing["stage_totals"]["deferred"]["total_claim_atto"])
         != stages["deferred"]["allocation_atto"]
+        - override_totals["deferred"]
     ):
         raise ValueError("compiled qualified-deferred allocation mismatch")
     if (
@@ -370,6 +408,31 @@ def main():
             "validator_wrapper_addresses": initial_validators,
             "allocation_atto": str(stages["initial"]["allocation_atto"]),
         },
+        "compiled_initial_wallets": {
+            "addresses": (
+                stages["initial"]["addresses"]
+                - int(
+                    routing.get("stage_overrides", {})
+                    .get("initial_to_exchange_aggregate", {})
+                    .get("addresses", 0)
+                )
+            ),
+            "allocation_atto": routing["stage_totals"]["initial"][
+                "total_claim_atto"
+            ],
+        },
+        "exchange_aggregate": {
+            "addresses": sum(
+                int(value["addresses"])
+                for value in routing.get("stage_overrides", {}).values()
+            ),
+            "allocation_atto": str(exchange_override_total),
+            "status": exchange_readiness["status"],
+            "release_authorized": exchange_readiness[
+                "release_authorized"
+            ],
+        },
+        "stage_overrides": routing.get("stage_overrides", {}),
         "next_stage_contract_allocation_atto": str(
             stages["next_stage"]["allocation_atto"]
         ),

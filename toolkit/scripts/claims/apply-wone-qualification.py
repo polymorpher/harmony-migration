@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Add current-batch WONE airdrops to the migration claim ledger."""
+"""Add ordinary-threshold and aggregate-exchange WONE to migration claims."""
 
 import argparse
 import csv
@@ -50,6 +50,13 @@ def parse_args():
     parser.add_argument("--wone-holders", required=True)
     parser.add_argument("--wone-summary", required=True)
     parser.add_argument("--new-holder-metadata", required=True)
+    parser.add_argument(
+        "--aggregate-delivery-summary",
+        help=(
+            "exchange normalization summary; every manual-delivery wallet "
+            "receives its WONE regardless of the ordinary wallet threshold"
+        ),
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--minimum-one", required=True, type=parse_one)
@@ -82,6 +89,80 @@ def normalize_address(value, context):
     if len(raw) != 20:
         raise ValueError(f"{context}: invalid address {value!r}")
     return address
+
+
+def load_aggregate_delivery_addresses(path):
+    if not path:
+        return set(), []
+    with open(path, encoding="utf-8") as source:
+        summary = json.load(source)
+    if summary.get("schema_version") != 1:
+        raise ValueError("unsupported exchange normalization summary")
+    exchanges = summary.get("exchanges")
+    if not isinstance(exchanges, dict) or not exchanges:
+        raise ValueError("exchange normalization summary has no exchanges")
+    addresses = set()
+    sources = []
+    for exchange_id, exchange in sorted(exchanges.items()):
+        if exchange.get("delivery_policy") != "manual_current_claim":
+            continue
+        output = exchange.get("output")
+        expected_hash = exchange.get("output_sha256")
+        expected_rows = exchange.get("normalized_rows")
+        if (
+            not isinstance(output, str)
+            or not output
+            or not isinstance(expected_hash, str)
+            or not isinstance(expected_rows, int)
+        ):
+            raise ValueError(
+                f"{exchange_id}: incomplete normalized exchange source"
+            )
+        output_path = Path(output)
+        if file_sha256(output_path) != expected_hash:
+            raise ValueError(
+                f"{exchange_id}: normalized exchange source hash mismatch"
+            )
+        source_addresses = set()
+        with output_path.open(newline="", encoding="utf-8") as source:
+            reader = csv.DictReader(source)
+            required = {"exchange_id", "address_hex"}
+            if not required <= set(reader.fieldnames or ()):
+                raise ValueError(
+                    f"{output_path}: missing normalized exchange fields"
+                )
+            for line, row in enumerate(reader, start=2):
+                if row["exchange_id"] != exchange_id:
+                    raise ValueError(
+                        f"{output_path}:{line}: exchange id mismatch"
+                    )
+                address = normalize_address(
+                    row["address_hex"],
+                    f"{output_path}:{line}",
+                )
+                if address in source_addresses:
+                    raise ValueError(
+                        f"{output_path}:{line}: duplicate address"
+                    )
+                if address in addresses:
+                    raise ValueError(
+                        f"{output_path}:{line}: aggregate exchange overlap"
+                    )
+                source_addresses.add(address)
+                addresses.add(address)
+        if len(source_addresses) != expected_rows:
+            raise ValueError(
+                f"{exchange_id}: normalized exchange row count mismatch"
+            )
+        sources.append(
+            {
+                "exchange_id": exchange_id,
+                "path": str(output_path),
+                "sha256": expected_hash,
+                "addresses": len(source_addresses),
+            }
+        )
+    return addresses, sources
 
 
 def fixed(value):
@@ -211,21 +292,26 @@ def load_new_holder_metadata(path):
 
 def require_complete_new_holder_metadata(
     holders,
-    native_addresses,
+    native_candidate_addresses,
     metadata_addresses,
     threshold,
+    aggregate_delivery_addresses=None,
 ):
+    aggregate_delivery_addresses = aggregate_delivery_addresses or set()
     expected = {
         address
         for address, amount in holders.items()
-        if amount >= threshold and address not in native_addresses
+        if (
+            amount >= threshold or address in aggregate_delivery_addresses
+        )
+        and address not in native_candidate_addresses
     }
     actual = set(metadata_addresses)
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
         raise ValueError(
-            "WONE-only metadata does not equal the complete threshold set: "
+            "WONE-only metadata does not equal the complete delivery set: "
             f"missing={missing[:10]} extra={extra[:10]} "
             f"missing_count={len(missing)} extra_count={len(extra)}"
         )
@@ -247,11 +333,20 @@ def validate_native_row(row, line):
     return native_wallet, staked, native_total
 
 
-def apply_overlay(row, wone, threshold):
+def apply_overlay(
+    row,
+    wone,
+    threshold,
+    aggregate_delivery=False,
+):
     native_wallet = int(row["wallet_airdrop_atto"])
     native_total = int(row["total_claim_atto"])
     qualification_total = native_total + wone
-    wone_airdrop = wone if qualification_total >= threshold else 0
+    wone_airdrop = (
+        wone
+        if qualification_total >= threshold or aggregate_delivery
+        else 0
+    )
     wallet = native_wallet + wone_airdrop
     total = native_total + wone_airdrop
     price = row["valuation_price_usd_per_one"]
@@ -291,7 +386,14 @@ def apply_overlay(row, wone, threshold):
     return result
 
 
-def new_holder_row(address, wone, metadata, template, threshold):
+def new_holder_row(
+    address,
+    wone,
+    metadata,
+    template,
+    threshold,
+    aggregate_delivery=False,
+):
     checksum = lib.to_checksum(address)
     secure_key = "0x" + lib.keccak256(bytes.fromhex(address[2:])).hex()
     result = {field: "" for field in template}
@@ -333,7 +435,12 @@ def new_holder_row(address, wone, metadata, template, threshold):
             "code_hash_shard1": "",
         }
     )
-    return secure_key, apply_overlay(result, wone, threshold)
+    return secure_key, apply_overlay(
+        result,
+        wone,
+        threshold,
+        aggregate_delivery,
+    )
 
 
 def write_json_atomic(path, value, replace):
@@ -365,6 +472,12 @@ def main():
         for value in args.exclude_address
     }
     excluded.add(WONE_ADDRESS)
+    (
+        aggregate_delivery_requested,
+        aggregate_delivery_sources,
+    ) = load_aggregate_delivery_addresses(args.aggregate_delivery_summary)
+    aggregate_delivery_suppressed = aggregate_delivery_requested & excluded
+    aggregate_delivery_addresses = aggregate_delivery_requested - excluded
     with open(args.wone_summary, encoding="utf-8") as source:
         wone_summary = json.load(source)
     if wone_summary.get("status") != "passed":
@@ -428,14 +541,19 @@ def main():
             wone = holders[address]
             if int(row["wone_balance_atto"]) != wone:
                 raise ValueError(f"new holder {address} WONE mismatch")
-            if wone < args.minimum_one:
-                raise ValueError(f"new holder {address} is below threshold")
+            aggregate_delivery = address in aggregate_delivery_addresses
+            if wone < args.minimum_one and not aggregate_delivery:
+                raise ValueError(
+                    f"new holder {address} is neither threshold-qualified "
+                    "nor selected for aggregate delivery"
+                )
             key, result = new_holder_row(
                 address,
                 wone,
                 row,
                 reader.fieldnames,
                 args.minimum_one,
+                aggregate_delivery,
             )
             new_rows.append((key, address, result))
         new_rows.sort(key=lambda item: item[0])
@@ -452,15 +570,20 @@ def main():
         output_rows = 0
         baseline_qualified = 0
         qualified_rows = 0
+        newly_qualified_wone_only = 0
         newly_qualified_existing = 0
-        priority_wone_holders = 0
-        priority_wone = 0
+        delivered_wone_holders = 0
+        delivered_wone = 0
+        threshold_wone_holders = 0
+        threshold_wone = 0
+        aggregate_delivery_wone_holders = 0
+        aggregate_delivery_wone = 0
         native_wallet_total = 0
         native_total_total = 0
         wallet_total = 0
         staked_total = 0
         total_total = 0
-        native_threshold_holder_addresses = set()
+        native_candidate_holder_addresses = set()
         wone_contract_seen = False
         previous_key = None
 
@@ -479,10 +602,21 @@ def main():
                     _, address, result = new_rows[new_index]
                     writer.writerow(result)
                     output_rows += 1
-                    qualified_rows += 1
-                    priority_wone_holders += 1
+                    qualifies = (
+                        int(result["qualification_total_atto"])
+                        >= args.minimum_one
+                    )
+                    qualified_rows += int(qualifies)
+                    newly_qualified_wone_only += int(qualifies)
+                    delivered_wone_holders += 1
                     amount = int(result["wone_airdrop_atto"])
-                    priority_wone += amount
+                    delivered_wone += amount
+                    if qualifies:
+                        threshold_wone_holders += 1
+                        threshold_wone += amount
+                    else:
+                        aggregate_delivery_wone_holders += 1
+                        aggregate_delivery_wone += amount
                     wallet_total += amount
                     total_total += amount
                     new_index += 1
@@ -492,13 +626,22 @@ def main():
                     )
 
                 address = normalize_address(row["address"], f"native line {line}")
-                if holders.get(address, 0) >= args.minimum_one:
-                    native_threshold_holder_addresses.add(address)
+                wone = holders.get(address, 0)
+                if (
+                    wone >= args.minimum_one
+                    or address in aggregate_delivery_addresses
+                ):
+                    native_candidate_holder_addresses.add(address)
                 native_wallet, staked, native_total = validate_native_row(
                     row, line
                 )
-                wone = holders.get(address, 0)
-                result = apply_overlay(row, wone, args.minimum_one)
+                aggregate_delivery = address in aggregate_delivery_addresses
+                result = apply_overlay(
+                    row,
+                    wone,
+                    args.minimum_one,
+                    aggregate_delivery,
+                )
                 baseline = native_total >= args.minimum_one
                 qualifies = (
                     int(result["qualification_total_atto"])
@@ -512,8 +655,19 @@ def main():
                     newly_qualified_existing += 1
                 wone_airdrop = int(result["wone_airdrop_atto"])
                 if wone_airdrop:
-                    priority_wone_holders += 1
-                    priority_wone += wone_airdrop
+                    delivered_wone_holders += 1
+                    delivered_wone += wone_airdrop
+                    if qualifies:
+                        threshold_wone_holders += 1
+                        threshold_wone += wone_airdrop
+                    elif aggregate_delivery:
+                        aggregate_delivery_wone_holders += 1
+                        aggregate_delivery_wone += wone_airdrop
+                    else:
+                        raise ValueError(
+                            "below-threshold WONE delivery lacks aggregate "
+                            f"authorization: {address}"
+                        )
                 if address == WONE_ADDRESS:
                     wone_contract_seen = True
                     if int(row["liquid_shard0_atto"]) != reserve:
@@ -534,10 +688,21 @@ def main():
                 _, address, result = new_rows[new_index]
                 writer.writerow(result)
                 output_rows += 1
-                qualified_rows += 1
-                priority_wone_holders += 1
+                qualifies = (
+                    int(result["qualification_total_atto"])
+                    >= args.minimum_one
+                )
+                qualified_rows += int(qualifies)
+                newly_qualified_wone_only += int(qualifies)
+                delivered_wone_holders += 1
                 amount = int(result["wone_airdrop_atto"])
-                priority_wone += amount
+                delivered_wone += amount
+                if qualifies:
+                    threshold_wone_holders += 1
+                    threshold_wone += amount
+                else:
+                    aggregate_delivery_wone_holders += 1
+                    aggregate_delivery_wone += amount
                 wallet_total += amount
                 total_total += amount
                 new_index += 1
@@ -551,35 +716,37 @@ def main():
     try:
         if not wone_contract_seen:
             raise ValueError("native claim ledger is missing the WONE contract")
-        if set(metadata) & native_threshold_holder_addresses:
+        if set(metadata) & native_candidate_holder_addresses:
             raise ValueError("new-holder metadata overlaps native claims")
         require_complete_new_holder_metadata(
             holders,
-            native_threshold_holder_addresses,
+            native_candidate_holder_addresses,
             metadata,
             args.minimum_one,
+            aggregate_delivery_addresses,
         )
         if wallet_total + staked_total != total_total:
             raise ValueError("global wallet and vault totals do not close")
         if native_total_total - native_wallet_total != staked_total:
             raise ValueError("native wallet and vault totals do not close")
-        if total_total != native_total_total + priority_wone:
+        if total_total != native_total_total + delivered_wone:
             raise ValueError("WONE overlay total does not close")
-        if priority_wone > reserve:
-            raise ValueError("priority WONE airdrop exceeds reserve")
+        if delivered_wone > reserve:
+            raise ValueError("delivered WONE airdrop exceeds reserve")
     except BaseException:
         os.remove(args.output + ".partial")
         raise
     os.replace(args.output + ".partial", args.output)
 
-    retained = reserve - priority_wone
+    retained = reserve - delivered_wone
     result = {
         "schema_version": 1,
         "status": "passed",
         "policy": (
-            "WONE is added only for addresses in the current inclusive "
-            "1,000 ONE batch; the matching reserve is redistributed and "
-            "the remainder is retained in the 2050 premint reserve"
+            "WONE is added for addresses in the current inclusive 1,000 ONE "
+            "batch and for non-Gate exchange wallets using aggregate manual "
+            "delivery; the matching reserve is redistributed and the "
+            "remainder is retained in the 2050 premint reserve"
         ),
         "minimum_atto": str(args.minimum_one),
         "native_claims": args.native_claims,
@@ -592,22 +759,48 @@ def main():
         "new_holder_metadata_sha256": file_sha256(
             args.new_holder_metadata
         ),
+        "aggregate_delivery_summary": args.aggregate_delivery_summary,
+        "aggregate_delivery_summary_sha256": (
+            file_sha256(args.aggregate_delivery_summary)
+            if args.aggregate_delivery_summary
+            else None
+        ),
+        "aggregate_delivery_sources": aggregate_delivery_sources,
+        "aggregate_delivery_addresses_requested": len(
+            aggregate_delivery_requested
+        ),
+        "aggregate_delivery_addresses_active": len(
+            aggregate_delivery_addresses
+        ),
+        "aggregate_delivery_addresses_suppressed": sorted(
+            aggregate_delivery_suppressed
+        ),
         "native_rows": native_rows,
         "new_wone_only_rows": len(new_rows),
         "output_rows": output_rows,
         "baseline_qualified_rows": baseline_qualified,
         "newly_qualified_existing_native_rows": newly_qualified_existing,
-        "newly_qualified_wone_only_rows": len(new_rows),
-        "newly_qualified_rows": newly_qualified_existing + len(new_rows),
+        "newly_qualified_wone_only_rows": newly_qualified_wone_only,
+        "newly_qualified_rows": (
+            newly_qualified_existing + newly_qualified_wone_only
+        ),
         "qualified_rows": qualified_rows,
         "wone_holder_rows": holder_rows,
         "excluded_wone_holder_rows": excluded_rows,
         "excluded_wone_atto": str(excluded_atto),
         "excluded_addresses_requested": sorted(excluded),
         "excluded_wone_holders": excluded_holders,
-        "priority_wone_holder_rows": priority_wone_holders,
+        "ordinary_threshold_wone_holder_rows": threshold_wone_holders,
+        "ordinary_threshold_wone_atto": str(threshold_wone),
+        "aggregate_delivery_wone_holder_rows": (
+            aggregate_delivery_wone_holders
+        ),
+        "aggregate_delivery_wone_atto": str(aggregate_delivery_wone),
+        "wone_recipient_rows": delivered_wone_holders,
+        "wone_redistributed_to_recipients_atto": str(delivered_wone),
+        "priority_wone_holder_rows": delivered_wone_holders,
         "wone_reserve_atto": str(reserve),
-        "wone_redistributed_to_priority_atto": str(priority_wone),
+        "wone_redistributed_to_priority_atto": str(delivered_wone),
         "wone_retained_not_issued_atto": str(retained),
         "native_wallet_airdrop_atto": str(native_wallet_total),
         "native_total_claim_atto": str(native_total_total),
@@ -616,7 +809,7 @@ def main():
         "expanded_total_claim_atto": str(total_total),
         "component_totals_atto": {
             "native_wallet_airdrop": str(native_wallet_total),
-            "wone_airdrop": str(priority_wone),
+            "wone_airdrop": str(delivered_wone),
             "wallet_airdrop": str(wallet_total),
             "staked_to_vault": str(staked_total),
             "native_total_claim": str(native_total_total),
@@ -624,10 +817,13 @@ def main():
         },
         "conservation": {
             "wone_reserve_equals_redistributed_plus_retained": (
-                reserve == priority_wone + retained
+                reserve == delivered_wone + retained
             ),
             "expanded_total_equals_native_plus_priority_wone": (
-                total_total == native_total_total + priority_wone
+                total_total == native_total_total + delivered_wone
+            ),
+            "expanded_total_equals_native_plus_delivered_wone": (
+                total_total == native_total_total + delivered_wone
             ),
         },
         "output": args.output,

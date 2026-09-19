@@ -125,15 +125,33 @@ def main():
         raise ValueError("post-WONE verification did not pass")
 
     reserve = int(overlay["wone_reserve_atto"])
-    redistributed = int(overlay["wone_redistributed_to_priority_atto"])
+    redistributed = int(
+        overlay.get(
+            "wone_redistributed_to_recipients_atto",
+            overlay["wone_redistributed_to_priority_atto"],
+        )
+    )
+    ordinary_threshold_wone = int(
+        overlay.get(
+            "ordinary_threshold_wone_atto",
+            threshold["wone_airdrop_atto"],
+        )
+    )
+    aggregate_delivery_wone = int(
+        overlay.get("aggregate_delivery_wone_atto", 0)
+    )
     retained = int(overlay["wone_retained_not_issued_atto"])
     excluded_wone = int(overlay["excluded_wone_atto"])
     if reserve != redistributed + retained:
         raise ValueError("WONE reserve split does not close")
     if int(scan["total_holder_balance_atto"]) != reserve:
         raise ValueError("holder scan does not equal WONE reserve")
-    if int(threshold["wone_airdrop_atto"]) != redistributed:
-        raise ValueError("threshold output does not equal WONE redistribution")
+    if int(threshold["wone_airdrop_atto"]) != ordinary_threshold_wone:
+        raise ValueError(
+            "threshold output does not equal ordinary-threshold WONE"
+        )
+    if ordinary_threshold_wone + aggregate_delivery_wone != redistributed:
+        raise ValueError("WONE delivery categories do not close")
     if int(routing["wone_reserve_source_atto"]) != reserve:
         raise ValueError("routing used a different WONE reserve")
     if int(routing["wone_redistributed_to_holders_atto"]) != redistributed:
@@ -191,10 +209,15 @@ Prepared from cutoff-pinned archival-node data.
   **{int(overlay["baseline_qualified_rows"]):,}**.
 - Additional rows qualified by WONE: **{int(overlay["newly_qualified_rows"]):,}**.
 - Current combined-threshold rows: **{int(overlay["qualified_rows"]):,}**.
-- Qualified WONE recipient rows after excluding system custody:
-  **{int(overlay["priority_wone_holder_rows"]):,}**.
+- Ordinary-threshold WONE recipient rows after excluding system custody:
+  **{int(overlay.get("ordinary_threshold_wone_holder_rows", overlay["priority_wone_holder_rows"])):,}**.
+- Below-threshold aggregate-exchange WONE recipient rows:
+  **{int(overlay.get("aggregate_delivery_wone_holder_rows", 0)):,}**.
 - WONE-backed ONE added to current wallet delivery:
   **{one(redistributed)} ONE**.
+  This consists of **{one(ordinary_threshold_wone)} ONE** selected by the
+  ordinary threshold and **{one(aggregate_delivery_wone)} ONE** selected by
+  non-Gate aggregate exchange delivery.
 - Reserve remainder retained as not issued:
   **{one(retained)} ONE**.
 
@@ -212,7 +235,7 @@ They are not WONE-created eligibility.
 
 The entire WONE source reserve is **not** classified as `not_issued`.
 That would conflict with the current definition because replacement ONE is
-created for qualified WONE holders.
+created for ordinary-threshold and aggregate-exchange WONE holders.
 
 Instead:
 
@@ -227,9 +250,9 @@ WONE native reserve
 ```
 
 `redistributed` is a terminal source offset, not a destination and not another
-issuance. It exactly cancels the WONE amount added to qualified-holder wallet
-rows. The retained remainder receives no replacement asset in the current
-migration and remains in the 2050 premint reserve.
+issuance. It exactly cancels the WONE amount added to ordinary-threshold and
+aggregate-exchange wallet rows. The retained remainder receives no replacement
+asset in the current migration and remains in the 2050 premint reserve.
 
 The WONE contract's own balance is excluded from recipient delivery as a
 circular, code-controlled system balance. Together with selected inaccessible
@@ -258,9 +281,9 @@ qualification_total_atto
 >= 1,000 * 10^18
 ```
 
-Only WONE belonging to the current qualifying batch enters
-`wone_airdrop_atto`. Below-threshold and excluded backing remains in the
-retained reserve.
+Only WONE belonging to the current ordinary qualifying batch or a normalized
+non-Gate aggregate-exchange inventory enters `wone_airdrop_atto`. Other and
+excluded backing remains in the retained reserve.
 
 ## Routing
 
@@ -270,12 +293,15 @@ retained reserve.
   the retained WONE
   remainder: `{one(routing["not_issued_total_claim_atto"])} ONE`.
 - Routing status: `{routing["status"]}`.
+- Non-Gate aggregate exchange stage:
+  `{routing["stage_readiness"]["exchange_aggregate"]["status"]}`.
 
 The routing remains held for unrelated unresolved destinations and policy
-decisions, plus explicitly routed below-threshold claims whose stage remains
-under review; the WONE arithmetic itself is fully reconciled. WONE held by a
-reviewed excluded contract is part of that contract's non-issuance and is not
-subtracted from source backing a second time.
+decisions, plus other non-exchange manual claims whose stage remains under
+review. The non-Gate aggregate exchange stage is independently ready, and the
+WONE arithmetic itself is fully reconciled. WONE held by a reviewed excluded
+contract is part of that contract's non-issuance and is not subtracted from
+source backing a second time.
 
 ## Evidence
 

@@ -179,8 +179,9 @@ def default_path(relative):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
-            "Verify WONE holders, claim overlay, threshold selection, and "
-            "reserve routing without changing source artifacts."
+            "Verify WONE holders, claim overlay, ordinary-threshold and "
+            "aggregate-exchange selection, and reserve routing without "
+            "changing source artifacts."
         )
     )
     parser.add_argument(
@@ -594,7 +595,160 @@ def validate_exclusion_details(
     return excluded_total
 
 
-def load_metadata(path, holders, exclusions):
+def load_aggregate_delivery_addresses(
+    migration_summary,
+    exclusions,
+    paths,
+    hashes,
+):
+    summary_value = migration_summary.get("aggregate_delivery_summary")
+    if summary_value in (None, ""):
+        return set(), {
+            "requested": 0,
+            "active": 0,
+            "suppressed": [],
+            "sources": [],
+        }
+    expect_path(
+        migration_summary,
+        "aggregate_delivery_summary",
+        paths["aggregate_delivery_summary"],
+        "migration summary",
+    )
+    expect_hash(
+        migration_summary,
+        "aggregate_delivery_summary_sha256",
+        hashes["aggregate_delivery_summary"],
+        "migration summary",
+    )
+    normalization = load_json(
+        paths["aggregate_delivery_summary"],
+        "exchange normalization summary",
+    )
+    if json_count(
+        normalization,
+        "schema_version",
+        "exchange normalization summary",
+    ) != 1:
+        raise ValueError("unsupported exchange normalization schema")
+    exchanges = require_key(
+        normalization,
+        "exchanges",
+        "exchange normalization summary",
+    )
+    if not isinstance(exchanges, dict) or not exchanges:
+        raise ValueError("exchange normalization summary has no exchanges")
+    recorded_sources = require_key(
+        migration_summary,
+        "aggregate_delivery_sources",
+        "migration summary",
+    )
+    if not isinstance(recorded_sources, list):
+        raise ValueError(
+            "migration summary.aggregate_delivery_sources must be a list"
+        )
+    expected_exchange_ids = [
+        exchange_id
+        for exchange_id, exchange in sorted(exchanges.items())
+        if exchange.get("delivery_policy") == "manual_current_claim"
+    ]
+    if len(recorded_sources) != len(expected_exchange_ids):
+        raise ValueError("aggregate delivery source count mismatch")
+    addresses = set()
+    verified_sources = []
+    for index, (exchange_id, recorded) in enumerate(
+        zip(expected_exchange_ids, recorded_sources)
+    ):
+        context = f"migration summary.aggregate_delivery_sources[{index}]"
+        if not isinstance(recorded, dict) or set(recorded) != {
+            "exchange_id",
+            "path",
+            "sha256",
+            "addresses",
+        }:
+            raise ValueError(f"{context}: invalid source record")
+        if recorded["exchange_id"] != exchange_id:
+            raise ValueError(f"{context}: exchange id mismatch")
+        exchange = exchanges[exchange_id]
+        source_path = paths[f"aggregate_delivery_source_{index}"]
+        expected_path = recorded_path(
+            require_key(exchange, "output", f"exchange {exchange_id}"),
+            f"exchange {exchange_id}.output",
+        )
+        if source_path != expected_path:
+            raise ValueError(f"{context}: normalized source path mismatch")
+        expected_hash = require_key(
+            exchange,
+            "output_sha256",
+            f"exchange {exchange_id}",
+        )
+        if (
+            recorded["sha256"] != expected_hash
+            or hashes[f"aggregate_delivery_source_{index}"] != expected_hash
+        ):
+            raise ValueError(f"{context}: normalized source hash mismatch")
+        source_addresses = set()
+        with source_path.open(newline="", encoding="utf-8") as source:
+            reader = csv.DictReader(source)
+            if not {"exchange_id", "address_hex"} <= set(
+                reader.fieldnames or ()
+            ):
+                raise ValueError(
+                    f"{source_path}: missing normalized exchange fields"
+                )
+            for line, row in enumerate(reader, start=2):
+                if row["exchange_id"] != exchange_id:
+                    raise ValueError(
+                        f"{source_path}:{line}: exchange id mismatch"
+                    )
+                address = normalize_address(
+                    row["address_hex"],
+                    f"{source_path}:{line}.address_hex",
+                )
+                if address in source_addresses or address in addresses:
+                    raise ValueError(
+                        f"{source_path}:{line}: duplicate exchange address"
+                    )
+                source_addresses.add(address)
+                addresses.add(address)
+        expected_rows = json_count(
+            exchange,
+            "normalized_rows",
+            f"exchange {exchange_id}",
+        )
+        if (
+            len(source_addresses) != expected_rows
+            or json_count(recorded, "addresses", context) != expected_rows
+        ):
+            raise ValueError(f"{context}: normalized row count mismatch")
+        verified_sources.append(exchange_id)
+    suppressed = sorted(addresses & exclusions)
+    active = addresses - exclusions
+    expect_count(
+        migration_summary,
+        "aggregate_delivery_addresses_requested",
+        len(addresses),
+        "migration summary",
+    )
+    expect_count(
+        migration_summary,
+        "aggregate_delivery_addresses_active",
+        len(active),
+        "migration summary",
+    )
+    if migration_summary.get("aggregate_delivery_addresses_suppressed") != (
+        suppressed
+    ):
+        raise ValueError("aggregate delivery suppressed-address mismatch")
+    return active, {
+        "requested": len(addresses),
+        "active": len(active),
+        "suppressed": suppressed,
+        "sources": verified_sources,
+    }
+
+
+def load_metadata(path, holders, exclusions, aggregate_delivery):
     metadata = {}
     previous = None
     with path.open(newline="") as source:
@@ -624,8 +778,13 @@ def load_metadata(path, holders, exclusions):
                 row["combined_total_atto"],
                 f"{context}.combined_total_atto",
             )
-            if amount < MINIMUM_ATTO or combined != amount:
-                raise ValueError(f"{context}: invalid WONE-only threshold amount")
+            if (
+                amount < MINIMUM_ATTO
+                and address not in aggregate_delivery
+            ) or combined != amount:
+                raise ValueError(
+                    f"{context}: invalid WONE-only delivery amount"
+                )
             if address in exclusions:
                 raise ValueError(f"{context}: excluded address has metadata")
             if holders.get(address) != amount:
@@ -875,6 +1034,7 @@ def validate_migration_row(
     native_item,
     holders,
     exclusions,
+    aggregate_delivery,
     metadata,
     seen_metadata,
     cutoff_block,
@@ -886,7 +1046,7 @@ def validate_migration_row(
         metadata_item = metadata.get(address)
         if metadata_item is None:
             raise ValueError(
-                "WONE-only metadata does not equal the complete threshold set: "
+                "WONE-only metadata does not equal the complete delivery set: "
                 f"{address} is missing"
             )
         validate_wone_only_static(row, metadata_item, cutoff_block, context)
@@ -919,7 +1079,12 @@ def validate_migration_row(
     effective_wone = 0 if address in exclusions else actual_wone
     qualification = native_total + effective_wone
     wone_airdrop = (
-        effective_wone if qualification >= MINIMUM_ATTO else 0
+        effective_wone
+        if (
+            qualification >= MINIMUM_ATTO
+            or address in aggregate_delivery
+        )
+        else 0
     )
     wallet = native_wallet + wone_airdrop
     total = native_total + wone_airdrop
@@ -974,6 +1139,7 @@ def validate_migration_row(
         "key": migration_item["key"],
         "native_present": native_item is not None,
         "actual_wone": actual_wone,
+        "aggregate_delivery": address in aggregate_delivery,
         **values,
         "liquid_shard0": canonical_uint(
             row["liquid_shard0_atto"], f"{context}.liquid_shard0_atto"
@@ -988,6 +1154,7 @@ def verify_claim_ledgers(
     paths,
     holders,
     exclusions,
+    aggregate_delivery,
     metadata,
     cutoff_block,
 ):
@@ -1001,6 +1168,11 @@ def verify_claim_ledgers(
         "exact_threshold_rows": 0,
         "priority_wone_holder_rows": 0,
         "priority_wone": 0,
+        "ordinary_threshold_wone_holder_rows": 0,
+        "ordinary_threshold_wone": 0,
+        "aggregate_delivery_wone_holder_rows": 0,
+        "aggregate_delivery_wone": 0,
+        "newly_qualified_wone_only_rows": 0,
         "native_wallet": 0,
         "native_total": 0,
         "wallet": 0,
@@ -1042,6 +1214,7 @@ def verify_claim_ledgers(
                 matched_native,
                 holders,
                 exclusions,
+                aggregate_delivery,
                 metadata,
                 seen_metadata,
                 cutoff_block,
@@ -1060,6 +1233,21 @@ def verify_claim_ledgers(
                 metrics["priority_wone_holder_rows"] += 1
                 metrics["priority_wone"] += values["wone_airdrop"]
                 wone_recipients.add(values["address"])
+                if qualifies:
+                    metrics["ordinary_threshold_wone_holder_rows"] += 1
+                    metrics["ordinary_threshold_wone"] += values[
+                        "wone_airdrop"
+                    ]
+                elif values["aggregate_delivery"]:
+                    metrics["aggregate_delivery_wone_holder_rows"] += 1
+                    metrics["aggregate_delivery_wone"] += values[
+                        "wone_airdrop"
+                    ]
+                else:
+                    raise ValueError(
+                        "below-threshold WONE recipient is not an aggregate "
+                        f"exchange wallet: {values['address']}"
+                    )
             if qualifies:
                 metrics["threshold_wallet"] += values["wallet"]
                 metrics["threshold_staked"] += values["staked"]
@@ -1067,6 +1255,7 @@ def verify_claim_ledgers(
                 metrics["threshold_wone"] += values["wone_airdrop"]
             if matched_native is None:
                 metrics["wone_only_rows"] += 1
+                metrics["newly_qualified_wone_only_rows"] += int(qualifies)
             else:
                 metrics["native_rows"] += 1
                 metrics["native_wallet"] += values["native_wallet"]
@@ -1094,7 +1283,10 @@ def verify_claim_ledgers(
         address
         for address, signed_amount in holders.items()
         if signed_amount > 0
-        and signed_amount >= MINIMUM_ATTO
+        and (
+            signed_amount >= MINIMUM_ATTO
+            or address in aggregate_delivery
+        )
         and address not in exclusions
     }
     if set(metadata) != expected_metadata or seen_metadata != expected_metadata:
@@ -1102,7 +1294,7 @@ def verify_claim_ledgers(
         extra = sorted(set(metadata) - expected_metadata)
         unmerged = sorted(set(metadata) - seen_metadata)
         raise ValueError(
-            "WONE-only metadata does not equal the complete threshold set: "
+            "WONE-only metadata does not equal the complete delivery set: "
             f"missing={missing[:5]} extra={extra[:5]} "
             f"unmerged={unmerged[:5]}"
         )
@@ -1124,6 +1316,7 @@ def validate_claim_summaries(
     hashes,
     migration,
     threshold,
+    aggregate_stats,
 ):
     context = "migration summary"
     if require_key(migration, "status", context) != "passed":
@@ -1180,7 +1373,7 @@ def validate_claim_summaries(
     expect_count(
         migration,
         "newly_qualified_wone_only_rows",
-        metrics["wone_only_rows"],
+        metrics["newly_qualified_wone_only_rows"],
         context,
     )
     expect_count(
@@ -1197,7 +1390,7 @@ def validate_claim_summaries(
     )
     newly_qualified = (
         metrics["newly_qualified_existing_native_rows"]
-        + metrics["wone_only_rows"]
+        + metrics["newly_qualified_wone_only_rows"]
     )
     expect_count(
         migration, "newly_qualified_rows", newly_qualified, context
@@ -1211,6 +1404,49 @@ def validate_claim_summaries(
         metrics["priority_wone_holder_rows"],
         context,
     )
+    if migration.get("aggregate_delivery_summary"):
+        expect_count(
+            migration,
+            "ordinary_threshold_wone_holder_rows",
+            metrics["ordinary_threshold_wone_holder_rows"],
+            context,
+        )
+        expect_amount(
+            migration,
+            "ordinary_threshold_wone_atto",
+            metrics["ordinary_threshold_wone"],
+            context,
+        )
+        expect_count(
+            migration,
+            "aggregate_delivery_wone_holder_rows",
+            metrics["aggregate_delivery_wone_holder_rows"],
+            context,
+        )
+        expect_amount(
+            migration,
+            "aggregate_delivery_wone_atto",
+            metrics["aggregate_delivery_wone"],
+            context,
+        )
+        expect_count(
+            migration,
+            "wone_recipient_rows",
+            metrics["priority_wone_holder_rows"],
+            context,
+        )
+        expect_amount(
+            migration,
+            "wone_redistributed_to_recipients_atto",
+            metrics["priority_wone"],
+            context,
+        )
+        if aggregate_stats["active"] != json_count(
+            migration,
+            "aggregate_delivery_addresses_active",
+            context,
+        ):
+            raise ValueError("aggregate delivery address total mismatch")
     expect_count(migration, "wone_holder_rows", holder_count, context)
     expect_amount(migration, "wone_reserve_atto", reserve, context)
     expect_amount(
@@ -1273,6 +1509,15 @@ def validate_claim_summaries(
     ):
         if not json_bool(conservation, key, f"{context}.conservation"):
             raise ValueError(f"{context}.conservation.{key} is false")
+    if migration.get("aggregate_delivery_summary") and not json_bool(
+        conservation,
+        "expanded_total_equals_native_plus_delivered_wone",
+        f"{context}.conservation",
+    ):
+        raise ValueError(
+            f"{context}.conservation."
+            "expanded_total_equals_native_plus_delivered_wone is false"
+        )
     if (
         reserve != metrics["priority_wone"] + retained
         or metrics["total"]
@@ -1434,7 +1679,7 @@ def verify_bridge_routes(
             "destination_address": "",
             "amount_atto": str(redistributed),
             "allocation_method": "wallet_only",
-            "reason": "wone_priority_holder_redistribution",
+            "reason": "wone_holder_delivery_redistribution",
         },
         "bridge WONE redistribution route",
     )
@@ -1606,6 +1851,7 @@ def verify_routing_exceptions(
             if row["issuance_treatment"] == "issue":
                 if row["migration_stage"] not in {
                     "initial",
+                    "exchange_aggregate",
                     "next_stage",
                     "deferred",
                     "manual_review",
@@ -1613,6 +1859,7 @@ def verify_routing_exceptions(
                     raise ValueError(f"{context}: issued row has no stage")
             elif row["migration_stage"] and row["migration_stage"] not in {
                 "initial",
+                "exchange_aggregate",
                 "next_stage",
                 "deferred",
                 "manual_review",
@@ -1698,7 +1945,7 @@ def verify_routing_exceptions(
             "destination_status": "redistributed",
             "migration_stage": "",
             "issuance_treatment": "redistributed",
-            "reason": "wone_priority_holder_redistribution",
+            "reason": "wone_holder_delivery_redistribution",
         },
         "WONE redistribution exception",
     )
@@ -2036,6 +2283,32 @@ def discover_inputs(args, summaries):
         "routing_exceptions": args.routing_exceptions,
         "routing_summary": args.routing_summary,
     }
+    migration = summaries["migration"]
+    aggregate_summary = migration.get("aggregate_delivery_summary")
+    if aggregate_summary:
+        paths["aggregate_delivery_summary"] = recorded_path(
+            aggregate_summary,
+            "migration summary.aggregate_delivery_summary",
+        )
+        aggregate_sources = require_key(
+            migration,
+            "aggregate_delivery_sources",
+            "migration summary",
+        )
+        if not isinstance(aggregate_sources, list):
+            raise ValueError(
+                "migration summary.aggregate_delivery_sources must be a list"
+            )
+        for index, source in enumerate(aggregate_sources):
+            context = (
+                f"migration summary.aggregate_delivery_sources[{index}]"
+            )
+            if not isinstance(source, dict):
+                raise ValueError(f"{context}: expected an object")
+            paths[f"aggregate_delivery_source_{index}"] = recorded_path(
+                require_key(source, "path", context),
+                f"{context}.path",
+            )
     bridge = summaries["bridge"]
     paths["bridge_base"] = recorded_path(
         require_key(bridge, "input", "bridge summary"),
@@ -2106,6 +2379,14 @@ def verify(args):
 
     migration_summary = summaries["migration"]
     exclusions, recorded_details = parse_exclusions(migration_summary)
+    aggregate_delivery, aggregate_stats = (
+        load_aggregate_delivery_addresses(
+            migration_summary,
+            exclusions,
+            paths,
+            hashes,
+        )
+    )
     holders, holder_total = load_holders(paths["wone_holders"])
     reserve = validate_holder_summary(
         summaries["holder"], holders, holder_total, paths, hashes
@@ -2122,7 +2403,10 @@ def verify(args):
         holders,
     )
     metadata = load_metadata(
-        paths["wone_only_metadata"], holders, exclusions
+        paths["wone_only_metadata"],
+        holders,
+        exclusions,
+        aggregate_delivery,
     )
     cutoff_block = json_count(
         summaries["holder"], "cutoff_block", "WONE holder summary"
@@ -2131,6 +2415,7 @@ def verify(args):
         paths,
         holders,
         exclusions,
+        aggregate_delivery,
         metadata,
         cutoff_block,
     )
@@ -2143,6 +2428,7 @@ def verify(args):
         hashes,
         migration_summary,
         summaries["threshold"],
+        aggregate_stats,
     )
     redistributed = claim_metrics["priority_wone"]
     bridge_rows = verify_bridge_routes(
@@ -2194,6 +2480,7 @@ def verify(args):
             "routing_conservation": True,
             "layerzero_wone_isolation": True,
             "wone_shard1_residual_preserved": True,
+            "aggregate_exchange_wone_delivery": True,
         },
         "holders": {
             "holder_rows": len(holders),
@@ -2218,10 +2505,23 @@ def verify(args):
             "priority_wone_holder_rows": claim_metrics[
                 "priority_wone_holder_rows"
             ],
+            "ordinary_threshold_wone_holder_rows": claim_metrics[
+                "ordinary_threshold_wone_holder_rows"
+            ],
+            "ordinary_threshold_wone_atto": str(
+                claim_metrics["ordinary_threshold_wone"]
+            ),
+            "aggregate_delivery_wone_holder_rows": claim_metrics[
+                "aggregate_delivery_wone_holder_rows"
+            ],
+            "aggregate_delivery_wone_atto": str(
+                claim_metrics["aggregate_delivery_wone"]
+            ),
             "native_total_claim_atto": str(claim_metrics["native_total"]),
             "wone_airdrop_atto": str(redistributed),
             "expanded_total_claim_atto": str(claim_metrics["total"]),
         },
+        "aggregate_delivery": aggregate_stats,
         "routing": {
             "bridge_route_rows": bridge_rows,
             "routing_exception_rows": exception_metrics["rows"],
