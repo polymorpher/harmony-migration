@@ -46,6 +46,7 @@ FIELDS = (
     "submitted_balance_unit",
     "submitted_balance_atto",
     "configured_destination",
+    "configured_staking_destination",
     "configured_destination_status",
     "authorization_type",
     "authorization_destination",
@@ -498,20 +499,58 @@ def row_identity(source_sha256, sheet, row_number):
     return hashlib.sha256(value).hexdigest()
 
 
+DESTINATION_MODES = ("aggregate", "aggregate_split", "same_address", "tiered")
+
+
+def parse_destination_lines(path):
+    """Return [(checksum address, note)] from a destination file.
+
+    Each non-blank line is `<address>` optionally followed by `,` and a quoted
+    or bare note. Line 1 is the wallet-component destination; line 2, allowed
+    only for `aggregate_split`, is the staking-component destination.
+    """
+    lines = []
+    for number, raw in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        text = raw.strip()
+        if not text:
+            continue
+        address_text, _separator, note = text.partition(",")
+        address = normalize_address(address_text.strip(), f"{path}:{number}")
+        lines.append((lib.to_checksum(address), note.strip().strip('"').strip()))
+    return lines
+
+
 def destination_status(config, destinations_dir):
+    """Return (wallet destination, staking destination, status, path)."""
+    mode = config["destination_mode"]
     filename = config.get("destination_file")
+    if mode == "same_address":
+        if filename or config["destination_required"]:
+            raise ValueError(
+                f"{config['id']}: same_address delivery takes no destination file"
+            )
+        return "", "", "same_address", None
     if not filename:
-        if config["destination_required"]:
-            return "", "missing_file", None
-        return "", "not_required_same_address", None
+        return "", "", "missing_file", None
     path = destinations_dir / filename
     if not path.is_file():
-        return "", "missing_file", path
-    value = path.read_text(encoding="utf-8").strip()
-    if not value:
-        return "", "blank", path
-    address = normalize_address(value, str(path))
-    return lib.to_checksum(address), "configured", path
+        return "", "", "missing_file", path
+    lines = parse_destination_lines(path)
+    if not lines:
+        return "", "", "blank", path
+    expected_lines = 2 if mode == "aggregate_split" else 1
+    if len(lines) != expected_lines:
+        raise ValueError(
+            f"{path}: {mode} destination file must have {expected_lines} "
+            f"address line(s), found {len(lines)}"
+        )
+    wallet_destination = lines[0][0]
+    staking_destination = lines[1][0] if mode == "aggregate_split" else ""
+    if staking_destination and staking_destination.lower() == wallet_destination.lower():
+        raise ValueError(f"{path}: split destinations must differ")
+    return wallet_destination, staking_destination, "configured", path
 
 
 def base_row(
@@ -523,6 +562,7 @@ def base_row(
     source_address,
     destination,
     destination_state,
+    staking_destination="",
 ):
     address = normalize_address(
         source_address,
@@ -542,6 +582,7 @@ def base_row(
         "submitted_balance_unit": "",
         "submitted_balance_atto": "",
         "configured_destination": destination,
+        "configured_staking_destination": staking_destination,
         "configured_destination_status": destination_state,
         "authorization_type": "none",
         "authorization_destination": "",
@@ -571,6 +612,117 @@ def parse_xlsx_address(config, path, raw_sha256, destination, state):
         for row_number, record in source_rows
     ]
     return rows, physical, blank, {}
+
+
+def address_list_lines(path):
+    """Yield (line number, address text) for a one-address-per-line file."""
+    for number, raw in enumerate(
+        path.read_text(encoding="utf-8-sig").splitlines(), start=1
+    ):
+        text = raw.strip()
+        if not text or text.startswith("#"):
+            continue
+        yield number, text
+
+
+def parse_txt_address_list(config, path, raw_sha256, destination, state):
+    """One Bech32 or hexadecimal address per line; no balances."""
+    rows = []
+    physical = 0
+    for number, text in address_list_lines(path):
+        physical += 1
+        rows.append(
+            base_row(
+                config["id"],
+                path,
+                raw_sha256,
+                "",
+                number,
+                text,
+                destination,
+                state,
+            )
+        )
+    if not rows:
+        raise ValueError(f"{path}: address list is empty")
+    return rows, physical, 0, {}
+
+
+def parse_bybit(config, path, raw_sha256, destination, state):
+    """Bybit CSV: site, ONE/0x address pair, and a comma-grouped ONE amount.
+
+    The workbook export carries a UTF-8 BOM, trailing empty columns, and a
+    final `总计` (total) row whose amount must equal the independent row sum.
+    """
+    rows = []
+    sites = {}
+    physical = 0
+    blank = 0
+    total = 0
+    reported_total = None
+    with path.open(newline="", encoding="utf-8-sig") as source:
+        reader = csv.reader(source)
+        header = [cell.strip() for cell in next(reader)]
+        expected = ["Site", "Chain", "Coin", "ONE Address", "0x Address", "amount"]
+        if header[: len(expected)] != expected or any(header[len(expected):]):
+            raise ValueError(f"{path}: unexpected Bybit header {header}")
+        for line, record in enumerate(reader, start=2):
+            cells = [cell.strip() for cell in record]
+            if not any(cells):
+                blank += 1
+                continue
+            physical += 1
+            if cells[0] == "总计":
+                if reported_total is not None:
+                    raise ValueError(f"{path}:{line}: duplicate total row")
+                reported_total = decimal_one_to_atto(
+                    cells[1].replace(",", ""), f"{path}:{line}"
+                )
+                if cells[5] and decimal_one_to_atto(
+                    cells[5].replace(",", ""), f"{path}:{line}"
+                ) != reported_total:
+                    raise ValueError(f"{path}:{line}: total row cells disagree")
+                continue
+            if cells[1] != "ONE" or cells[2] != "ONE":
+                raise ValueError(f"{path}:{line}: unexpected chain or coin")
+            one_address = normalize_address(cells[3], f"{path}:{line}")
+            hex_address = normalize_address(cells[4], f"{path}:{line}")
+            if one_address != hex_address:
+                raise ValueError(f"{path}:{line}: ONE and 0x addresses differ")
+            amount = decimal_one_to_atto(cells[5].replace(",", ""), f"{path}:{line}")
+            if amount <= 0:
+                raise ValueError(f"{path}:{line}: non-positive amount")
+            row = base_row(
+                config["id"],
+                path,
+                raw_sha256,
+                "",
+                line,
+                cells[3],
+                destination,
+                state,
+            )
+            row.update(
+                {
+                    "submitted_balance_raw": cells[5],
+                    "submitted_balance_unit": "ONE",
+                    "submitted_balance_atto": str(amount),
+                }
+            )
+            rows.append(row)
+            sites[row["address_hex"]] = cells[0]
+            total += amount
+    if reported_total is None:
+        raise ValueError(f"{path}: missing total row")
+    if reported_total != total:
+        raise ValueError(
+            f"{path}: reported total {reported_total} != row sum {total}"
+        )
+    return rows, physical, blank, {
+        "source_total_row_atto": str(reported_total),
+        "source_total_row_one": lib.atto_to_one_str(reported_total),
+        "site_labels": sites,
+    }
 
 
 def parse_okx(config, path, raw_sha256, destination, state):
@@ -1213,10 +1365,12 @@ def parse_digitalx(config, path, raw_sha256, destination, state):
 def load_policy(path):
     with open(path, encoding="utf-8") as source:
         policy = json.load(source)
-    if policy.get("schema_version") != 1:
+    if policy.get("schema_version") != 2:
         raise ValueError("unsupported exchange policy schema")
     if int(policy.get("minimum_atto", 0)) <= 0:
         raise ValueError("exchange policy has invalid threshold")
+    if policy.get("delivery_source") != "year_2050_supply_reserve":
+        raise ValueError("exchange policy must name the 2050 supply reserve")
     seen = set()
     for config in policy.get("exchanges", []):
         exchange_id = config.get("id", "")
@@ -1226,14 +1380,50 @@ def load_policy(path):
         ):
             raise ValueError(f"invalid or duplicate exchange id {exchange_id!r}")
         seen.add(exchange_id)
-        if config.get("delivery_policy") not in {
-            "automatic_threshold",
-            "manual_current_claim",
-        }:
+        if config.get("delivery_policy") != "manual_from_reserve":
             raise ValueError(f"invalid delivery policy for {exchange_id}")
+        mode = config.get("destination_mode")
+        if mode not in DESTINATION_MODES:
+            raise ValueError(f"invalid destination mode for {exchange_id}")
+        if mode == "same_address" and (
+            config.get("destination_file") or config.get("destination_required")
+        ):
+            raise ValueError(
+                f"{exchange_id}: same_address delivery takes no destination file"
+            )
+        if mode != "same_address" and not config.get("destination_required"):
+            raise ValueError(f"{exchange_id}: {mode} delivery requires a destination")
     if not seen:
         raise ValueError("exchange policy has no exchanges")
     return policy
+
+
+def supplemental_rows(config, raw_dir, destination, staking_destination, state):
+    """Extra inventory addresses supplied outside the exchange workbook."""
+    filename = config.get("supplemental_file")
+    if not filename:
+        return [], None
+    path = raw_dir / filename
+    if not path.is_file():
+        raise ValueError(f"{config['id']}: missing supplemental file {filename}")
+    sha = file_sha256(path)
+    rows = [
+        base_row(
+            config["id"],
+            path,
+            sha,
+            "",
+            number,
+            text,
+            destination,
+            state,
+            staking_destination,
+        )
+        for number, text in address_list_lines(path)
+    ]
+    if not rows:
+        raise ValueError(f"{path}: supplemental address list is empty")
+    return rows, {"path": str(path), "sha256": sha, "addresses": len(rows)}
 
 
 def main():
@@ -1249,15 +1439,20 @@ def main():
         "xlsx_kucoin_eip191": parse_kucoin,
         "xlsx_mexc_eip191": parse_mexc,
         "csv_okx_atto": parse_okx,
+        "csv_bybit_amount": parse_bybit,
+        "txt_address_list": parse_txt_address_list,
     }
     summaries = {}
     all_addresses = {}
     output_paths = []
     for config in policy["exchanges"]:
         exchange_id = config["id"]
-        destination, destination_state, destination_path = destination_status(
-            config, destinations_dir
-        )
+        (
+            destination,
+            staking_destination,
+            destination_state,
+            destination_path,
+        ) = destination_status(config, destinations_dir)
         raw_name = config.get("raw_file")
         raw_path = raw_dir / raw_name if raw_name else None
         rows = []
@@ -1289,6 +1484,15 @@ def main():
                     destination_state,
                 )
                 inventory_status = "received"
+        for row in rows:
+            row["configured_staking_destination"] = staking_destination
+        extra_rows, supplemental = supplemental_rows(
+            config, raw_dir, destination, staking_destination, destination_state
+        )
+        if extra_rows:
+            rows.extend(extra_rows)
+            physical_rows += len(extra_rows)
+            parser_details = {**parser_details, "supplemental": supplemental}
         seen = set()
         for row in rows:
             address = row["address_hex"].lower()
@@ -1336,8 +1540,10 @@ def main():
             "authorization_verified_rows": authorization_verified,
             "blank_source_rows": blank_rows,
             "configured_destination": destination,
+            "configured_staking_destination": staking_destination,
             "configured_destination_status": destination_state,
             "delivery_policy": config["delivery_policy"],
+            "destination_mode": config["destination_mode"],
             "destination_file": (
                 str(destination_path) if destination_path is not None else None
             ),
@@ -1375,11 +1581,12 @@ def main():
         }:
             hold_reasons.append(f"{exchange_id}:destination")
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "passed" if not hold_reasons else "hold",
         "hold_reasons": hold_reasons,
         "policy": str(policy_path),
         "policy_sha256": file_sha256(policy_path),
+        "delivery_source": policy["delivery_source"],
         "minimum_atto": str(policy["minimum_atto"]),
         "cutoff_time_utc": policy["cutoff_time_utc"],
         "normalized_addresses": len(all_addresses),
