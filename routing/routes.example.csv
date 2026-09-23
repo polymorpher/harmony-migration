@@ -1,5 +1,5 @@
 route_id,priority,source_address,destination_id,destination_address,amount_atto,allocation_method,reason,evidence,notes
 example-lost-wallet,10,0x1111111111111111111111111111111111111111,,0x2222222222222222222222222222222222222222,ALL,wallet_first_pro_rata_vault,example only,example://ticket,
 example-partial-not-issuing,100,0x3333333333333333333333333333333333333333,not-issuing,,1000000000000000000000,wallet_first_pro_rata_vault,example only,example://policy,
-example-exchange-reroute,300,0x5555555555555555555555555555555555555555,exchange-example,,ALL,wallet_first_pro_rata_vault,example only,example://exchange-inventory,
+example-exchange-manual,300,0x5555555555555555555555555555555555555555,exchange-example,,ALL,wallet_first_pro_rata_vault,exchange_manual_reserve_delivery,example://exchange-inventory,delivered by hand from the 2050 supply reserve once the destination status is exchange_manual
 example-wone-redistribution,400,0x4444444444444444444444444444444444444444,wone-holder-redistribution,,900000000000000000000,wallet_only,example only,example://wone-summary,
