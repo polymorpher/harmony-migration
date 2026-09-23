@@ -101,16 +101,16 @@ FINDING_MAPPINGS = (
         ROOT
         / "artifacts"
         / "exchange-accounting-20260917"
-        / "EXCHANGE_AGGREGATE_DELIVERY_2026-09-18.md",
-        DESTINATION_FINDINGS / "exchange-aggregate-delivery.md",
+        / "EXCHANGE_MANUAL_DELIVERY_2026-09-22.md",
+        DESTINATION_FINDINGS / "exchange-manual-delivery.md",
         "destination-mapping",
     ),
     (
         ROOT
         / "artifacts"
         / "exchange-accounting-20260917"
-        / "GATE_AUTOMATIC_AIRDROP_AUDIT_2026-09-17.md",
-        DESTINATION_FINDINGS / "gate-automatic-airdrop-audit.md",
+        / "GATE_DELIVERY_TIERS_2026-09-22.md",
+        DESTINATION_FINDINGS / "gate-delivery-tiers.md",
         "destination-mapping",
     ),
     *(
@@ -128,7 +128,9 @@ FINDING_MAPPINGS = (
         for exchange_id in (
             "binance",
             "binance-us",
+            "bybit",
             "gate",
+            "htx",
             "mexc",
             "okx",
             "kucoin",
@@ -646,12 +648,14 @@ These unredacted files are under the numerical-results embargo:
   `exchange-memos/` — per-exchange wallet counts, submitted and cutoff balance
   statistics/breakdowns, signature-verification coverage, destination
   readiness, and input reconciliation;
-- `destination-mapping/exchange-aggregate-delivery.md` — native ONE exchange
-  totals, separate Gate reconciliation, Binance.US delegation-to-wallet
-  treatment, and the DigitalX rolled-back deposit claim held outside wallet
-  accounting;
-- `destination-mapping/gate-automatic-airdrop-audit.md` — Gate automatic and
-  residual totals plus the identities of its complete private address lists.
+- `destination-mapping/exchange-manual-delivery.md` — the manual delivery
+  worksheet funded from the 2050 supply reserve (per exchange, tier, and
+  destination), delegated principal released from validator vaults, Gate tier
+  and reported-total reconciliation, Binance's split destinations, and the
+  DigitalX rolled-back deposit claim held outside wallet accounting;
+- `destination-mapping/gate-delivery-tiers.md` — Gate same-address-initial and
+  aggregated tier totals plus the identities of its complete private address
+  lists.
 
 `SOURCE-HASHES.json` maps each packaged finding to its retained local source.
 
