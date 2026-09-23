@@ -11,6 +11,7 @@ import posixpath
 import re
 import sys
 import zipfile
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -94,6 +95,50 @@ def normalize_address(value, context):
     if len(raw) != 20:
         raise ValueError(f"{context}: invalid address {value!r}")
     return address
+
+
+def decimal_one_to_atto(value, context):
+    """Exact ONE -> atto-ONE for plain or scientific-notation cell text."""
+    text = str(value or "").strip()
+    try:
+        amount = Decimal(text)
+    except InvalidOperation as error:
+        raise ValueError(f"{context}: invalid ONE amount {value!r}") from error
+    if not amount.is_finite() or amount < 0:
+        raise ValueError(f"{context}: invalid ONE amount {value!r}")
+    atto = amount.scaleb(18)
+    if atto != atto.to_integral_value():
+        raise ValueError(f"{context}: ONE amount exceeds 18 decimals {value!r}")
+    return int(atto)
+
+
+def displayed_total_matches(exact_atto, displayed, context):
+    """Check a cached, display-rounded workbook total against an exact sum.
+
+    Spreadsheet exports store formula results rounded to the cell's display
+    precision. The exact independent sum must round (half up) to the displayed
+    text at the number of decimals the exchange actually wrote.
+    """
+    text = str(displayed or "").strip()
+    try:
+        shown = Decimal(text)
+    except InvalidOperation as error:
+        raise ValueError(f"{context}: invalid displayed total {displayed!r}") from error
+    decimals = max(-shown.as_tuple().exponent, 0)
+    exact = Decimal(exact_atto).scaleb(-18)
+    rounded = exact.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+    if rounded != shown:
+        raise ValueError(
+            f"{context}: displayed total {text} does not match independent "
+            f"sum {exact}"
+        )
+    return {
+        "displayed": text,
+        "displayed_decimals": decimals,
+        "independent_atto": str(exact_atto),
+        "independent_one": lib.atto_to_one_str(exact_atto),
+        "rounding_delta_atto": str(exact_atto - int(shown.scaleb(18))),
+    }
 
 
 def atomic_csv(path, rows, replace):
@@ -185,7 +230,13 @@ def workbook_sheet_path(archive, expected_name):
     return found
 
 
-def xlsx_rows(path, sheet_name):
+def xlsx_rows(path, sheet_name, formula_columns=()):
+    """Read one worksheet.
+
+    Formulas are rejected except in the named ``formula_columns``; for those
+    columns the cached value written by the exchange is returned, and the
+    caller is responsible for reproducing it from independent row data.
+    """
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
         for name in names:
@@ -206,12 +257,18 @@ def xlsx_rows(path, sheet_name):
                 row_number = int(element.attrib.get("r", len(rows) + 1))
                 values = {}
                 for cell in element.findall(f"{{{XLSX_MAIN}}}c"):
-                    if cell.find(f"{{{XLSX_MAIN}}}f") is not None:
-                        raise ValueError(
-                            f"{path}:{sheet_name}!{cell.attrib.get('r')}: "
-                            "formulas are not allowed"
-                        )
                     index = column_number(cell.attrib.get("r", ""))
+                    if cell.find(f"{{{XLSX_MAIN}}}f") is not None:
+                        allowed = (
+                            header is not None
+                            and index < len(header)
+                            and header[index] in formula_columns
+                        )
+                        if not allowed:
+                            raise ValueError(
+                                f"{path}:{sheet_name}!{cell.attrib.get('r')}: "
+                                "formulas are not allowed"
+                            )
                     cell_type = cell.attrib.get("t", "")
                     value = ""
                     if cell_type == "inlineStr":
@@ -962,6 +1019,197 @@ def parse_mexc(config, path, raw_sha256, destination, state):
     }
 
 
+DIGITALX_WALLET_TYPES = ("warm/sender wallet", "user deposit address")
+DIGITALX_SUMMARY_LABELS = {
+    "wallet_balance": "Sum of current wallet balance",
+    "rolled_back_deposits": (
+        "deposit amounts invalidated by the network rollback"
+    ),
+    "rolled_back_withdrawals": "rolled-back withdrawals",
+    "total": "Total Sum",
+    "destination": "EVM address to receive the above total in ERC-20 ONE",
+}
+EXPLORER_ADDRESS_URL = "https://explorer.harmony.one/address/"
+EXPLORER_TX_URL = "https://explorer.harmony.one/tx/"
+
+
+def parse_digitalx(config, path, raw_sha256, destination, state):
+    """Parse DigitalX's three-sheet workbook.
+
+    The wallet sheet is the inventory. The explorer column is a spreadsheet
+    formula whose cached value must reproduce the row's own address. The
+    summary sheet holds display-rounded formula totals and the declared ERC-20
+    destination; every total is recomputed from row data and the destination
+    must equal the configured destination file. The rolled-back sheet lists
+    deposit transactions DigitalX reports as invalidated by the network
+    rollback; they are recorded as a separate claim and are not wallet
+    inventory.
+    """
+    wallet_sheet = config["worksheet"]
+    header, source_rows, physical, blank = xlsx_rows(
+        path,
+        wallet_sheet,
+        formula_columns=("explorer",),
+    )
+    if header != ["wallet type", "address", "balance", "explorer"]:
+        raise ValueError(f"{path}:{wallet_sheet}: unexpected fields {header}")
+    rows = []
+    type_rows = {label: 0 for label in DIGITALX_WALLET_TYPES}
+    type_totals = {label: 0 for label in DIGITALX_WALLET_TYPES}
+    wallet_total = 0
+    for row_number, record in source_rows:
+        context = f"{path}:{wallet_sheet}:{row_number}"
+        wallet_type = record["wallet type"]
+        if wallet_type not in type_rows:
+            raise ValueError(f"{context}: unexpected wallet type {wallet_type!r}")
+        address_raw = record["address"]
+        if record["explorer"] != EXPLORER_ADDRESS_URL + address_raw:
+            raise ValueError(f"{context}: explorer link does not name the row address")
+        amount = decimal_one_to_atto(record["balance"], context)
+        row = base_row(
+            config["id"],
+            path,
+            raw_sha256,
+            wallet_sheet,
+            row_number,
+            address_raw,
+            destination,
+            state,
+        )
+        row.update(
+            {
+                "submitted_balance_raw": record["balance"],
+                "submitted_balance_unit": "ONE",
+                "submitted_balance_atto": str(amount),
+            }
+        )
+        rows.append(row)
+        type_rows[wallet_type] += 1
+        type_totals[wallet_type] += amount
+        wallet_total += amount
+
+    rollback_sheet = config["rollback_worksheet"]
+    rollback_header, rollback_rows, rollback_physical, rollback_blank = xlsx_rows(
+        path,
+        rollback_sheet,
+        formula_columns=("explorer",),
+    )
+    if rollback_header != ["txid", "amount", "explorer"]:
+        raise ValueError(
+            f"{path}:{rollback_sheet}: unexpected fields {rollback_header}"
+        )
+    rolled_back = []
+    rolled_back_total = 0
+    seen_transactions = set()
+    for row_number, record in rollback_rows:
+        context = f"{path}:{rollback_sheet}:{row_number}"
+        transaction = record["txid"]
+        if not re.fullmatch(r"0x[0-9a-fA-F]{64}", transaction):
+            raise ValueError(f"{context}: invalid transaction hash")
+        if transaction.lower() in seen_transactions:
+            raise ValueError(f"{context}: duplicate rolled-back transaction")
+        seen_transactions.add(transaction.lower())
+        if record["explorer"] != EXPLORER_TX_URL + transaction:
+            raise ValueError(f"{context}: explorer link does not name the row transaction")
+        amount = decimal_one_to_atto(record["amount"], context)
+        if amount <= 0:
+            raise ValueError(f"{context}: non-positive rolled-back amount")
+        rolled_back.append(
+            {
+                "source_row": row_number,
+                "transaction_hash": transaction.lower(),
+                "amount_raw": record["amount"],
+                "amount_atto": str(amount),
+                "amount_one": lib.atto_to_one_str(amount),
+            }
+        )
+        rolled_back_total += amount
+
+    summary_sheet = config["summary_worksheet"]
+    summary_header, summary_rows, _physical, _blank = xlsx_rows(
+        path,
+        summary_sheet,
+        formula_columns=("amount",),
+    )
+    if summary_header != ["Category", "amount"]:
+        raise ValueError(
+            f"{path}:{summary_sheet}: unexpected fields {summary_header}"
+        )
+    labels = {}
+    for row_number, record in summary_rows:
+        label = record["Category"]
+        if label in labels:
+            raise ValueError(
+                f"{path}:{summary_sheet}:{row_number}: duplicate summary label"
+            )
+        labels[label] = record["amount"]
+    missing = [
+        label
+        for label in DIGITALX_SUMMARY_LABELS.values()
+        if label not in labels
+    ]
+    if missing:
+        raise ValueError(f"{path}:{summary_sheet}: missing summary rows {missing}")
+    summary_context = f"{path}:{summary_sheet}"
+    withdrawals = decimal_one_to_atto(
+        labels[DIGITALX_SUMMARY_LABELS["rolled_back_withdrawals"]],
+        summary_context,
+    )
+    if withdrawals != 0:
+        raise ValueError(
+            f"{summary_context}: rolled-back withdrawals require review"
+        )
+    summary_checks = {
+        "wallet_balance": displayed_total_matches(
+            wallet_total,
+            labels[DIGITALX_SUMMARY_LABELS["wallet_balance"]],
+            f"{summary_context}: wallet balance",
+        ),
+        "rolled_back_deposits": displayed_total_matches(
+            rolled_back_total,
+            labels[DIGITALX_SUMMARY_LABELS["rolled_back_deposits"]],
+            f"{summary_context}: rolled-back deposits",
+        ),
+        "total": displayed_total_matches(
+            wallet_total + rolled_back_total,
+            labels[DIGITALX_SUMMARY_LABELS["total"]],
+            f"{summary_context}: total",
+        ),
+    }
+    declared_destination = normalize_address(
+        labels[DIGITALX_SUMMARY_LABELS["destination"]],
+        f"{summary_context}: destination",
+    )
+    configured = normalize_address(destination, str(path))
+    if declared_destination != configured:
+        raise ValueError(
+            f"{summary_context}: declared destination does not match the "
+            "configured destination file"
+        )
+    details = {
+        "declared_destination": lib.to_checksum(declared_destination),
+        "rolled_back_deposit_rows": len(rolled_back),
+        "rolled_back_deposit_total_atto": str(rolled_back_total),
+        "rolled_back_deposit_total_one": lib.atto_to_one_str(rolled_back_total),
+        "rolled_back_deposits": rolled_back,
+        "rolled_back_sheet_blank_rows": rollback_blank,
+        "rolled_back_sheet_physical_rows": rollback_physical,
+        "rolled_back_withdrawals_atto": str(withdrawals),
+        "source_summary_checks": summary_checks,
+        "submitted_wallet_and_rolled_back_total_atto": str(
+            wallet_total + rolled_back_total
+        ),
+        "submitted_wallet_and_rolled_back_total_one": lib.atto_to_one_str(
+            wallet_total + rolled_back_total
+        ),
+        "wallet_type_balance_atto": {
+            label: str(value) for label, value in type_totals.items()
+        },
+        "wallet_type_rows": type_rows,
+    }
+    return rows, physical, blank, details
+
+
 def load_policy(path):
     with open(path, encoding="utf-8") as source:
         policy = json.load(source)
@@ -997,6 +1245,7 @@ def main():
     policy = load_policy(policy_path)
     parsers = {
         "xlsx_address": parse_xlsx_address,
+        "xlsx_digitalx_summary": parse_digitalx,
         "xlsx_kucoin_eip191": parse_kucoin,
         "xlsx_mexc_eip191": parse_mexc,
         "csv_okx_atto": parse_okx,
