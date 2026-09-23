@@ -86,7 +86,9 @@ validator-wrapper accounts are explicit code-bearing same-address exceptions.
 These routing artifacts are not a complete distribution file. Build and verify
 the stage-specific wallet/Merkle and validator-vault inputs separately.
 Release a stage only when its `stage_readiness` entry is ready; the global
-status remains a conservative all-stage gate.
+status remains a conservative all-stage gate. Once a stage's wallet list is
+final, [`airdrop/`](airdrop/README.md) turns it into committed batches and
+delivers it on Ethereum through a contract locked to that list.
 
 The toolkit also records the strict comparison for audit. See
 [`docs/eligibility-policy.md`](docs/eligibility-policy.md).
@@ -122,6 +124,8 @@ reproduction.
 
 ## Repository layout
 
+- `airdrop/` — the Ethereum contract, scripts, and tools that deliver a
+  finished distribution list (see [`airdrop/README.md`](airdrop/README.md))
 - `toolkit/cmd/` — Go state scanners, preimage recovery, and verifiers
 - `toolkit/scripts/` — deterministic CSV pipelines and RPC audits
 - `scripts/` — dependency and build helpers

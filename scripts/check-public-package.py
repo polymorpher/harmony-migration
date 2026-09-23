@@ -45,6 +45,9 @@ def files():
             raise ValueError(
                 f"public package contains symlink: {path.relative_to(ROOT)}"
             )
+        if path.is_dir():
+            # git submodule (e.g. airdrop/lib/forge-std); pinned by commit in .gitmodules
+            continue
         if not path.is_file():
             raise FileNotFoundError(path)
         yield path
