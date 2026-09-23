@@ -275,17 +275,19 @@ def render_report(result):
 
 Generated from the inclusive snapshot-qualified population. Account
 classification, migration stage, destination readiness, and issuance treatment
-are separate decisions. Confirmed non-Gate exchange routes later override
-individual ordinary stages with the release-authorized `exchange_aggregate`
-stage.
+are separate decisions. Exchange routes later override every exchange
+wallet's ordinary stage with `exchange_manual`: all exchange migration is
+delivered manually from the year 2050 supply reserve and excluded from the
+airdrop.
 
 ## Confirmed stage policy
 
 - Initial stage: positive eligible wallets with indexed activity on or after
   `{result["initial_window"]["since_time_utc"]}`.
-- Exchange override at route compilation: every positive entitlement in a
-  confirmed non-Gate inventory moves to `exchange_aggregate`, regardless of
-  the ordinary threshold or activity result shown here.
+- Exchange override at route compilation: every positive entitlement in an
+  exchange inventory moves to `exchange_manual`, regardless of the ordinary
+  threshold or activity result shown here; for a tiered exchange the
+  `initial` result shown here selects same-address delivery.
 - Next stage regardless of activity: reviewed multisigs, the two reviewed
   LayerZero collateral contracts, and reviewed 1wallet allocations.
 - Not issued: SmartVault and the remaining reviewed genuine contracts.
@@ -366,8 +368,8 @@ Ordinary deferred value before exchange overrides reconciles as:
 - qualified, no indexed activity:
   `{one(deferred["no_indexed_activity_atto"])} ONE`.
 
-The compiled routing summary moves all confirmed non-Gate exchange value out of
-these ordinary buckets and into `exchange_aggregate`.
+The compiled routing summary moves all exchange value out of these ordinary
+buckets and into `exchange_manual`.
 
 ## Conservation
 
@@ -817,8 +819,8 @@ def main():
         "status": "passed",
         "policy": (
             "inclusive snapshot threshold; six-month initial wallet stage; "
-            "confirmed non-Gate routes override ordinary stages with a "
-            "release-authorized exchange aggregate; "
+            "confirmed exchange inventories override ordinary stages with "
+            "manual delivery from the 2050 supply reserve (exchange_manual); "
             "reviewed multisig, LayerZero, and 1wallet allocations next stage; "
             "SmartVault and other reviewed contracts not issued"
         ),

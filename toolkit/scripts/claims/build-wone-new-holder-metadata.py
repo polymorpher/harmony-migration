@@ -75,14 +75,14 @@ def load_aggregate_delivery_addresses(path):
         return set(), []
     with open(path, encoding="utf-8") as source:
         summary = json.load(source)
-    if summary.get("schema_version") != 1:
+    if summary.get("schema_version") != 2:
         raise ValueError("unsupported exchange normalization summary")
     addresses = set()
     sources = []
     for exchange_id, exchange in sorted(
         summary.get("exchanges", {}).items()
     ):
-        if exchange.get("delivery_policy") != "manual_current_claim":
+        if exchange.get("delivery_policy") != "manual_from_reserve":
             continue
         output_path = Path(exchange["output"])
         expected_hash = exchange["output_sha256"]

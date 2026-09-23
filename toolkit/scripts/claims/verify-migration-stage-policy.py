@@ -306,7 +306,7 @@ def main():
         staked = int(override["staked_to_vault_atto"])
         total = int(override["total_claim_atto"])
         if (
-            target_stage != "exchange_aggregate"
+            target_stage != "exchange_manual"
             or min(wallet, staked, total) < 0
             or wallet + staked != total
             or label != f"{source_stage}_to_{target_stage}"
@@ -314,22 +314,22 @@ def main():
             raise ValueError("invalid exchange stage override")
         override_totals[source_stage] += total
         exchange_override_total += total
-    exchange_stage = routing["stage_totals"].get("exchange_aggregate")
+    exchange_stage = routing["stage_totals"].get("exchange_manual")
     if (
         exchange_stage is None
         or int(exchange_stage["total_claim_atto"])
         != exchange_override_total
     ):
-        raise ValueError("compiled exchange aggregate stage mismatch")
+        raise ValueError("compiled exchange manual stage mismatch")
     exchange_readiness = routing["stage_readiness"].get(
-        "exchange_aggregate"
+        "exchange_manual"
     )
     if (
         exchange_readiness is None
         or exchange_readiness["status"] != "ready"
         or not exchange_readiness["release_authorized"]
     ):
-        raise ValueError("exchange aggregate stage is not release-ready")
+        raise ValueError("exchange manual delivery stage is not ready")
     for stage in ("initial", "next_stage"):
         expected = int(
             allocation[
@@ -413,7 +413,7 @@ def main():
                 stages["initial"]["addresses"]
                 - int(
                     routing.get("stage_overrides", {})
-                    .get("initial_to_exchange_aggregate", {})
+                    .get("initial_to_exchange_manual", {})
                     .get("addresses", 0)
                 )
             ),
@@ -421,7 +421,7 @@ def main():
                 "total_claim_atto"
             ],
         },
-        "exchange_aggregate": {
+        "exchange_manual": {
             "addresses": sum(
                 int(value["addresses"])
                 for value in routing.get("stage_overrides", {}).values()

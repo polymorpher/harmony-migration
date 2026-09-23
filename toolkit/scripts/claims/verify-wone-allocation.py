@@ -629,7 +629,7 @@ def load_aggregate_delivery_addresses(
         normalization,
         "schema_version",
         "exchange normalization summary",
-    ) != 1:
+    ) != 2:
         raise ValueError("unsupported exchange normalization schema")
     exchanges = require_key(
         normalization,
@@ -650,7 +650,7 @@ def load_aggregate_delivery_addresses(
     expected_exchange_ids = [
         exchange_id
         for exchange_id, exchange in sorted(exchanges.items())
-        if exchange.get("delivery_policy") == "manual_current_claim"
+        if exchange.get("delivery_policy") == "manual_from_reserve"
     ]
     if len(recorded_sources) != len(expected_exchange_ids):
         raise ValueError("aggregate delivery source count mismatch")
@@ -1815,8 +1815,17 @@ def verify_routing_exceptions(
         "not_issued_staked": 0,
         "redistributed_wallet": 0,
         "redistributed_staked": 0,
+        "exchange_manual_wallet": 0,
+        "exchange_manual_staked": 0,
     }
     recipient_not_issued = set()
+    stages = {
+        "initial",
+        "exchange_manual",
+        "next_stage",
+        "deferred",
+        "manual_review",
+    }
     with path.open(newline="") as source:
         reader = csv.DictReader(source)
         if tuple(reader.fieldnames or ()) != ROUTING_EXCEPTION_FIELDS:
@@ -1840,31 +1849,32 @@ def verify_routing_exceptions(
                 raise ValueError(f"{context}: amount must be positive")
             if row["component"] not in {"wallet_airdrop", "vault_shares"}:
                 raise ValueError(f"{context}: invalid component")
-            expected_treatment = {
-                "ready": "issue",
-                "hold": "issue",
-                "not_issuing": "not_issued",
-                "redistributed": "redistributed",
-            }.get(row["destination_status"])
-            if row["issuance_treatment"] != expected_treatment:
-                raise ValueError(f"{context}: issuance treatment mismatch")
-            if row["issuance_treatment"] == "issue":
-                if row["migration_stage"] not in {
-                    "initial",
-                    "exchange_aggregate",
-                    "next_stage",
-                    "deferred",
-                    "manual_review",
-                }:
-                    raise ValueError(f"{context}: issued row has no stage")
-            elif row["migration_stage"] and row["migration_stage"] not in {
-                "initial",
-                "exchange_aggregate",
-                "next_stage",
-                "deferred",
-                "manual_review",
-            }:
-                raise ValueError(f"{context}: invalid associated stage")
+            exchange_route = (
+                row["reason"] == "exchange_manual_reserve_delivery"
+            )
+            if exchange_route:
+                if row["issuance_treatment"] != "manual_from_reserve" or row[
+                    "destination_status"
+                ] not in {"exchange_manual", "hold"}:
+                    raise ValueError(
+                        f"{context}: exchange route treatment mismatch"
+                    )
+                if row["migration_stage"] != "exchange_manual":
+                    raise ValueError(f"{context}: exchange route stage mismatch")
+            else:
+                expected_treatment = {
+                    "ready": "issue",
+                    "hold": "issue",
+                    "not_issuing": "not_issued",
+                    "redistributed": "redistributed",
+                }.get(row["destination_status"])
+                if row["issuance_treatment"] != expected_treatment:
+                    raise ValueError(f"{context}: issuance treatment mismatch")
+                if row["issuance_treatment"] == "issue":
+                    if row["migration_stage"] not in stages - {"exchange_manual"}:
+                        raise ValueError(f"{context}: issued row has no stage")
+                elif row["migration_stage"] and row["migration_stage"] not in stages:
+                    raise ValueError(f"{context}: invalid associated stage")
             canonical_uint(
                 row["route_priority"], f"{context}.route_priority"
             )
@@ -1872,6 +1882,8 @@ def verify_routing_exceptions(
                 "wallet" if row["component"] == "wallet_airdrop" else "staked"
             )
             totals[f"exception_{component}"] += amount
+            if exchange_route:
+                totals[f"exchange_manual_{component}"] += amount
             if row["destination_status"] == "not_issuing":
                 totals[f"not_issued_{component}"] += amount
                 if (
@@ -2141,6 +2153,9 @@ def validate_routing_summary(
         "redistributed_wallet_airdrop_atto",
         "redistributed_staked_to_vault_atto",
         "redistributed_total_claim_atto",
+        "exchange_manual_wallet_airdrop_atto",
+        "exchange_manual_staked_to_vault_atto",
+        "exchange_manual_total_claim_atto",
         "issuable_wallet_airdrop_atto",
         "issuable_staked_to_vault_atto",
         "issuable_total_claim_atto",
@@ -2159,6 +2174,12 @@ def validate_routing_summary(
     not_issued_staked = amounts["not_issued_staked_to_vault_atto"]
     redistributed_wallet = amounts["redistributed_wallet_airdrop_atto"]
     redistributed_staked = amounts["redistributed_staked_to_vault_atto"]
+    exchange_wallet = amounts["exchange_manual_wallet_airdrop_atto"]
+    exchange_staked = amounts["exchange_manual_staked_to_vault_atto"]
+    if amounts["exchange_manual_total_claim_atto"] != (
+        exchange_wallet + exchange_staked
+    ):
+        raise ValueError(f"{context}: exchange manual components do not close")
     if source_total != source_wallet + source_staked:
         raise ValueError(f"{context}: source components do not close")
     if (
@@ -2185,15 +2206,17 @@ def validate_routing_summary(
         raise ValueError(f"{context}: redistributed components do not close")
     if (
         amounts["issuable_wallet_airdrop_atto"]
-        != source_wallet - not_issued_wallet - redistributed_wallet
+        != source_wallet - not_issued_wallet - redistributed_wallet - exchange_wallet
         or amounts["issuable_staked_to_vault_atto"]
-        != source_staked - not_issued_staked - redistributed_staked
+        != source_staked - not_issued_staked - redistributed_staked - exchange_staked
         or amounts["issuable_total_claim_atto"]
         != source_total
         - not_issued_wallet
         - not_issued_staked
         - redistributed_wallet
         - redistributed_staked
+        - exchange_wallet
+        - exchange_staked
     ):
         raise ValueError(f"{context}: issuable components do not close")
     if (
@@ -2221,6 +2244,12 @@ def validate_routing_summary(
         ],
         "redistributed_staked_to_vault_atto": exception_metrics[
             "redistributed_staked"
+        ],
+        "exchange_manual_wallet_airdrop_atto": exception_metrics[
+            "exchange_manual_wallet"
+        ],
+        "exchange_manual_staked_to_vault_atto": exception_metrics[
+            "exchange_manual_staked"
         ],
     }
     for field, expected in expected_exception_fields.items():

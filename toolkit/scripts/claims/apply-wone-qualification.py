@@ -96,7 +96,7 @@ def load_aggregate_delivery_addresses(path):
         return set(), []
     with open(path, encoding="utf-8") as source:
         summary = json.load(source)
-    if summary.get("schema_version") != 1:
+    if summary.get("schema_version") != 2:
         raise ValueError("unsupported exchange normalization summary")
     exchanges = summary.get("exchanges")
     if not isinstance(exchanges, dict) or not exchanges:
@@ -104,7 +104,7 @@ def load_aggregate_delivery_addresses(path):
     addresses = set()
     sources = []
     for exchange_id, exchange in sorted(exchanges.items()):
-        if exchange.get("delivery_policy") != "manual_current_claim":
+        if exchange.get("delivery_policy") != "manual_from_reserve":
             continue
         output = exchange.get("output")
         expected_hash = exchange.get("output_sha256")
@@ -744,9 +744,10 @@ def main():
         "status": "passed",
         "policy": (
             "WONE is added for addresses in the current inclusive 1,000 ONE "
-            "batch and for non-Gate exchange wallets using aggregate manual "
-            "delivery; the matching reserve is redistributed and the "
-            "remainder is retained in the 2050 premint reserve"
+            "batch and for every confirmed exchange wallet delivered manually "
+            "from the 2050 supply reserve; the matching reserve is "
+            "redistributed and the remainder is retained in the 2050 premint "
+            "reserve"
         ),
         "minimum_atto": str(args.minimum_one),
         "native_claims": args.native_claims,

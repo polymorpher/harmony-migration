@@ -211,13 +211,14 @@ Prepared from cutoff-pinned archival-node data.
 - Current combined-threshold rows: **{int(overlay["qualified_rows"]):,}**.
 - Ordinary-threshold WONE recipient rows after excluding system custody:
   **{int(overlay.get("ordinary_threshold_wone_holder_rows", overlay["priority_wone_holder_rows"])):,}**.
-- Below-threshold aggregate-exchange WONE recipient rows:
+- Below-threshold exchange manual-delivery WONE recipient rows:
   **{int(overlay.get("aggregate_delivery_wone_holder_rows", 0)):,}**.
 - WONE-backed ONE added to current wallet delivery:
   **{one(redistributed)} ONE**.
   This consists of **{one(ordinary_threshold_wone)} ONE** selected by the
   ordinary threshold and **{one(aggregate_delivery_wone)} ONE** selected by
-  non-Gate aggregate exchange delivery.
+  confirmed exchange inventories delivered manually from the 2050 supply
+  reserve.
 - Reserve remainder retained as not issued:
   **{one(retained)} ONE**.
 
@@ -235,7 +236,7 @@ They are not WONE-created eligibility.
 
 The entire WONE source reserve is **not** classified as `not_issued`.
 That would conflict with the current definition because replacement ONE is
-created for ordinary-threshold and aggregate-exchange WONE holders.
+created for ordinary-threshold and exchange manual-delivery WONE holders.
 
 Instead:
 
@@ -251,7 +252,7 @@ WONE native reserve
 
 `redistributed` is a terminal source offset, not a destination and not another
 issuance. It exactly cancels the WONE amount added to ordinary-threshold and
-aggregate-exchange wallet rows. The retained remainder receives no replacement
+exchange manual-delivery wallet rows. The retained remainder receives no replacement
 asset in the current migration and remains in the 2050 premint reserve.
 
 The WONE contract's own balance is excluded from recipient delivery as a
@@ -282,7 +283,7 @@ qualification_total_atto
 ```
 
 Only WONE belonging to the current ordinary qualifying batch or a normalized
-non-Gate aggregate-exchange inventory enters `wone_airdrop_atto`. Other and
+confirmed exchange inventory enters `wone_airdrop_atto`. Other and
 excluded backing remains in the retained reserve.
 
 ## Routing
@@ -293,13 +294,13 @@ excluded backing remains in the retained reserve.
   the retained WONE
   remainder: `{one(routing["not_issued_total_claim_atto"])} ONE`.
 - Routing status: `{routing["status"]}`.
-- Non-Gate aggregate exchange stage:
-  `{routing["stage_readiness"]["exchange_aggregate"]["status"]}`.
+- Exchange manual reserve-delivery stage:
+  `{routing["stage_readiness"]["exchange_manual"]["status"]}`.
 
 The routing remains held for unrelated unresolved destinations and policy
 decisions, plus other non-exchange manual claims whose stage remains under
-review. The non-Gate aggregate exchange stage is independently ready, and the
-WONE arithmetic itself is fully reconciled. WONE held by a reviewed excluded
+review. The exchange manual reserve-delivery stage is independently ready,
+and the WONE arithmetic itself is fully reconciled. WONE held by a reviewed excluded
 contract is part of that contract's non-issuance and is not subtracted from
 source backing a second time.
 
