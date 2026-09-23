@@ -9,6 +9,7 @@ import json
 import os
 import sys
 from collections import defaultdict
+from decimal import Decimal
 from pathlib import Path
 
 
@@ -17,7 +18,15 @@ sys.path.insert(0, str(CONTRACT_REVIEW))
 import contract_review_lib as lib  # noqa: E402
 
 
-EXCHANGE_ORDER = ("binance", "binance-us", "mexc", "okx", "kucoin")
+EXCHANGE_ORDER = ("binance", "binance-us", "mexc", "okx", "kucoin", "digitalx")
+DISPLAY_NAMES = {
+    "binance": "Binance",
+    "binance-us": "Binance.US",
+    "mexc": "MEXC",
+    "okx": "OKX",
+    "kucoin": "KuCoin",
+    "digitalx": "DigitalX",
+}
 NATIVE_DELIVERY_FIELDS = (
     "exchange_id",
     "destination_address",
@@ -70,11 +79,13 @@ GATE_ROUTE_FIELDS = (
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--audits-dir", required=True)
+    parser.add_argument("--normalization-summary", required=True)
     parser.add_argument("--native-claims", required=True)
     parser.add_argument("--delegations", required=True)
     parser.add_argument("--vaults", required=True)
     parser.add_argument("--gate-addition", required=True)
     parser.add_argument("--gate-destination", required=True)
+    parser.add_argument("--gate-reported-total", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--report", required=True)
@@ -107,9 +118,52 @@ def load_gate_route(addition_path, destination_path):
     }
 
 
+def load_reported_total(path):
+    text = Path(path).read_text(encoding="utf-8").strip()
+    value = Decimal(text) * 10**18
+    if value < 0 or value != value.to_integral_value():
+        raise ValueError("Gate reported total is not exact atto-ONE")
+    return int(value)
+
+
+def load_digitalx_submission(path):
+    """Return DigitalX's submitted wallet total and rolled-back deposit claim."""
+    with open(path, encoding="utf-8") as source:
+        normalization = json.load(source)
+    if normalization.get("schema_version") != 1:
+        raise ValueError("unsupported normalization summary schema")
+    summary = normalization["exchanges"]["digitalx"]
+    details = summary["parser_details"]
+    rolled_back = details["rolled_back_deposits"]
+    rolled_back_total = int(details["rolled_back_deposit_total_atto"])
+    if rolled_back_total != sum(int(item["amount_atto"]) for item in rolled_back):
+        raise ValueError("DigitalX rolled-back deposit claim does not sum")
+    submitted_wallet_total = int(summary["submitted_balance_atto"])
+    if submitted_wallet_total + rolled_back_total != int(
+        details["submitted_wallet_and_rolled_back_total_atto"]
+    ):
+        raise ValueError("DigitalX submitted combined total does not close")
+    return {
+        "submitted_wallet_total_atto": submitted_wallet_total,
+        "submitted_wallet_rows": summary["submitted_balance_rows"],
+        "rolled_back_deposit_total_atto": rolled_back_total,
+        "rolled_back_deposit_rows": len(rolled_back),
+        "rolled_back_deposits": rolled_back,
+        "submitted_combined_total_atto": submitted_wallet_total
+        + rolled_back_total,
+        "displayed_totals": details["source_summary_checks"],
+    }
+
+
 def one(value, commas=False):
     whole, fraction = divmod(int(value), 10**18)
     return f"{whole:,}.{fraction:018d}" if commas else f"{whole}.{fraction:018d}"
+
+
+def signed_one(value, commas=False):
+    value = int(value)
+    text = one(abs(value), commas)
+    return f"-{text}" if value < 0 else f"+{text}"
 
 
 def atomic_csv(path, fields, rows, replace):
@@ -289,6 +343,7 @@ def render_report(result):
         *("| " + " | ".join(row) + " |" for row in rows),
     ]
     gate = result["gate"]
+    digitalx = result["digitalx"]
     return f"""# Exchange native ONE delivery and Gate reconciliation
 
 All amounts below are independently summed from row-level cutoff native-ONE
@@ -323,6 +378,31 @@ Detailed source-wallet, delegation, and adjusted-validator rows are retained in:
 - `binance-us-delegation-withdrawals.csv`;
 - `binance-us-validator-vault-adjustments.csv`.
 
+## DigitalX — submitted total reconciliation
+
+DigitalX's workbook total of
+**{one(digitalx['submitted_combined_total_atto'], True)} ONE** combines its
+current wallet balances with {digitalx['rolled_back_deposit_rows']:,} deposit
+transactions it reports as invalidated by the network rollback. Only the
+wallet component is cutoff chain state; the rolled-back deposits are not held
+by any DigitalX wallet at cutoff and are **excluded** from the aggregate
+delivery above pending an explicit policy decision.
+
+| DigitalX component | Native ONE |
+|---|---:|
+| Submitted current wallet balances ({digitalx['submitted_wallet_rows']:,} wallets) | {one(digitalx['submitted_wallet_total_atto'], True)} |
+| Independent cutoff native claim (delivered) | {one(result['exchanges']['digitalx']['direct_delivery_atto'], True)} |
+| Submitted minus cutoff (exchange rounding) | {signed_one(digitalx['submitted_minus_delivery_atto'], True)} |
+| Rolled-back deposit claim (excluded) | {one(digitalx['rolled_back_deposit_total_atto'], True)} |
+| DigitalX combined total | {one(digitalx['submitted_combined_total_atto'], True)} |
+
+| Rolled-back deposit transaction | Reported ONE |
+|---|---:|
+{chr(10).join(
+        f"| `{item['transaction_hash']}` | {one(item['amount_atto'], True)} |"
+        for item in digitalx['rolled_back_deposits']
+    )}
+
 ## Gate — separate reconciliation
 
 Gate has not requested aggregate delivery. This section is retained so Harmony
@@ -346,6 +426,21 @@ already has **{one(gate['destination_existing_native_claim_atto'], True)} ONE**
 at cutoff; that pre-existing destination balance is shown for review but is not
 added to the source-route total.
 
+### Gate-reported total reconciliation
+
+| Component used by Gate | Native ONE |
+|---|---:|
+| Submitted inventory — shard 0 | {one(gate['inventory_shard0_atto'], True)} |
+| Supplemental source | {one(gate['supplemental_native_delivery_atto'], True)} |
+| Destination's existing balance | {one(gate['destination_existing_native_claim_atto'], True)} |
+| Gate-reported total | {one(gate['reported_total_atto'], True)} |
+
+This closes exactly. The difference from an all-shard calculation is
+**{one(gate['inventory_shard1_atto'], True)} ONE**, held across
+{gate['inventory_shard1_wallets']:,} Gate inventory addresses on shard 1.
+Including that shard-1 amount produces
+**{one(gate['all_shards_with_destination_atto'], True)} ONE**.
+
 Gate's WONE census and any unrelated global policy are intentionally outside
 this exchange memo.
 """
@@ -358,6 +453,12 @@ def main():
     gate_route = load_gate_route(
         args.gate_addition,
         args.gate_destination,
+    )
+    gate_reported_total = load_reported_total(
+        args.gate_reported_total
+    )
+    digitalx_submission = load_digitalx_submission(
+        args.normalization_summary
     )
     audits = {}
     summaries = {}
@@ -571,13 +672,7 @@ def main():
             else summary["native_wallet_atto"]
         )
         exchange_result[exchange_id] = {
-            "display_name": {
-                "binance": "Binance",
-                "binance-us": "Binance.US",
-                "mexc": "MEXC",
-                "okx": "OKX",
-                "kucoin": "KuCoin",
-            }[exchange_id],
+            "display_name": DISPLAY_NAMES[exchange_id],
             **summary,
             "components": dict(native_totals[exchange_id]),
             "delegated_released_atto": released,
@@ -612,6 +707,24 @@ def main():
     gate_total = gate_inventory_total + gate_source_total
     gate_current = gate_ordinary_current + gate_source_total
     gate_remaining = gate_total - gate_current
+    gate_inventory_shard0 = native_totals["gate"][
+        "liquid_shard0_atto"
+    ]
+    gate_inventory_shard1 = native_totals["gate"][
+        "liquid_shard1_atto"
+    ]
+    gate_inventory_shard1_wallets = sum(
+        int(row["liquid_shard1_atto"]) > 0 for row in gate_rows
+    )
+    gate_destination_total = gate_destination["total_claim_atto"]
+    gate_reported_reconstructed = (
+        gate_inventory_shard0
+        + gate_source_total
+        + gate_destination_total
+    )
+    if gate_reported_reconstructed != gate_reported_total:
+        raise ValueError("Gate reported total does not reconcile")
+    gate_all_shards_with_destination = gate_total + gate_destination_total
     gate_result = {
         **summaries["gate"],
         "inventory_components": dict(native_totals["gate"]),
@@ -637,11 +750,46 @@ def main():
             "source_native_claim_atto": str(gate_source_total),
         },
         "destination_existing_native_claim_atto": str(
-            gate_destination["total_claim_atto"]
+            gate_destination_total
         ),
+        "reported_total_atto": str(gate_reported_total),
+        "reported_reconstructed_atto": str(
+            gate_reported_reconstructed
+        ),
+        "all_shards_with_destination_atto": str(
+            gate_all_shards_with_destination
+        ),
+        "reported_difference_atto": str(
+            gate_all_shards_with_destination - gate_reported_total
+        ),
+        "inventory_shard0_atto": str(gate_inventory_shard0),
+        "inventory_shard1_atto": str(gate_inventory_shard1),
+        "inventory_shard1_wallets": gate_inventory_shard1_wallets,
     }
     if min(gate_current, gate_remaining) < 0:
         raise ValueError("Gate native reconciliation is negative")
+
+    digitalx_direct = exchange_result["digitalx"]["direct_delivery_atto"]
+    if (
+        exchange_result["digitalx"]["inventory_wallets"]
+        != digitalx_submission["submitted_wallet_rows"]
+    ):
+        raise ValueError("DigitalX submitted wallet rows do not match audit")
+    digitalx_result = {
+        **{
+            key: str(value) if key.endswith("_atto") else value
+            for key, value in digitalx_submission.items()
+        },
+        "direct_delivery_atto": str(digitalx_direct),
+        "submitted_minus_delivery_atto": str(
+            digitalx_submission["submitted_wallet_total_atto"]
+            - digitalx_direct
+        ),
+        "rolled_back_treatment": (
+            "excluded from aggregate delivery; not cutoff wallet state; "
+            "requires explicit policy decision"
+        ),
+    }
 
     outputs = {
         "native_deliveries": output_dir / "exchange-native-deliveries.csv",
@@ -709,6 +857,7 @@ def main():
         ),
         "exchanges": exchange_result,
         "gate": gate_result,
+        "digitalx": digitalx_result,
         "binance_us": {
             "delegators": len(
                 {
@@ -743,9 +892,17 @@ def main():
                 "path": args.gate_destination,
                 "sha256": file_sha256(args.gate_destination),
             },
+            "gate_reported_total": {
+                "path": args.gate_reported_total,
+                "sha256": file_sha256(args.gate_reported_total),
+            },
             "native_claims": {
                 "path": args.native_claims,
                 "sha256": file_sha256(args.native_claims),
+            },
+            "normalization_summary": {
+                "path": args.normalization_summary,
+                "sha256": file_sha256(args.normalization_summary),
             },
             "vaults": {
                 "path": args.vaults,
