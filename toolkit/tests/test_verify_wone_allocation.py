@@ -738,6 +738,9 @@ class AllocationFixture:
                 "redistributed_wallet_airdrop_atto": str(redistributed),
                 "redistributed_staked_to_vault_atto": "0",
                 "redistributed_total_claim_atto": str(redistributed),
+                "exchange_manual_wallet_airdrop_atto": "0",
+                "exchange_manual_staked_to_vault_atto": "0",
+                "exchange_manual_total_claim_atto": "0",
                 "issuable_wallet_airdrop_atto": str(issuable_wallet),
                 "issuable_staked_to_vault_atto": str(issuable_staked),
                 "issuable_total_claim_atto": str(
@@ -928,10 +931,10 @@ class VerifyWoneAllocationTest(unittest.TestCase):
                 ({"exchange_id": "example", "address_hex": address},),
             )
             normalization = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "exchanges": {
                     "example": {
-                        "delivery_policy": "manual_current_claim",
+                        "delivery_policy": "manual_from_reserve",
                         "normalized_rows": 1,
                         "output": str(addresses),
                         "output_sha256": sha256(addresses),

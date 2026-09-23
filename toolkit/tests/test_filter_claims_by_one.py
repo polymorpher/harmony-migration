@@ -186,10 +186,10 @@ class FilterClaimsByOneTest(unittest.TestCase):
             normalization.write_text(
                 json.dumps(
                     {
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "exchanges": {
                             "example": {
-                                "delivery_policy": "manual_current_claim",
+                                "delivery_policy": "manual_from_reserve",
                                 "normalized_rows": 1,
                                 "output": str(exchange),
                                 "output_sha256": exchange_hash,

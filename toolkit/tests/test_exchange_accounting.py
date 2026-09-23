@@ -510,16 +510,20 @@ class ExchangeAccountingPolicyTest(unittest.TestCase):
     def setUpClass(cls):
         cls.module = load(ACCOUNTING_SCRIPT, "build_exchange_accounting")
 
-    @staticmethod
-    def normalized(destination_status="configured"):
+    CUTOFF = "2026-09-10T14:00:00Z"
+    WALLET_DESTINATION = "0x0000000000000000000000000000000000000002"
+    STAKING_DESTINATION = "0x0000000000000000000000000000000000000003"
+
+    @classmethod
+    def normalized(cls, destination_status="configured", staking=False):
+        configured = destination_status == "configured"
         return {
             "address_hex": "0x0000000000000000000000000000000000000001",
             "address_one": "one1test",
             "source_row": "2",
-            "configured_destination": (
-                "0x0000000000000000000000000000000000000002"
-                if destination_status == "configured"
-                else ""
+            "configured_destination": cls.WALLET_DESTINATION if configured else "",
+            "configured_staking_destination": (
+                cls.STAKING_DESTINATION if configured and staking else ""
             ),
             "configured_destination_status": destination_status,
             "submitted_balance_atto": "",
@@ -528,179 +532,199 @@ class ExchangeAccountingPolicyTest(unittest.TestCase):
         }
 
     @staticmethod
-    def claim(native_total, wone_airdrop=0):
+    def claim(native_total, wone_airdrop=0, staked=0, unclaimed=0):
+        wallet_native = native_total - staked
+        liquid = wallet_native - unclaimed
         return {
             "address": "0x0000000000000000000000000000000000000001",
-            "liquid_shard0_atto": str(native_total),
+            "liquid_shard0_atto": str(liquid),
             "liquid_shard1_atto": "0",
-            "native_wallet_airdrop_atto": str(native_total),
+            "pending_cross_shard_atto": "0",
+            "pending_undelegation_atto": "0",
+            "unclaimed_staking_reward_atto": str(unclaimed),
+            "native_wallet_airdrop_atto": str(wallet_native),
             "wone_balance_atto": str(wone_airdrop),
             "wone_airdrop_atto": str(wone_airdrop),
-            "wallet_airdrop_atto": str(native_total + wone_airdrop),
-            "staked_to_vault_atto": "0",
+            "wallet_airdrop_atto": str(wallet_native + wone_airdrop),
+            "staked_to_vault_atto": str(staked),
             "native_total_claim_atto": str(native_total),
-            "qualification_total_atto": str(
-                native_total + wone_airdrop
-            ),
+            "qualification_total_atto": str(native_total + wone_airdrop),
             "total_claim_atto": str(native_total + wone_airdrop),
         }
 
-    def test_manual_route_includes_below_threshold_wone(self):
-        threshold = 1000 * 10**18
-        native = 500 * 10**18
-        wone = 100 * 10**18
-        claim = self.claim(native, wone)
-        exchange = {
+    @staticmethod
+    def exchange(exchange_id, mode):
+        return {
             "config": {
-                "id": "example",
-                "delivery_policy": "manual_current_claim",
+                "id": exchange_id,
+                "delivery_policy": "manual_from_reserve",
+                "destination_mode": mode,
             }
         }
-        row = self.module.build_audit_row(
+
+    NO_ACTIVITY = {
+        "last_activity_time_utc": "",
+        "last_activity_block": "",
+        "last_activity_shard": "",
+        "last_activity_type": "",
+    }
+
+    def build(self, exchange, normalized, claim, wone=0, **kwargs):
+        defaults = {
+            "activity": self.NO_ACTIVITY,
+            "category": None,
+            "stage_record": None,
+            "threshold": 1000 * 10**18,
+        }
+        defaults.update(kwargs)
+        return self.module.build_audit_row(
             exchange,
-            self.normalized(),
+            normalized,
             claim,
             wone,
-            None,
-            None,
-            None,
-            threshold,
-            self.module.parse_utc("2026-09-10T14:00:00Z"),
-        )
-        self.assertEqual(
-            row["planned_wallet_airdrop_atto"],
-            str(native + wone),
-        )
-        self.assertEqual(
-            row["planned_total_entitlement_atto"],
-            str(native + wone),
-        )
-        self.assertEqual(
-            row["remaining_not_airdropped_atto"],
-            "0",
-        )
-        self.assertEqual(
-            row["planned_delivery_status"],
-            "manual_destination_configured",
-        )
-        self.assertEqual(row["migration_stage"], "exchange_aggregate")
-
-    def test_gate_requires_threshold_and_automatic_category(self):
-        threshold = 1000 * 10**18
-        claim = self.claim(threshold)
-        exchange = {
-            "config": {
-                "id": "gate",
-                "delivery_policy": "automatic_threshold",
-            }
-        }
-        row = self.module.build_audit_row(
-            exchange,
-            self.normalized("not_required_same_address"),
-            claim,
-            0,
-            {
-                "last_activity_time_utc": "",
-                "last_activity_block": "",
-                "last_activity_shard": "",
-                "last_activity_type": "",
-            },
-            "automatic",
-            None,
-            threshold,
-            self.module.parse_utc("2026-09-10T14:00:00Z"),
-        )
-        self.assertEqual(
-            row["planned_delivery_status"], "automatic_same_address"
-        )
-        self.assertEqual(
-            row["planned_wallet_airdrop_atto"], str(threshold)
-        )
-        self.assertEqual(
-            row["planned_total_entitlement_atto"], str(threshold)
+            defaults["activity"],
+            defaults["category"],
+            defaults["stage_record"],
+            defaults["threshold"],
+            self.module.parse_utc(self.CUTOFF),
+            categories_complete=defaults.get("categories_complete", True),
+            stages_complete=defaults.get("stages_complete", False),
         )
 
-    def test_gate_stage_prevents_deferred_wallet_from_initial_delivery(self):
+    def test_manual_route_includes_below_threshold_wone(self):
+        native = 500 * 10**18
+        wone = 100 * 10**18
+        row = self.build(
+            self.exchange("example", "aggregate"),
+            self.normalized(),
+            self.claim(native, wone),
+            wone,
+        )
+        self.assertEqual(row["planned_wallet_airdrop_atto"], str(native + wone))
+        self.assertEqual(row["planned_total_entitlement_atto"], str(native + wone))
+        self.assertEqual(row["remaining_not_airdropped_atto"], "0")
+        self.assertEqual(row["planned_delivery_status"], "exchange_manual")
+        self.assertEqual(row["migration_stage"], "exchange_manual")
+        self.assertEqual(row["issuance_treatment"], "manual_from_reserve")
+        self.assertEqual(row["delivery_tier"], "aggregate")
+        self.assertEqual(row["planned_wallet_destination"], self.WALLET_DESTINATION)
+        self.assertEqual(row["planned_staking_destination"], self.WALLET_DESTINATION)
+
+    def test_same_address_mode_delivers_to_the_source_wallet(self):
         threshold = 1000 * 10**18
-        claim = self.claim(threshold)
-        exchange = {
-            "config": {
-                "id": "gate",
-                "delivery_policy": "automatic_threshold",
-            }
-        }
-        row = self.module.build_audit_row(
-            exchange,
-            self.normalized("not_required_same_address"),
-            claim,
-            0,
-            {
-                "last_activity_time_utc": "2025-01-01T00:00:00Z",
-                "last_activity_block": "1",
-                "last_activity_shard": "0",
-                "last_activity_type": "regular",
-            },
-            "automatic",
-            {
-                "stage": "deferred",
-                "treatment": "issue",
-                "allocation": threshold,
-            },
-            threshold,
-            self.module.parse_utc("2026-09-10T14:00:00Z"),
+        row = self.build(
+            self.exchange("bybit", "same_address"),
+            self.normalized("same_address"),
+            self.claim(threshold),
+            category="excluded_address",
+            stage_record={"stage": "deferred", "treatment": "issue", "allocation": threshold},
             stages_complete=True,
         )
-        self.assertEqual(row["migration_stage"], "deferred")
-        self.assertEqual(
-            row["planned_delivery_status"],
-            "deferred_stage_not_initial",
+        self.assertEqual(row["migration_stage"], "exchange_manual")
+        self.assertEqual(row["delivery_tier"], "same_address")
+        self.assertEqual(row["planned_delivery_status"], "exchange_manual")
+        self.assertEqual(row["planned_wallet_destination"], row["address_hex"])
+        self.assertEqual(row["planned_total_entitlement_atto"], str(threshold))
+        routes = self.module.exchange_routes("bybit", row, 300)
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(routes[0]["destination_address"], row["address_hex"])
+        self.assertEqual(routes[0]["destination_id"], "")
+        self.assertEqual(routes[0]["amount_atto"], "ALL")
+        self.assertEqual(routes[0]["status"], "exchange_manual")
+        self.assertEqual(routes[0]["reason"], "exchange_manual_reserve_delivery")
+
+    def test_gate_tier_follows_the_initial_stage(self):
+        threshold = 1000 * 10**18
+        gate = self.exchange("gate", "tiered")
+        initial = self.build(
+            gate,
+            self.normalized(),
+            self.claim(threshold),
+            category="excluded_address",
+            stage_record={"stage": "initial", "treatment": "issue", "allocation": threshold},
+            stages_complete=True,
         )
-        self.assertEqual(row["planned_total_entitlement_atto"], "0")
+        self.assertEqual(initial["delivery_tier"], "same_address_initial")
+        self.assertEqual(initial["planned_wallet_destination"], initial["address_hex"])
+        deferred = self.build(
+            gate,
+            self.normalized(),
+            self.claim(threshold),
+            category="excluded_address",
+            stage_record={"stage": "deferred", "treatment": "issue", "allocation": threshold},
+            stages_complete=True,
+        )
+        self.assertEqual(deferred["delivery_tier"], "aggregated_non_initial")
+        self.assertEqual(deferred["planned_wallet_destination"], self.WALLET_DESTINATION)
+        self.assertEqual(deferred["planned_total_entitlement_atto"], str(threshold))
+        self.assertEqual(deferred["migration_stage"], "exchange_manual")
+        pending = self.build(
+            gate,
+            self.normalized(),
+            self.claim(threshold),
+            category="excluded_address",
+        )
+        self.assertEqual(pending["delivery_tier"], "tier_pending")
+        self.assertEqual(pending["planned_delivery_status"], "tier_pending")
 
     def test_manual_audit_separates_erc20_and_vault_principal(self):
         threshold = 1000 * 10**18
         wallet = 400 * 10**18
         staked = 600 * 10**18
-        claim = self.claim(threshold)
-        claim.update(
-            {
-                "liquid_shard0_atto": str(wallet),
-                "native_wallet_airdrop_atto": str(wallet),
-                "wallet_airdrop_atto": str(wallet),
-                "staked_to_vault_atto": str(staked),
-            }
-        )
-        exchange = {
-            "config": {
-                "id": "example",
-                "delivery_policy": "manual_current_claim",
-            }
-        }
-        row = self.module.build_audit_row(
-            exchange,
+        row = self.build(
+            self.exchange("example", "aggregate"),
             self.normalized(),
-            claim,
-            0,
-            {
-                "last_activity_time_utc": "",
-                "last_activity_block": "",
-                "last_activity_shard": "",
-                "last_activity_type": "",
-            },
-            "excluded_address",
-            None,
-            threshold,
-            self.module.parse_utc("2026-09-10T14:00:00Z"),
+            self.claim(threshold, staked=staked),
+            category="excluded_address",
         )
-        self.assertEqual(
-            row["planned_wallet_airdrop_atto"], str(wallet)
+        self.assertEqual(row["planned_wallet_airdrop_atto"], str(wallet))
+        self.assertEqual(row["planned_staked_to_vault_atto"], str(staked))
+        self.assertEqual(row["planned_total_entitlement_atto"], str(threshold))
+        self.assertEqual(row["wallet_component_atto"], str(wallet))
+        self.assertEqual(row["staking_component_atto"], str(staked))
+
+    def test_split_mode_emits_wallet_and_staking_routes(self):
+        threshold = 1000 * 10**18
+        staked = 600 * 10**18
+        unclaimed = 50 * 10**18
+        wone = 25 * 10**18
+        row = self.build(
+            self.exchange("binance", "aggregate_split"),
+            self.normalized(staking=True),
+            self.claim(threshold, wone, staked=staked, unclaimed=unclaimed),
+            wone,
+            category="excluded_address",
+            stage_record={"stage": "initial", "treatment": "issue", "allocation": threshold + wone},
+            stages_complete=True,
         )
-        self.assertEqual(
-            row["planned_staked_to_vault_atto"], str(staked)
+        liquid = threshold - staked - unclaimed
+        self.assertEqual(row["wallet_component_atto"], str(liquid + wone))
+        self.assertEqual(row["staking_component_atto"], str(staked + unclaimed))
+        self.assertEqual(row["planned_wallet_destination"], self.WALLET_DESTINATION)
+        self.assertEqual(row["planned_staking_destination"], self.STAKING_DESTINATION)
+        routes = self.module.exchange_routes("binance", row, 300)
+        self.assertEqual([route["route_id"][-8:] for route in routes], ["1-wallet", "-staking"])
+        wallet_route, staking_route = routes
+        self.assertEqual(wallet_route["allocation_method"], "wallet_only")
+        self.assertEqual(wallet_route["amount_atto"], str(liquid + wone))
+        self.assertEqual(wallet_route["destination_id"], "exchange-binance")
+        self.assertEqual(wallet_route["priority"], "300")
+        self.assertEqual(staking_route["allocation_method"], "wallet_first_pro_rata_vault")
+        self.assertEqual(staking_route["amount_atto"], "ALL")
+        self.assertEqual(staking_route["destination_id"], "exchange-binance-staking")
+        self.assertEqual(staking_route["priority"], "301")
+
+    def test_missing_destination_holds_the_manual_delivery(self):
+        threshold = 1000 * 10**18
+        row = self.build(
+            self.exchange("example", "aggregate"),
+            self.normalized("missing_file"),
+            self.claim(threshold),
+            category="excluded_address",
         )
-        self.assertEqual(
-            row["planned_total_entitlement_atto"], str(threshold)
-        )
+        self.assertEqual(row["planned_delivery_status"], "manual_destination_hold")
+        self.assertEqual(row["planned_total_entitlement_atto"], str(threshold))
+        self.assertEqual(row["migration_stage"], "exchange_manual")
 
     def test_submitted_reconciliation_can_use_both_liquid_shards(self):
         normalized = self.normalized()

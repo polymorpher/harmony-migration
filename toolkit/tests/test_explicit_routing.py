@@ -56,7 +56,7 @@ def resolved_policy_decisions():
         for decision_id in (
             "initial-wallet-activity-stage",
             "layerzero-nativeoft-reconciliation",
-            "non-gate-exchange-aggregate-stage",
+            "exchange-manual-reserve-delivery",
             "reviewed-contract-migration-policy",
             "rollback-exploit-proceeds",
             "wone-holder-redistribution",
@@ -74,13 +74,21 @@ def write_csv(path, fields, rows):
 
 
 class ExplicitRoutingTest(unittest.TestCase):
-    def test_exchange_route_uses_release_authorized_aggregate_stage(self):
+    def test_exchange_route_uses_manual_reserve_stage(self):
         claim = {"migration_stage": "manual_review"}
-        route = {"reason": "exchange_requested_aggregate_reroute"}
+        route = {"reason": "exchange_manual_reserve_delivery"}
         self.assertEqual(
             ROUTING.route_stage(claim, route),
-            "exchange_aggregate",
+            "exchange_manual",
         )
+        self.assertEqual(
+            ROUTING.route_treatment(
+                {**route, "destination_status": "exchange_manual"}
+            ),
+            "manual_from_reserve",
+        )
+        with self.assertRaisesRegex(ValueError, "exchange"):
+            ROUTING.route_treatment({**route, "destination_status": "ready"})
         self.assertEqual(
             ROUTING.route_stage(claim, {"reason": "other"}),
             "manual_review",
