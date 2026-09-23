@@ -155,7 +155,8 @@ from the shard-0 archival node and reconciled the result exactly to both WONE
 The current inclusive threshold now uses native total claim plus WONE balance.
 Qualified rows receive their WONE amount in the direct wallet component. The
 September 18 exchange correction also includes WONE held by normalized
-non-Gate aggregate-delivery wallets regardless of that ordinary threshold. The
+exchange wallets regardless of that ordinary threshold; the September 22
+exchange policy extends that to every confirmed exchange inventory. The
 matching WONE source reserve is classified as `redistributed`, while the
 remaining backing is `not_issuing` and retained in the 2050 premint reserve.
 
@@ -189,27 +190,44 @@ decision. Because two DigitalX custodial wallets met the ordinary threshold,
 the eligibility split, migration-stage policy, base vault-share allocation,
 compiled routing, exchange routing verification, and initial-stage
 materialization were regenerated so those wallets left the automatic
-same-address population and joined the exchange-aggregate stage. The same
-update moved the historical-retention non-issuance input to this repository's
-own `artifacts/supply-reconciliation-20260911/` copy after the supply-audit
+same-address population and joined the exchange stage. The same update moved
+the historical-retention non-issuance input to this repository's own
+`artifacts/supply-reconciliation-20260911/` copy after the supply-audit
 forensic workspace quarantined the original export path.
 
-Gate did not request aggregate rerouting and remains under the ordinary
-inclusive threshold. Wallets reported by other exchanges receive every
-positive native and WONE claim through manual aggregate routes; the threshold
-is used only to remove overlap from implicit same-address delivery. Missing
-destinations remain holds. Per-exchange memos and a complete Gate
-airdropped/not-airdropped audit were generated from existing cutoff and
-activity artifacts rather than a new chain scan.
+The September 22 exchange policy added Binance, Bybit, and HTX inventories and
+replaced the aggregate-exchange stage with manual delivery from the year 2050
+supply reserve for every exchange. Every wallet in a confirmed exchange
+inventory is excluded from the airdrop; its complete cutoff entitlement
+(native ONE, WONE, and delegated principal) is delivered by hand to the
+destination(s) the exchange confirmed, and exchange delegated principal is
+released from the validator vaults instead of being issued as shares.
+Destination policies are recorded per exchange: one aggregate address, a
+wallet/staking address pair, the source wallets themselves, or Gate's tiering
+in which wallets meeting the initial-distribution criteria are delivered at
+their own addresses and all others are aggregated to Gate's confirmed
+destination. Gate's two addresses supplied outside its workbook were merged
+into its inventory, and its reported total was reconciled exactly from the
+workbook's shard-0 balances plus those addresses. Because the exchange set now
+includes Gate wallets holding only WONE, the WONE-only metadata was refreshed
+from the archival node at the pinned cutoff block before the overlay,
+threshold, eligibility, stage, vault, routing, and materialization artifacts
+were regenerated. The threshold subset was unchanged; the initial airdrop
+shrank by the exchange wallets it previously contained. Missing destinations
+remain holds. Per-exchange memos, Gate delivery-tier lists, and the manual
+delivery worksheet were generated from existing cutoff and activity artifacts
+rather than a new chain scan.
 
 ## 13. Migration-stage and reviewed-contract policy
 
 The September 17 policy fixed threshold membership before deductions and
 limited the initial stage to positive eligible wallets with six-month indexed
-activity. The September 18 exchange correction separated confirmed non-Gate
-aggregation into its own release-authorized `exchange_aggregate` stage:
+activity. The September 18 exchange correction separated confirmed exchange
+delivery into its own stage, and the September 22 policy made that stage
+`exchange_manual` with `manual_from_reserve` treatment for every exchange:
 individual source threshold, activity, and ordinary stage do not gate that
-delivery. Gate remains in the ordinary wallet stages.
+delivery, nothing in it is airdropped, and a Gate wallet's ordinary stage only
+selects its delivery tier.
 
 Reviewed multisig, LayerZero collateral, and 1wallet allocations moved to the
 next stage regardless of activity. The 1wallet group uses recovery-multisig

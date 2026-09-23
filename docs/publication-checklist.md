@@ -33,11 +33,12 @@ Before publishing the migration allocation:
    materialized initial-stage summary to report `status: ready`, with no
    initial held destination, governor, or scoped policy gate. Retain global
    `status` as the conservative all-stage gate.
-   For the non-Gate exchange batch, independently require
-   `stage_readiness.exchange_aggregate` and the materialized exchange summary
-   to report `ready`.
+   For the exchange manual delivery, independently require
+   `stage_readiness.exchange_manual` to report `ready` and the exchange native
+   summary to report `passed`; the delivery itself is executed by hand from the
+   2050 supply reserve, not by the airdrop deployment.
    Confirm that expanded claims equal issuable plus not-issued plus
-   redistributed source amounts exactly.
+   redistributed source plus exchange-manual amounts exactly.
    Confirm that migration-stage policy covers the threshold population exactly,
    the initial stage contains only six-month-active wallets, and destination
    readiness cannot override a deferred or next-stage assignment.
@@ -47,16 +48,19 @@ Before publishing the migration allocation:
    ownership/recovery evidence is verified.
    Confirm that generated multisig holds have no common fillable destination;
    every approved Safe route is address-specific and precedes priority 500.
-   Confirm that every qualifying non-Gate exchange wallet is absent from the
-   implicit automatic category, every positive native or WONE claim in a
-   non-Gate inventory has exactly one manual route regardless of the ordinary
-   threshold, all such routes compile into a release-authorized
-   `exchange_aggregate` stage, the materialized exchange wallet/share outputs
-   close to that stage exactly, and blank exchange destinations remain holds.
-   Confirm separately that Gate has no exchange reroute, that only its ordinary
-   qualifying automatic rows receive same-address delivery, and that the
-   airdropped/not-airdropped address lists and residual-value total close to
-   its complete normalized inventory.
+   Confirm that every qualifying exchange wallet is absent from the implicit
+   automatic category, every positive native, WONE, or delegated claim in a
+   confirmed exchange inventory has manual routes regardless of the ordinary
+   threshold, all such routes compile into the `exchange_manual` stage with
+   `manual_from_reserve` treatment, the manual delivery worksheet closes to
+   that stage exactly, exchange delegated principal is released from the
+   validator vaults, no exchange wallet appears in any airdrop output, and
+   blank exchange destinations remain holds.
+   Confirm separately that Gate's same-address-initial and aggregated tiers
+   partition its complete normalized inventory, that the tier follows the
+   initial-distribution criteria, and that Gate's reported total reconstructs
+   exactly from the workbook's shard-0 balances plus the supplemental
+   addresses.
    Confirm each submitted balance against its declared shard scope. For an
    exchange submission with signature-designated rows, require the designated,
    provided, and cryptographically verified sets to match, with zero failed or
@@ -66,8 +70,8 @@ Before publishing the migration allocation:
    as state claims or redirected. Do not imply that the existing treasury
    inventory covers that incident.
 7. Reconcile the WONE holder ledger to `totalSupply()` and the native reserve.
-   Confirm that ordinary-threshold and non-Gate aggregate-exchange amounts are
-   added once to wallet rows and offset once as `redistributed`, while the
+   Confirm that ordinary-threshold and exchange manual-delivery WONE amounts
+   are added once to wallet rows and offset once as `redistributed`, while the
    remainder is `not_issuing` and retained in the 2050 premint reserve.
    Confirm that WONE held by an excluded contract is not backed out a second
    time.

@@ -17,9 +17,9 @@
   and transfer logs from an archival node and require exact supply/reserve
   closure
 - `toolkit/scripts/claims/build-wone-new-holder-metadata.py` — resolve cutoff
-  code and nonce for WONE-only threshold or aggregate-exchange candidates
+  code and nonce for WONE-only threshold or exchange-inventory candidates
 - `toolkit/scripts/claims/apply-wone-qualification.py` — add
-  ordinary-threshold and aggregate-exchange WONE to wallet rows while
+  ordinary-threshold and exchange manual-delivery WONE to wallet rows while
   preserving native claim fields and reserve conservation
 - `toolkit/scripts/claims/build-wone-report.py` — render the integrated WONE
   holder, qualification, reserve-split, and routing finding
@@ -74,15 +74,18 @@
   summary/destination/rolled-back-deposit reconciliation
 - `toolkit/scripts/exchanges/build-exchange-accounting.py` — reuse the cutoff
   claim, WONE, activity, and policy ledgers to build exchange memos, address
-  audits, wallet/balance/signature statistics, Gate split lists, non-Gate
-  eligibility exclusions, and manual route inputs
+  audits, wallet/balance/signature statistics, per-exchange destination modes
+  and Gate delivery tiers, the all-exchange airdrop exclusion set, and manual
+  reserve-delivery route inputs
 - `toolkit/scripts/exchanges/verify-exchange-routing.py` — independently require
-  every memo amount and positive manual source to match the compiled exchange
-  routing exceptions, while proving Gate has no exchange route
-- `toolkit/scripts/exchanges/build-exchange-native-policy.py` — fast
-  exchange-local native ONE summary, separate Gate reconciliation, DigitalX
-  submitted-total reconciliation with its excluded rolled-back deposit claim,
-  and Binance.US per-wallet/delegation/vault adjustment artifacts
+  every memo amount and positive manual source to match the compiled
+  `exchange_manual` routing exceptions, including split wallet/staking routes,
+  same-address destinations, and Gate tiers
+- `toolkit/scripts/exchanges/build-exchange-native-policy.py` — the manual
+  delivery worksheet funded from the 2050 supply reserve (per exchange, tier,
+  and destination), delegated principal released from every affected validator
+  vault, Gate tier and reported-total reconciliation, and the DigitalX
+  submitted-total reconciliation with its excluded rolled-back deposit claim
 
 The runtime configuration, raw/normalized inventories, destinations, and
 operator README under `exchanges/` are private and intentionally absent from
@@ -205,7 +208,7 @@ See `docs/contract-account-review.md`.
   historical USD-difference bundle verifier; restored with the result package
   because it embeds expected output identities
 - `toolkit/scripts/claims/verify-wone-allocation.py` — independently verify the
-  complete WONE holder overlay, threshold subset, aggregate-exchange
+  complete WONE holder overlay, threshold subset, exchange manual-delivery
   exception, reserve split, NativeOFT separation, and shard-1 reviewed-contract
   non-issuance
 - `scripts/check-numerical-embargo.py` — rejects publishable result values and

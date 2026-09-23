@@ -244,8 +244,8 @@ bin/wone-holders \
 ```
 
 Before applying WONE, normalize the private exchange submissions. This is
-required because non-Gate aggregate delivery includes every positive WONE
-balance regardless of the ordinary wallet threshold:
+required because exchange manual delivery includes every positive WONE
+balance in a confirmed inventory regardless of the ordinary wallet threshold:
 
 ```sh
 python3 toolkit/scripts/exchanges/normalize-exchange-wallets.py \
@@ -258,8 +258,8 @@ python3 toolkit/scripts/exchanges/normalize-exchange-wallets.py \
 ```
 
 Resolve cutoff metadata for WONE-only addresses that can meet the threshold or
-belong to a non-Gate aggregate-delivery inventory, then apply the same verified
-overlay to the plain and metadata-complete native ledgers:
+belong to a confirmed exchange inventory, then apply the same verified overlay
+to the plain and metadata-complete native ledgers:
 
 ```sh
 python3 toolkit/scripts/claims/build-wone-new-holder-metadata.py \
@@ -304,8 +304,8 @@ python3 toolkit/scripts/claims/apply-wone-qualification.py \
 ```
 
 The WONE contract is automatically excluded as a recipient. The overlay adds
-WONE to ordinary qualifying rows and normalized non-Gate aggregate-exchange
-rows, then records the exact reserve amount left not issued.
+WONE to ordinary qualifying rows and normalized confirmed exchange rows, then
+records the exact reserve amount left not issued.
 
 ## 10. Apply the 1,000 ONE policy
 
@@ -438,7 +438,7 @@ CSV as its input. The review must produce
 checks.
 
 Using the exchange normalization generated before the WONE overlay, bootstrap
-the non-Gate exclusion/manual-route inputs. This first report pass
+the exchange exclusion/manual-route inputs. This first report pass
 intentionally omits final policy categories; it is replaced after the final
 split. This operator-only step requires the ignored private `exchanges/`
 directory and is not available in the public source package:
@@ -481,7 +481,7 @@ python3 toolkit/scripts/claims/apply-eligibility-policy.py \
   --comparison ge \
   --exclude-address 0x000000000000000000000000000000000000dEaD \
   --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD \
-  --exclude-addresses-file artifacts/exchange-accounting-20260917/qualified-non-gate-exclusions.csv
+  --exclude-addresses-file artifacts/exchange-accounting-20260917/qualified-exchange-exclusions.csv
 ```
 
 Verify that the final files are disjoint, cover the threshold set exactly, and
@@ -496,7 +496,7 @@ python3 toolkit/scripts/claims/verify-eligibility-policy.py \
   --automatic-code-addresses "$OUT/contract-review/out/validator-policy-accounts.csv" \
   --exclude-address 0x000000000000000000000000000000000000dEaD \
   --exclude-address 0x7bDeF7Bdef7BDeF7BDEf7bDef7bdef7bdeF6E7AD \
-  --exclude-addresses-file artifacts/exchange-accounting-20260917/qualified-non-gate-exclusions.csv \
+  --exclude-addresses-file artifacts/exchange-accounting-20260917/qualified-exchange-exclusions.csv \
   --policy-summary "$OUT/claims/migration-claims-policy-summary.json" \
   --output "$OUT/claims/migration-claims-policy.verify.json"
 ```
@@ -531,7 +531,7 @@ python3 toolkit/scripts/claims/build-migration-stage-policy.py \
   --contract-review artifacts/contract-review-20260911/out/contract-review-policy.csv \
   --existing-non-issuance artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
   --historical-retention artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv \
-  --manual-wallets artifacts/exchange-accounting-20260917/qualified-non-gate-exclusions.csv \
+  --manual-wallets artifacts/exchange-accounting-20260917/qualified-exchange-exclusions.csv \
   --output artifacts/migration-policy-20260917/migration-stage-policy.csv \
   --summary artifacts/migration-policy-20260917/migration-stage-summary.json \
   --report artifacts/migration-policy-20260917/MIGRATION_STAGE_POLICY_2026-09-17.md
@@ -546,8 +546,8 @@ python3 toolkit/scripts/contract-review/build-report.py \
 ```
 
 Rebuild the exchange reports with the verified final categories and stage
-policy. This replaces the bootstrap Gate disposition with the initial-stage
-and outside-initial split:
+policy. This replaces the bootstrap disposition with the final manual routes
+and resolves Gate's delivery tiers from the initial stage:
 
 ```sh
 python3 toolkit/scripts/exchanges/build-exchange-accounting.py \
@@ -671,17 +671,17 @@ python3 toolkit/scripts/exchanges/verify-exchange-routing.py \
   --replace
 
 python3 toolkit/scripts/exchanges/build-exchange-native-policy.py \
+  --policy exchanges/exchange-policy.json \
   --audits-dir artifacts/exchange-accounting-20260917/audits \
   --normalization-summary exchanges/wallets-standardized/summary.json \
   --native-claims artifacts/cutoff-20260910/claims/all-address-native-claims-cutoff-metadata.csv \
   --delegations artifacts/cutoff-20260910/state/staked-to-vault-by-delegation-rpc.csv \
   --vaults artifacts/contract-review-20260911/out/base-validator-vault-deposits.csv \
-  --gate-addition exchanges/wallets-raw/gate-addition.txt \
-  --gate-destination exchanges/destinations/gate.txt \
+  --gate-supplemental exchanges/wallets-raw/gate-addition.txt \
   --gate-reported-total exchanges/wallets-raw/gate-reported-total.txt \
   --output-dir artifacts/exchange-accounting-20260917 \
   --summary artifacts/exchange-accounting-20260917/exchange-native-summary.json \
-  --report artifacts/exchange-accounting-20260917/EXCHANGE_AGGREGATE_DELIVERY_2026-09-18.md \
+  --report artifacts/exchange-accounting-20260917/EXCHANGE_MANUAL_DELIVERY_2026-09-22.md \
   --replace
 
 python3 toolkit/scripts/claims/verify-migration-stage-policy.py \
@@ -754,18 +754,21 @@ does not repeat ordinary code-less EOA same-address delivery; the materializer
 adds those rows and filters every non-initial or non-issued allocation.
 Release the initial plan only when `stage_readiness.initial` and the
 materializer summary both report `status: ready`. The global routing status is
-the conservative all-stage gate. Release the non-Gate exchange batch only when
-`stage_readiness.exchange_aggregate`, exchange routing verification, and the
-exchange aggregate materializer all report `ready`/`passed`. See
+the conservative all-stage gate. Execute the exchange manual delivery from the
+2050 supply reserve only when `stage_readiness.exchange_manual`, exchange
+routing verification, and the exchange native summary all report
+`ready`/`passed`, using the private manual delivery worksheet. See
 `routing/README.md` for the file contracts.
 
 The deployment build must exclude every row with
-`destination_status: not_issuing` or `redistributed`. A redistributed row is a
-source offset already represented in WONE holder wallet rows, not a second
-destination. For a not-issued staked row, subtract the same amount from both
-the validator's vault deposit and share mint. Verify that issued wallet and
-vault totals equal the routing summary's `issuable_*` totals, and that issued
-plus not-issued plus redistributed source amounts close to the expanded routing
+`destination_status: not_issuing`, `redistributed`, or `exchange_manual`. A
+redistributed row is a source offset already represented in WONE holder wallet
+rows, not a second destination. An exchange-manual row is delivered by hand
+from the 2050 supply reserve and is never airdropped. For a not-issued or
+exchange-manual staked row, subtract the same amount from both the validator's
+vault deposit and share mint. Verify that issued wallet and vault totals equal
+the routing summary's `issuable_*` totals, and that issued plus not-issued plus
+redistributed source plus exchange-manual amounts close to the expanded routing
 input.
 
 See `docs/eligibility-policy.md`, `docs/claim-routing.md`, and

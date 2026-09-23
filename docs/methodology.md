@@ -62,8 +62,8 @@ qualification_total
 ```
 
 For a row that meets the inclusive threshold, or belongs to a normalized
-non-Gate aggregate-delivery inventory, its complete WONE balance enters the
-current wallet amount. Otherwise `wone_airdrop` is zero. The destination split
+confirmed exchange inventory, its complete WONE balance enters the current
+wallet amount. Otherwise `wone_airdrop` is zero. The destination split
 is:
 
 ```text
@@ -86,8 +86,8 @@ total_claim
 ```
 
 The native ledger remains separately reproducible. Adding WONE to
-ordinary-threshold and aggregate-exchange rows creates an expanded routing
-input, so the WONE contract's shard-0 native reserve is removed exactly once at
+ordinary-threshold and exchange manual-delivery rows creates an expanded
+routing input, so the WONE contract's shard-0 native reserve is removed exactly once at
 the source: the amount paired with current delivery is `redistributed`, and
 the remainder is `not_issuing` and retained in the 2050 premint reserve.
 Same-address shard-1 ONE is not WONE backing and is included in reviewed
@@ -191,14 +191,17 @@ wallet rows.
 Exchange handling is a later ownership and destination overlay. Private raw
 inventories are normalized to canonical EVM and Harmony addresses, checked for
 duplicates and cross-exchange overlap, and joined to the already-generated
-cutoff, WONE, activity, and policy ledgers. Gate keeps the ordinary threshold
-and same-address destination behavior but remains subject to the wallet stage.
-Qualifying non-Gate wallets are removed from the implicit automatic class,
-while explicit aggregate routes load every positive native and WONE claim,
-including below-threshold rows, into a release-authorized
-`exchange_aggregate` stage that bypasses individual threshold and activity
-gating. Submitted balances are reconciled but never substitute for chain
-state, and a blank aggregate destination is a hold.
+cutoff, WONE, activity, and policy ledgers. Every exchange wallet is excluded
+from the airdrop: qualifying wallets are removed from the implicit automatic
+class, and explicit routes load every positive native, WONE, and delegated
+claim, including below-threshold rows, into an `exchange_manual` stage that
+bypasses individual threshold and activity gating and is delivered by hand
+from the 2050 supply reserve. Destinations follow each exchange's confirmed
+policy (one aggregate address, a wallet/staking address pair, the source
+wallets themselves, or Gate's tiering by the initial-distribution criteria).
+Delegated principal owned by exchange wallets is released from the validator
+vaults. Submitted balances are reconciled but never substitute for chain
+state, and a blank destination is a hold.
 Multi-shard submissions are merged by canonical address and reconciled against
 the matching combined liquid scope. When a submission designates signed rows,
 the signed destination, recovered signer, source-row marker, and any separate

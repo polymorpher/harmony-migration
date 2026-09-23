@@ -35,19 +35,19 @@ A full independent run should:
 4. recover and cryptographically verify every address preimage;
 5. assemble and strictly verify native total-claim, wallet-airdrop, and
    staked-to-vault fields;
-6. normalize private exchange inventories so non-Gate aggregate-delivery
+6. normalize private exchange inventories so exchange manual-delivery
    membership is fixed before the WONE overlay;
 7. enumerate cutoff WONE holders, reconcile them to `totalSupply()` and the
-   native reserve, then apply ordinary-threshold and aggregate-exchange WONE;
+   native reserve, then apply ordinary-threshold and exchange WONE;
 8. apply the inclusive combined native-plus-WONE threshold to the ordinary
    wallet path;
 9. resolve blank code metadata for the complete claim population at the
    cutoff, classify every prioritized code-bearing row, and prove validator
    overrides;
 10. apply and verify the final destination split;
-11. generate the non-Gate exclusion/manual-route overlay and stage-aware Gate
-    split audit from the normalized exchange inputs, and verify it against
-    existing cutoff data;
+11. generate the exchange exclusion/manual-route overlay and the stage-aware
+    Gate delivery tiers from the normalized exchange inputs, and verify them
+    against existing cutoff data;
 12. build validator-vault deposits plus priority and deferred share ledgers;
 13. generate and independently reconcile the wallet-only initial stage,
     next-stage reviewed contracts, deferred wallets, and reviewed-contract
@@ -58,8 +58,8 @@ A full independent run should:
     stage partition, requiring every
     unresolved destination to appear in the generated hold queue;
 16. independently materialize initial-only wallet/vault plans and the separate
-    non-Gate exchange wallet/share aggregate, matching each to its scoped stage
-    readiness; and
+    exchange manual delivery worksheet (including delegated principal released
+    from validator vaults), matching each to its scoped stage readiness; and
 17. record deterministic counts, totals, and hashes before receiving the
    original results.
 
@@ -109,7 +109,7 @@ The strict verifiers check:
   pending cross-shard`;
 - `qualification_total = native_total_claim + wone_balance`;
 - `wone_airdrop = wone_balance` for the inclusive ordinary batch or a
-  normalized non-Gate aggregate-exchange wallet;
+  normalized confirmed exchange wallet;
 - `wallet_airdrop = native_wallet_airdrop + wone_airdrop`;
 - `staked_to_vault = active stake/delegation`;
 - `total_claim = wallet_airdrop + staked_to_vault`;
@@ -173,19 +173,20 @@ The selected inclusive eligibility split is independently checked to ensure:
   sets, while verified validator wrappers remain wallets;
 - `migration_stage` and `issuance_treatment` remain separate, and every issued
   wallet/vault component closes independently;
-- selected inaccessible/dead and qualifying non-Gate exchange rows are handled
-  by policy;
+- selected inaccessible/dead and qualifying exchange rows are handled by
+  policy;
 - category wallet, vault, total-claim amounts and output hashes match the
   policy summary;
 - per-validator vault deposits equal all active delegation principal;
 - priority and deferred shares are disjoint and complete;
-- each validator vault partitions into initial, exchange-aggregate, next-stage,
+- each validator vault partitions into initial, exchange-manual, next-stage,
   qualified-deferred, manual-review, uncompiled-deferred, and not-issued
-  assets; post-policy assets equal base assets minus not-issued assets;
+  assets; post-policy assets equal base assets minus not-issued and
+  exchange-manual assets;
 - explicit route amounts close exactly across wallet and vault components;
 - WONE redistributed source equals WONE added to ordinary-threshold and
-  aggregate-exchange rows, and redistributed plus retained not-issued WONE
-  equals the native reserve;
+  exchange manual-delivery rows, and redistributed plus retained not-issued
+  WONE equals the native reserve;
 - ordinary code-less EOA same-address delivery is implicit and absent from the
   exception output;
 - every verified validator account appears as an explicit code-bearing
@@ -218,16 +219,18 @@ The private exchange overlay additionally verifies:
   destination, while KuCoin's signature-marked source rows, signature
   worksheet, and separate DOCX proof agree before the same signer/destination
   recovery check succeeds;
-- every qualifying non-Gate source is in the policy-routed category and no
-  Gate source is excluded merely because it appears in the Gate inventory;
-- every positive native or WONE non-Gate claim has exactly one priority-300
-  manual route regardless of the ordinary threshold, and all such routes use
-  the release-authorized `exchange_aggregate` stage;
-- materialized per-exchange ERC-20 and per-validator vault-share totals equal
-  that stage exactly, with no held destination or governor;
-- Gate initial-stage and outside-initial lists partition its complete
-  inventory, and its initial allocation plus residual qualification value
-  closes exactly;
+- every qualifying exchange source is in the policy-routed category and no
+  exchange wallet remains in the airdrop;
+- every positive native, WONE, or delegated exchange claim has manual routes
+  whose compiled amounts equal its planned entitlement regardless of the
+  ordinary threshold, and all such routes use the `exchange_manual` stage with
+  `manual_from_reserve` treatment and a destination in the memo plan;
+- the manual delivery worksheet totals equal that stage exactly, delegated
+  principal released from the vaults equals the exchange staked total, and no
+  destination is held;
+- Gate's same-address-initial and aggregated lists partition its complete
+  inventory, and its reported total reconstructs exactly from the workbook's
+  shard-0 balances plus the supplemental addresses;
 - prior activity data is reused only where it was collected, while other rows
   are labeled `not_collected`; and
 - missing inventories or destinations remain holds and cannot produce a silent
@@ -279,7 +282,7 @@ python3 toolkit/scripts/claims/verify-wone-allocation.py
 
 The Python verifier independently recomputes WONE holder completeness, the
 native-to-WONE claim overlay, the exact inclusive-threshold subset, the
-non-Gate aggregate-exchange exception, the reserve split, separate next-stage
+exchange manual-delivery exception, the reserve split, separate next-stage
 NativeOFT holds, and shard-1 WONE-source reviewed-contract non-issuance.
 Its deterministic JSON output is retained with the private result package and
 is exercised by local `make verify-private` workflows.

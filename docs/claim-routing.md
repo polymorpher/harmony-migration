@@ -24,10 +24,11 @@ Apply routing decisions in this order:
    classify account identity, and assign migration stage separately;
 2. apply explicitly approved non-issuance, treasury, and incident-recovery
    rules;
-3. exclude qualifying non-Gate exchange wallets from the implicit automatic
-   path and apply exchange aggregate routes to every positive native and WONE
-   claim regardless of the ordinary threshold; Gate remains under that
-   threshold;
+3. exclude every qualifying exchange wallet from the implicit automatic path
+   and apply exchange manual-delivery routes to every positive native, WONE,
+   and delegated claim in a confirmed exchange inventory regardless of the
+   ordinary threshold; the whole exchange entitlement is delivered manually
+   from the 2050 supply reserve and never enters the airdrop;
 4. identify Harmony validator-wrapper accounts and treat them as
    key-controlled accounts;
 5. apply the six-month activity rule only to eligible wallets for the initial
@@ -146,14 +147,19 @@ becomes a hold; it never falls back to the original address.
 
 The exchange route builder uses the cutoff ledger for payout amounts and the
 exchange submission only for membership, destination authorization, and
-reconciliation. Gate receives no generated exchange route. Its qualifying
-ordinary wallets use the same-address destination policy only when their
-migration stage is `initial`. Every positive native and WONE claim in a
-non-Gate inventory is included in aggregate delivery without an ordinary
-threshold test. Those routes compile into the independently release-authorized
-`exchange_aggregate` stage, regardless of individual source activity or
-ordinary stage. The private Gate audit joins the ordinary stage policy before
-labeling an address as initially delivered.
+reconciliation. Every positive native, WONE, and delegated claim in a confirmed
+exchange inventory receives a manual route without an ordinary threshold test.
+Those routes compile into the `exchange_manual` stage with
+`issuance_treatment = manual_from_reserve` and
+`destination_status = exchange_manual`, regardless of individual source
+activity or ordinary stage. The destination is the exchange's confirmed
+aggregate address, a wallet/staking destination pair (one route per component
+group), or the source wallet itself for same-address exchanges. Gate is tiered:
+a source wallet whose ordinary stage is `initial` is delivered at its own
+address, and every other Gate wallet is aggregated to Gate's confirmed
+destination. Delegated principal owned by an exchange wallet is released from
+the validator vault (`exchange_manual_assets_atto` in the vault stage ledger)
+instead of being issued as vault shares.
 
 Generated routing is sparse:
 
@@ -203,9 +209,10 @@ assets. The route data preserves the actual identity and policy reason.
 These are release gates in `routing/local/policy-decisions.csv`. The routing
 summary records both a conservative global status and stage-scoped readiness.
 The LayerZero gate applies to the next stage; a policy decision that can affect
-ordinary wallet claims remains an initial-stage gate. Confirmed non-Gate
-exchange delivery uses its own scoped readiness and is not blocked by ordinary
-threshold, activity, or initial-stage policy gates.
+ordinary wallet claims remains an initial-stage gate. Exchange manual delivery
+uses its own scoped readiness and is not blocked by ordinary threshold,
+activity, or initial-stage policy gates; it is executed by hand from the 2050
+supply reserve using the private manual delivery worksheet.
 
 ### WONE holder redistribution
 
@@ -218,13 +225,13 @@ airdrop. The source reserve is then split exactly:
 
 ```text
 WONE shard-0 native reserve
-= ordinary-threshold and aggregate-exchange redistribution
+= ordinary-threshold and exchange manual-delivery redistribution
 + retained not-issued remainder
 ```
 
 The first route has terminal status `redistributed`. It has no destination
 address because the corresponding ONE is already present in
-ordinary-threshold or aggregate-exchange wallet rows. The second route is
+ordinary-threshold or exchange manual-delivery wallet rows. The second route is
 terminal `not_issuing`; no replacement token is created for the remainder,
 which remains in the 2050 premint reserve.
 
