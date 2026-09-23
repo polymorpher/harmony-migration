@@ -169,8 +169,10 @@ The September 17 exchange update normalized the private inventories received
 from Binance.US, Gate, MEXC, and OKX, while retaining Binance and KuCoin as
 explicitly incomplete inputs. The September 18 update added KuCoin's two-shard
 inventory, separate signature proof, and aggregate destination, as well as the
-Binance.US aggregate destination. Binance remains the only missing wallet
-inventory and the only exchange with an unresolved aggregate destination.
+Binance.US aggregate destination. The September 22 update added DigitalX's
+69-wallet inventory and the ERC-20 destination declared inside its workbook.
+Binance remains the only missing wallet inventory and the only exchange with
+an unresolved aggregate destination.
 
 Address conversion, duplicate/overlap checks, exact submitted-balance
 reconciliation, and supplied signature verification are performed before any
@@ -178,6 +180,19 @@ delivery policy is generated. KuCoin's importer additionally merges duplicate
 addresses across its shard sheets, reproduces the workbook's exact per-shard
 and combined totals, checks its pinned cutoff identity, and requires its
 signature worksheet and DOCX proof to agree before EIP-191 recovery.
+DigitalX's importer permits spreadsheet formulas only in explorer-link and
+summary-total cells, reproduces each display-rounded total from row data,
+binds the declared destination to the configured destination file, and keeps
+the exchange's separately reported rollback-invalidated deposits (three
+transactions) outside wallet accounting as a claim awaiting an explicit policy
+decision. Because two DigitalX custodial wallets met the ordinary threshold,
+the eligibility split, migration-stage policy, base vault-share allocation,
+compiled routing, exchange routing verification, and initial-stage
+materialization were regenerated so those wallets left the automatic
+same-address population and joined the exchange-aggregate stage. The same
+update moved the historical-retention non-issuance input to this repository's
+own `artifacts/supply-reconciliation-20260911/` copy after the supply-audit
+forensic workspace quarantined the original export path.
 
 Gate did not request aggregate rerouting and remains under the ordinary
 inclusive threshold. Wallets reported by other exchanges receive every

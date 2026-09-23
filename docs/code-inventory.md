@@ -70,7 +70,8 @@
 - `toolkit/scripts/exchanges/normalize-exchange-wallets.py` — deterministic
   CSV/XLSX/DOCX ingestion, address normalization, overlap checks, exact
   single- and multi-shard balance parsing, MEXC EIP-191 signer verification,
-  and KuCoin workbook/proof cross-verification
+  KuCoin workbook/proof cross-verification, and DigitalX formula-scoped
+  summary/destination/rolled-back-deposit reconciliation
 - `toolkit/scripts/exchanges/build-exchange-accounting.py` — reuse the cutoff
   claim, WONE, activity, and policy ledgers to build exchange memos, address
   audits, wallet/balance/signature statistics, Gate split lists, non-Gate
@@ -79,8 +80,9 @@
   every memo amount and positive manual source to match the compiled exchange
   routing exceptions, while proving Gate has no exchange route
 - `toolkit/scripts/exchanges/build-exchange-native-policy.py` — fast
-  exchange-local native ONE summary, separate Gate reconciliation, and
-  Binance.US per-wallet/delegation/vault adjustment artifacts
+  exchange-local native ONE summary, separate Gate reconciliation, DigitalX
+  submitted-total reconciliation with its excluded rolled-back deposit claim,
+  and Binance.US per-wallet/delegation/vault adjustment artifacts
 
 The runtime configuration, raw/normalized inventories, destinations, and
 operator README under `exchanges/` are private and intentionally absent from

@@ -504,7 +504,12 @@ python3 toolkit/scripts/claims/verify-eligibility-policy.py \
 Build the reviewed non-issuance inventory, then generate the stage policy from
 the final category split. The stage builder verifies source hashes, applies
 deductions after snapshot qualification, and keeps stage separate from
-issuance treatment:
+issuance treatment. The historical-retention input
+`artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv`
+is the `harmony-supply-audit` toolkit's `build-non-issuance-audit.py` export
+(SHA-256 `7a5a73648e404f38aaf465a863756c216e4c45489773684bc5526d00e443376e`),
+kept as this repository's own pinned copy rather than referenced from another
+agent's forensic workspace:
 
 ```sh
 python3 toolkit/scripts/routing/merge-wallet-theft-inventory.py \
@@ -525,7 +530,7 @@ python3 toolkit/scripts/claims/build-migration-stage-policy.py \
   --migration-summary "$OUT/claims/all-address-migration-claims-cutoff-summary.json" \
   --contract-review artifacts/contract-review-20260911/out/contract-review-policy.csv \
   --existing-non-issuance artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
-  --historical-retention ../harmony-supply-audit/artifacts/historical-hacks-investigation-20260916/not-issued-retained-initial-addresses.csv \
+  --historical-retention artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv \
   --manual-wallets artifacts/exchange-accounting-20260917/qualified-non-gate-exclusions.csv \
   --output artifacts/migration-policy-20260917/migration-stage-policy.csv \
   --summary artifacts/migration-policy-20260917/migration-stage-summary.json \
@@ -609,7 +614,7 @@ paths:
 ```sh
 python3 toolkit/scripts/routing/build-non-issuance-routes.py \
   --inventory artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
-  --inventory ../harmony-supply-audit/artifacts/historical-hacks-investigation-20260916/not-issued-retained-initial-addresses.csv \
+  --inventory artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv \
   --output routing/local/not-issuing.csv \
   --summary routing/local/not-issuing-summary.json
 
@@ -667,11 +672,13 @@ python3 toolkit/scripts/exchanges/verify-exchange-routing.py \
 
 python3 toolkit/scripts/exchanges/build-exchange-native-policy.py \
   --audits-dir artifacts/exchange-accounting-20260917/audits \
+  --normalization-summary exchanges/wallets-standardized/summary.json \
   --native-claims artifacts/cutoff-20260910/claims/all-address-native-claims-cutoff-metadata.csv \
   --delegations artifacts/cutoff-20260910/state/staked-to-vault-by-delegation-rpc.csv \
   --vaults artifacts/contract-review-20260911/out/base-validator-vault-deposits.csv \
   --gate-addition exchanges/wallets-raw/gate-addition.txt \
   --gate-destination exchanges/destinations/gate.txt \
+  --gate-reported-total exchanges/wallets-raw/gate-reported-total.txt \
   --output-dir artifacts/exchange-accounting-20260917 \
   --summary artifacts/exchange-accounting-20260917/exchange-native-summary.json \
   --report artifacts/exchange-accounting-20260917/EXCHANGE_AGGREGATE_DELIVERY_2026-09-18.md \

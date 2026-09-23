@@ -43,6 +43,16 @@ Threshold overlap may be calculated internally only when an existing automatic
 same-address output must exclude a non-Gate custodial address. It is not an
 exchange entitlement statistic and should not headline the exchange memo.
 
+## External agents' workspaces
+
+`harmony-supply-audit/artifacts/historical-hacks-investigation-20260916/`,
+`artifacts/x-article-20260917/`, and `artifacts/activity-composition-20260919/`
+belong to agents working outside Cursor. Never write into them, never read
+them as pipeline inputs, and never mirror them. The retained-address input the
+stage policy needs is pinned in this repository at
+`artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv`
+(and in `harmony-supply-audit/artifacts/historical-retention-snapshot-20260916/`).
+
 ## Do not run by default
 
 Unless the user explicitly requests a complete release rebuild, do not modify
@@ -76,9 +86,55 @@ removed before finalizing an exchange-only update.
 Stop there unless the user explicitly asks to propagate the change into a
 release candidate.
 
+### When a new custodial wallet meets the ordinary threshold
+
+`build-exchange-accounting.py` refuses to finish while a qualifying non-Gate
+wallet is still in the automatic same-address category. That is the one case
+where the eligibility split must be touched, and it is quick (minutes, no chain
+scan):
+
+1. bootstrap `build-exchange-accounting.py` without the category/stage
+   arguments to regenerate `qualified-non-gate-exclusions.csv`;
+2. move the previous `policy-*.csv`/`policy-summary.json`/`policy-verify.json`
+   aside and rerun `apply-eligibility-policy.py` plus
+   `verify-eligibility-policy.py` with the new exclusion file;
+3. `make migration-policy`;
+4. rerun `build-exchange-accounting.py` with the category and stage arguments,
+   then `make exchange-native-report` and `make private-manifest`.
+
+When step 2 was needed, the downstream release artifacts are stale until the
+chain below is rerun. If the user asked to "update routing" or "finish", run
+it rather than stopping to ask; it takes roughly thirty minutes end to end
+(two slow steps) and touches no chain data:
+
+5. `build-vault-share-allocation.py` (move the previous `out/base-*` files
+   aside first); only the automatic/excluded wallet base lists change unless
+   the moved wallets had delegations;
+6. `apply-routes.py` (≈4 minutes; the one slow step), then
+   `verify-exchange-routing.py`;
+7. re-pin the exchange normalization summary in the WONE overlay: rerun
+   `apply-wone-qualification.py --replace` on both all-address ledgers with the
+   arguments recorded in their `*-summary.json` (both 1.5 GB outputs reproduce
+   byte-for-byte when the new exchange holds no WONE, so nothing downstream
+   re-hashes), then `filter-claims-by-one.py` on both (move the old outputs
+   aside), `build-wone-routes.py --replace`, and `make migration-policy` again
+   so the stage summary pins the new migration summary. Skip
+   `build-wone-new-holder-metadata.py` (needs RPC) when every new exchange
+   address already has a native row; its summary keeps the old pin;
+8. `make initial-stage`, `verify-wone-allocation.py --replace` (≈15 minutes;
+   the second slow step), and the report builders that read
+   `routing-summary.json` (`build-entitlement-report.py`,
+   `build-non-issuance-report.py`, `build-wone-report.py`);
+9. `make private-manifest`, `make verify-private`, `make check-public`.
+
+This is a provenance re-pin, not a WONE recalculation: the WONE holder census,
+reserve split, and redistribution do not change with an exchange update, and
+the step must prove that by reproducing the ledger hashes.
+
 ## Escalation
 
 A full downstream rebuild is justified only when the user explicitly asks for
 release-ready allocations/routing or when an exchange address change must alter
-an already approved distribution artifact. State that this is a slow global
-operation before starting it.
+an already approved distribution artifact. When either condition holds, say
+that the routing compile is the slow step and run the chain above in the same
+turn; do not end the turn to ask permission.

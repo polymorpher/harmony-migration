@@ -203,12 +203,17 @@ policy-gate totals to `stage_readiness.initial`.
 The private exchange overlay additionally verifies:
 
 - each raw spreadsheet/CSV/DOCX is parsed without executing active content;
-  spreadsheets have no formulas, hidden sheets, macros, malformed addresses,
-  duplicates, or unadjudicated cross-exchange overlap;
+  spreadsheets have no hidden sheets, macros, malformed addresses, duplicates,
+  or unadjudicated cross-exchange overlap, and no formulas outside the
+  explicitly allowed DigitalX explorer-link and summary-total columns, whose
+  cached values must be reproduced from row data;
 - each standardized address has an immutable source-row and source-file hash;
 - exact balance parsing is unit- and shard-scope-aware; KuCoin's merged
   shard totals reproduce its workbook summary and identify the selected cutoff
-  blocks and times;
+  blocks and times; DigitalX's scientific-notation balances convert exactly,
+  its declared destination equals the configured destination file, and its
+  rolled-back deposit transactions are carried as a separate non-inventory
+  claim;
 - MEXC signed rows recover to the submitted source address and configured
   destination, while KuCoin's signature-marked source rows, signature
   worksheet, and separate DOCX proof agree before the same signer/destination
