@@ -94,6 +94,14 @@ class ExchangeNormalizationTest(unittest.TestCase):
                     cells = []
                     for column, value in enumerate(values, start=1):
                         reference = f"{chr(64 + column)}{row_number}"
+                        if isinstance(value, tuple):
+                            cached, formula = value
+                            cells.append(
+                                f'<c r="{reference}" t="str"><f>'
+                                f"{escape(formula)}</f><v>"
+                                f"{escape(str(cached))}</v></c>"
+                            )
+                            continue
                         cells.append(
                             f'<c r="{reference}" t="inlineStr"><is><t>'
                             f"{escape(str(value))}</t></is></c>"
@@ -326,6 +334,175 @@ class ExchangeNormalizationTest(unittest.TestCase):
                 by_address[zero]["authorization_status"],
                 "not_provided",
             )
+
+    def digitalx_workbook(self, path, destination_cell, wallet_total_cell):
+        warm = "one17rwxqdssmqqlq500kchjgsjp0ympfn66hrfd95"
+        deposit = "one1krklpz37t8wurqpdj7lp9hhswe4qdemuf6wh0m"
+        explorer = "https://explorer.harmony.one/address/"
+        transaction = "0x" + "ab" * 32
+        self.write_xlsx(
+            path,
+            (
+                (
+                    "summary",
+                    (
+                        ("Category", "amount"),
+                        (
+                            "Sum of current wallet balance",
+                            (wallet_total_cell, "sum('current wallet balance'!C2:C3)"),
+                        ),
+                        (
+                            "deposit amounts invalidated by the network rollback",
+                            ("249349.2348", "sum('rolled-back transactions'!B2:B2)"),
+                        ),
+                        ("rolled-back withdrawals", "0.0"),
+                        ("Total Sum", ("1004350.909", "B2+B3")),
+                        (
+                            "EVM address to receive the above total in ERC-20 ONE",
+                            destination_cell,
+                        ),
+                    ),
+                ),
+                (
+                    "current wallet balance",
+                    (
+                        ("wallet type", "address", "balance", "explorer"),
+                        (
+                            "warm/sender wallet",
+                            warm,
+                            "755001.6742711",
+                            (explorer + warm, '"' + explorer + '"&B2'),
+                        ),
+                        (
+                            "user deposit address",
+                            deposit,
+                            "1.2958E-14",
+                            (explorer + deposit, '"' + explorer + '"&B3'),
+                        ),
+                    ),
+                ),
+                (
+                    "rolled-back transactions",
+                    (
+                        ("txid", "amount", "explorer"),
+                        (
+                            transaction,
+                            "249349.2348",
+                            (
+                                "https://explorer.harmony.one/tx/" + transaction,
+                                '"https://explorer.harmony.one/tx/"&A2',
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        return warm, deposit, transaction
+
+    def test_parses_digitalx_summary_workbook(self):
+        destination = "0xf0bc8FdDB1F358cEf470D63F96aE65B1D7914953"
+        config = {
+            "id": "digitalx",
+            "worksheet": "current wallet balance",
+            "summary_worksheet": "summary",
+            "rollback_worksheet": "rolled-back transactions",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            workbook = Path(directory) / "digitalx.xlsx"
+            warm, deposit, transaction = self.digitalx_workbook(
+                workbook, destination, "755001.674"
+            )
+            rows, physical, blank, details = self.module.parse_digitalx(
+                config,
+                workbook,
+                self.module.file_sha256(workbook),
+                destination,
+                "configured",
+            )
+            by_one = {row["address_one"]: row for row in rows}
+            self.assertEqual((len(rows), physical, blank), (2, 2, 0))
+            self.assertEqual(
+                by_one[warm]["submitted_balance_atto"],
+                str(755001_674271100000000000),
+            )
+            self.assertEqual(by_one[deposit]["submitted_balance_atto"], "12958")
+            self.assertEqual(by_one[warm]["authorization_status"], "not_provided")
+            self.assertEqual(details["declared_destination"], destination)
+            self.assertEqual(details["rolled_back_deposit_rows"], 1)
+            self.assertEqual(
+                details["rolled_back_deposits"][0]["transaction_hash"],
+                transaction,
+            )
+            self.assertEqual(
+                details["rolled_back_deposit_total_atto"],
+                str(249349_234800000000000000),
+            )
+            self.assertEqual(
+                details["source_summary_checks"]["wallet_balance"][
+                    "rounding_delta_atto"
+                ],
+                str(271100000012958),
+            )
+            self.assertEqual(
+                details["wallet_type_rows"],
+                {"warm/sender wallet": 1, "user deposit address": 1},
+            )
+
+    def test_digitalx_rejects_destination_and_total_mismatches(self):
+        destination = "0xf0bc8FdDB1F358cEf470D63F96aE65B1D7914953"
+        config = {
+            "id": "digitalx",
+            "worksheet": "current wallet balance",
+            "summary_worksheet": "summary",
+            "rollback_worksheet": "rolled-back transactions",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            workbook = Path(directory) / "digitalx.xlsx"
+            self.digitalx_workbook(
+                workbook,
+                "0x000000000000000000000000000000000000dead",
+                "755001.674",
+            )
+            with self.assertRaisesRegex(ValueError, "declared destination"):
+                self.module.parse_digitalx(
+                    config,
+                    workbook,
+                    self.module.file_sha256(workbook),
+                    destination,
+                    "configured",
+                )
+            self.digitalx_workbook(workbook, destination, "755001.675")
+            with self.assertRaisesRegex(ValueError, "displayed total"):
+                self.module.parse_digitalx(
+                    config,
+                    workbook,
+                    self.module.file_sha256(workbook),
+                    destination,
+                    "configured",
+                )
+
+    def test_formulas_outside_allowed_columns_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workbook = Path(directory) / "wallets.xlsx"
+            self.write_xlsx(
+                workbook,
+                (
+                    (
+                        "Sheet1",
+                        (
+                            ("address", "balance"),
+                            ("one1first", ("1", "SUM(1)")),
+                        ),
+                    ),
+                ),
+            )
+            with self.assertRaisesRegex(ValueError, "formulas are not allowed"):
+                self.module.xlsx_rows(workbook, "Sheet1")
+            header, rows, _physical, _blank = self.module.xlsx_rows(
+                workbook, "Sheet1", formula_columns=("balance",)
+            )
+            self.assertEqual(header, ["address", "balance"])
+            self.assertEqual(rows, [(2, {"address": "one1first", "balance": "1"})])
 
 
 class ExchangeAccountingPolicyTest(unittest.TestCase):
