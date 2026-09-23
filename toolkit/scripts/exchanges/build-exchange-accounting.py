@@ -930,10 +930,27 @@ def summarize_exchange(exchange, rows):
         reconciliation_statuses[status] = (
             reconciliation_statuses.get(status, 0) + 1
         )
+    parser_details = normalization.get("parser_details", {})
+    rolled_back_claim = None
+    if parser_details.get("rolled_back_deposits"):
+        rolled_back_total = int(parser_details["rolled_back_deposit_total_atto"])
+        if rolled_back_total != sum(
+            int(item["amount_atto"])
+            for item in parser_details["rolled_back_deposits"]
+        ):
+            raise ValueError("rolled-back deposit claim does not sum")
+        rolled_back_claim = {
+            "rows": len(parser_details["rolled_back_deposits"]),
+            "total_atto": str(rolled_back_total),
+            "total_one": lib.atto_to_one_str(rolled_back_total),
+            "transactions": parser_details["rolled_back_deposits"],
+            "treatment": "outside_cutoff_wallet_accounting_pending_decision",
+        }
     return {
         "display_name": exchange["config"]["display_name"],
         "delivery_policy": exchange["config"]["delivery_policy"],
         "memo_status": memo_status,
+        "rolled_back_deposit_claim": rolled_back_claim,
         "wallet_rows": len(rows),
         "claim_rows_found": sum(
             row["claim_status"] == "present" for row in rows
@@ -1242,6 +1259,32 @@ def render_memo(config, summary, cutoff_text, threshold):
             "outside that set; it does not mean the wallet was inactive."
         )
     )
+    rolled_back_section = ""
+    rolled_back = summary.get("rolled_back_deposit_claim")
+    if rolled_back:
+        rolled_back_section = f"""
+## Rolled-back deposit claim (outside wallet accounting)
+
+The submission separately lists {rolled_back['rows']:,} deposit transactions
+that the exchange reports as invalidated by the network rollback, totalling
+**{one_display(rolled_back['total_atto'])} ONE**. These transactions are not
+part of any cutoff wallet balance and are therefore excluded from the proposed
+delivery above. Honouring them would require an explicit policy decision and a
+separate route; they are recorded here so the exchange's own combined figure
+can be reproduced.
+
+{markdown_table(
+            ('Source row', 'Transaction', 'Reported ONE'),
+            [
+                (
+                    item['source_row'],
+                    f"`{item['transaction_hash']}`",
+                    one_display(item['amount_atto']),
+                )
+                for item in rolled_back['transactions']
+            ],
+        )}
+"""
     return f"""# {config['display_name']} migration allocation memo
 
 Status: `{summary['memo_status']}`
@@ -1349,7 +1392,7 @@ Activity recency uses exclusive calendar-month buckets relative to the cutoff:
         ('Reconciliation status', 'Wallets'),
         reconciliation_rows,
     )}
-
+{rolled_back_section}
 ## Authorization-signature verification
 
 - Submission-designated signature rows:
@@ -1428,8 +1471,16 @@ def render_summary_report(policy, summaries, cutoff_text):
     breakdown_rows = []
     pending_inventories = []
     held_destinations = []
+    rolled_back_claims = []
     for config in policy["exchanges"]:
         summary = summaries[config["id"]]
+        if summary.get("rolled_back_deposit_claim"):
+            claim = summary["rolled_back_deposit_claim"]
+            rolled_back_claims.append(
+                f"{config['display_name']} "
+                f"({one_display(claim['total_atto'])} ONE across "
+                f"{claim['rows']:,} transactions)"
+            )
         delivery_rows.append(
             (
                 config["display_name"],
@@ -1509,6 +1560,13 @@ def render_summary_report(policy, summaries, cutoff_text):
     if not completion_notes:
         completion_notes.append(
             "- All configured inventories and required destinations are present."
+        )
+    if rolled_back_claims:
+        completion_notes.append(
+            "- Separately reported rolled-back deposit claims, excluded from "
+            "wallet accounting pending a policy decision: "
+            + "; ".join(rolled_back_claims)
+            + "."
         )
     return f"""# Exchange migration accounting summary
 
