@@ -1,0 +1,3 @@
+[submodule "airdrop/lib/forge-std"]
+	path = airdrop/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std

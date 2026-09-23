@@ -1,0 +1,19 @@
+# Secrets: RPC URLs, API keys, executor key or keystore settings.
+.env
+.env.*
+!.env.example
+
+# Compiler output.
+cache/
+out/
+
+# Generated distributions (recipient lists, batch files, proofs, deployment records,
+# reconciliation reports). These are published as release assets when a distribution is
+# announced; until then they stay local.
+runs/
+
+# Transaction logs written by `forge script --broadcast`. Published together with the run.
+broadcast/
+
+__pycache__/
+*.pyc

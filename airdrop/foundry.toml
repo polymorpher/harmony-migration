@@ -1,0 +1,35 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+script = "script"
+test = "test"
+
+# Pin the compiler so anyone can rebuild byte-identical bytecode for verification.
+solc_version = "0.8.36"
+evm_version = "osaka"
+optimizer = true
+optimizer_runs = 20000
+via_ir = false
+bytecode_hash = "none"
+cbor_metadata = false
+
+# Scripts and tests read run directories (batch files, manifests) and write deployment records.
+fs_permissions = [
+    { access = "read", path = "./runs" },
+    { access = "read", path = "./examples" },
+    { access = "read", path = "./broadcast" },
+    { access = "write", path = "./runs" },
+]
+
+# Simulations of a full run touch tens of thousands of storage slots; give the EVM room.
+memory_limit = 536870912
+gas_limit = "18446744073709551615"
+
+[fmt]
+line_length = 110
+tab_width = 4
+
+[lint]
+# `1 << (i & 0xff)` is the standard bitmap idiom; the linter's heuristic misreads it.
+exclude_lints = ["incorrect-shift"]
