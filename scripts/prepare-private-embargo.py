@@ -132,6 +132,7 @@ FINDING_MAPPINGS = (
             "mexc",
             "okx",
             "kucoin",
+            "digitalx",
         )
     ),
 )
@@ -646,8 +647,9 @@ These unredacted files are under the numerical-results embargo:
   statistics/breakdowns, signature-verification coverage, destination
   readiness, and input reconciliation;
 - `destination-mapping/exchange-aggregate-delivery.md` — native ONE exchange
-  totals, separate Gate reconciliation, and Binance.US delegation-to-wallet
-  treatment;
+  totals, separate Gate reconciliation, Binance.US delegation-to-wallet
+  treatment, and the DigitalX rolled-back deposit claim held outside wallet
+  accounting;
 - `destination-mapping/gate-automatic-airdrop-audit.md` — Gate automatic and
   residual totals plus the identities of its complete private address lists.
 

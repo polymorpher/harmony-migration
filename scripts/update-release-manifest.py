@@ -81,6 +81,7 @@ RELEASE_FILES = (
             "mexc.csv",
             "okx.csv",
             "kucoin.csv",
+            "digitalx.csv",
             "summary.json",
         )
     ),
@@ -121,6 +122,7 @@ RELEASE_FILES = (
             "mexc",
             "okx",
             "kucoin",
+            "digitalx",
         )
     ),
     *(
@@ -136,6 +138,7 @@ RELEASE_FILES = (
             "mexc",
             "okx",
             "kucoin",
+            "digitalx",
         )
     ),
     ROOT

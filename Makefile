@@ -50,7 +50,7 @@ migration-policy: check-python
 		--migration-summary artifacts/cutoff-20260910/claims/all-address-migration-claims-cutoff-summary.json \
 		--contract-review artifacts/contract-review-20260911/out/contract-review-policy.csv \
 		--existing-non-issuance artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
-		--historical-retention "$(SUPPLY_AUDIT_REPO)/artifacts/historical-hacks-investigation-20260916/not-issued-retained-initial-addresses.csv" \
+		--historical-retention artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv \
 		--manual-wallets artifacts/exchange-accounting-20260917/qualified-non-gate-exclusions.csv \
 		--output artifacts/migration-policy-20260917/migration-stage-policy.csv \
 		--summary artifacts/migration-policy-20260917/migration-stage-summary.json \
@@ -88,11 +88,13 @@ initial-stage: check-python
 exchange-native-report: check-python
 	python3 toolkit/scripts/exchanges/build-exchange-native-policy.py \
 		--audits-dir artifacts/exchange-accounting-20260917/audits \
+		--normalization-summary exchanges/wallets-standardized/summary.json \
 		--native-claims artifacts/cutoff-20260910/claims/all-address-native-claims-cutoff-metadata.csv \
 		--delegations artifacts/cutoff-20260910/state/staked-to-vault-by-delegation-rpc.csv \
 		--vaults artifacts/contract-review-20260911/out/base-validator-vault-deposits.csv \
 		--gate-addition exchanges/wallets-raw/gate-addition.txt \
 		--gate-destination exchanges/destinations/gate.txt \
+		--gate-reported-total exchanges/wallets-raw/gate-reported-total.txt \
 		--output-dir artifacts/exchange-accounting-20260917 \
 		--summary artifacts/exchange-accounting-20260917/exchange-native-summary.json \
 		--report artifacts/exchange-accounting-20260917/EXCHANGE_AGGREGATE_DELIVERY_2026-09-18.md \
