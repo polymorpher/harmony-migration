@@ -145,8 +145,9 @@ def render_report(result):
 
 This plan contains only `migration_stage = initial` and
 `issuance_treatment = issue`. It expands implicit same-address wallet and vault
-share delivery and excludes every exchange-aggregate, next-stage, deferred,
-manual-review, not-issued, and redistributed amount.
+share delivery and excludes every exchange-manual (delivered from the 2050
+supply reserve), next-stage, deferred, manual-review, not-issued, and
+redistributed amount.
 
 - Status: `{result["status"]}`
 - Source wallet addresses: `{result["source_addresses"]:,}`
@@ -320,26 +321,38 @@ def load_exceptions(path, all_stages, initial):
                 row["source_address"], f"{path}:{line} source"
             )
             stage = all_stages.get(source_address)
+            exchange_route = (
+                row["reason"] == "exchange_manual_reserve_delivery"
+            )
             if stage is not None and row["migration_stage"] != stage["stage"]:
-                if (
-                    row["migration_stage"] == "exchange_aggregate"
-                    and row["reason"]
-                    == "exchange_requested_aggregate_reroute"
-                ):
+                if exchange_route and row["migration_stage"] == "exchange_manual":
+                    # Exchange wallets leave the airdrop entirely; they are
+                    # delivered manually from the 2050 supply reserve.
                     initial.pop(source_address, None)
                 else:
                     raise ValueError(
                         f"{path}:{line}: migration stage mismatch"
                     )
             treatment = row["issuance_treatment"]
-            expected_treatment = {
-                "ready": "issue",
-                "hold": "issue",
-                "not_issuing": "not_issued",
-                "redistributed": "redistributed",
-            }.get(row["destination_status"])
-            if treatment != expected_treatment:
-                raise ValueError(f"{path}:{line}: treatment/status mismatch")
+            if exchange_route:
+                if treatment != "manual_from_reserve" or row[
+                    "destination_status"
+                ] not in {"exchange_manual", "hold"}:
+                    raise ValueError(
+                        f"{path}:{line}: exchange route treatment/status mismatch"
+                    )
+                initial.pop(source_address, None)
+            else:
+                expected_treatment = {
+                    "ready": "issue",
+                    "hold": "issue",
+                    "not_issuing": "not_issued",
+                    "redistributed": "redistributed",
+                }.get(row["destination_status"])
+                if treatment != expected_treatment:
+                    raise ValueError(
+                        f"{path}:{line}: treatment/status mismatch"
+                    )
             if source_address not in initial:
                 continue
             amount = int(row["amount_atto"])

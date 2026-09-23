@@ -83,6 +83,7 @@ def main():
     )
     gross = int(routing["source_total_claim_atto"])
     issuable = int(routing["issuable_total_claim_atto"])
+    exchange_manual = int(routing["exchange_manual_total_claim_atto"])
     if routes.get("destination_id") != "not-issuing":
         raise ValueError("route summary is not terminal non-issuance")
     if inventory_amount != int(routes["inventories"][0]["not_issued_atto"]):
@@ -92,10 +93,10 @@ def main():
             "applied non-issuance does not equal inventories, WONE remainder, "
             "and reviewed-contract exclusion"
         )
-    if gross != issuable + applied_not_issued + redistributed:
+    if gross != issuable + applied_not_issued + redistributed + exchange_manual:
         raise ValueError(
             "gross claim does not equal issuable plus not-issued plus "
-            "redistributed"
+            "redistributed plus exchange manual delivery"
         )
 
     category_rows = []
@@ -155,14 +156,16 @@ non-issuance.
   `{one(inventory["victim_total_claim_atto_not_routed"])} ONE`
 - **Gross cutoff claims represented by routing:**
   `{one(gross)} ONE`
+- **Exchange entitlement delivered manually from the 2050 supply reserve
+  (excluded from the airdrop):** `{one(exchange_manual)} ONE`
 - **Remaining all-stage amount represented by this routing compilation:**
   `{one(issuable)} ONE`
 
 Exact closure:
 
 ```text
-gross expanded claim = remaining issuable + not issued + redistributed source
-{gross} = {issuable} + {applied_not_issued} + {redistributed}
+gross expanded claim = remaining issuable + not issued + redistributed source + exchange manual delivery
+{gross} = {issuable} + {applied_not_issued} + {redistributed} + {exchange_manual}
 ```
 
 ## Routing behavior
@@ -179,10 +182,16 @@ gross expanded claim = remaining issuable + not issued + redistributed source
 - Not-issued rows do not appear in `unresolved-routing.csv`.
 - Partial routes consume direct wallet tokens first and then vault shares
   proportionally, using the existing allocation rule.
+- Exchange wallets are routed with `issuance_treatment = manual_from_reserve`
+  and `destination_status = exchange_manual`; they are neither not-issued nor
+  airdropped. Their delegated principal is released from the validator vaults
+  and the whole entitlement is delivered manually from the 2050 supply
+  reserve.
 - A final deployment builder must omit every not-issued wallet row, subtract
-  every not-issued staked row from its validator's vault deposit and share
-  mint, omit every redistributed source row, and verify the `issuable_*`
-  totals from `routing-summary.json`.
+  every not-issued and exchange-manual staked row from its validator's vault
+  deposit and share mint, omit every redistributed source row and every
+  exchange-manual row, and verify the `issuable_*` totals from
+  `routing-summary.json`.
 
 ## Evidence
 

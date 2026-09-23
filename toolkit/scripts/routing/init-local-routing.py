@@ -152,7 +152,7 @@ def main():
                 "status": "redistributed",
                 "notes": (
                     "terminal source offset paired exactly with WONE added "
-                    "to ordinary-threshold and aggregate-exchange delivery"
+                    "to ordinary-threshold and exchange manual-delivery rows"
                 ),
             },
             {
@@ -215,23 +215,28 @@ def main():
                 ),
             },
             {
-                "decision_id": "non-gate-exchange-aggregate-stage",
+                "decision_id": "exchange-manual-reserve-delivery",
                 "status": "resolved",
                 "decision": (
-                    "deliver every positive native ONE, WONE, and vault-share "
-                    "entitlement in a confirmed non-Gate inventory through "
-                    "one release-authorized aggregate exchange stage without "
-                    "individual threshold or activity gating"
+                    "exclude every exchange wallet from the airdrop and deliver "
+                    "all exchange migration manually, directly from the year "
+                    "2050 supply reserve, in the exchange_manual stage: "
+                    "aggregate, component-split, same-address, or tiered "
+                    "destinations per exchange, with delegated principal "
+                    "released from validator vaults"
                 ),
                 "evidence": "docs/eligibility-policy.md#exchange-delivery-overlay",
-                "notes": "Gate remains under the ordinary wallet policy",
+                "notes": (
+                    "supersedes the non-Gate aggregate stage; Gate is tiered "
+                    "by the initial-distribution criteria"
+                ),
             },
             {
                 "decision_id": "wone-holder-redistribution",
                 "status": "resolved",
                 "decision": (
                     "redistribute the WONE reserve paired with ordinary-"
-                    "threshold and aggregate-exchange delivery, and retain "
+                    "threshold and exchange manual-delivery rows, and retain "
                     "the remainder as not issued"
                 ),
                 "evidence": (
