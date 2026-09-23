@@ -23,12 +23,22 @@ EMPTY_CODE_HASH = (
 REQUIRED_POLICY_DECISIONS = {
     "initial-wallet-activity-stage",
     "layerzero-nativeoft-reconciliation",
-    "non-gate-exchange-aggregate-stage",
+    "exchange-manual-reserve-delivery",
     "reviewed-contract-migration-policy",
     "rollback-exploit-proceeds",
     "wone-holder-redistribution",
 }
-DESTINATION_STATUSES = {"ready", "hold", "not_issuing", "redistributed"}
+DESTINATION_STATUSES = {
+    "ready",
+    "hold",
+    "not_issuing",
+    "redistributed",
+    "exchange_manual",
+}
+EXCHANGE_MANUAL_STATUS = "exchange_manual"
+EXCHANGE_ROUTE_REASON = "exchange_manual_reserve_delivery"
+EXCHANGE_STAGE = "exchange_manual"
+EXCHANGE_TREATMENT = "manual_from_reserve"
 NOT_ISSUING_DESTINATION_ID = "not-issuing"
 REDISTRIBUTED_DESTINATION_ID = "wone-holder-redistribution"
 CONTRACT_POLICY_DESTINATIONS = {
@@ -83,7 +93,7 @@ VAULT_STAGE_FIELDS = (
     "validator_secure_key",
     "base_vault_assets_atto",
     "initial_assets_atto",
-    "exchange_aggregate_assets_atto",
+    "exchange_manual_assets_atto",
     "next_stage_assets_atto",
     "qualified_deferred_assets_atto",
     "manual_review_assets_atto",
@@ -419,9 +429,9 @@ def load_destinations(paths):
                     raise ValueError(
                         f"{path}:{line}: invalid destination status"
                     )
-                if status == "ready" and not address:
+                if status in {"ready", EXCHANGE_MANUAL_STATUS} and not address:
                     raise ValueError(
-                        f"{path}:{line}: ready destination has no address"
+                        f"{path}:{line}: {status} destination has no address"
                     )
                 if status == "not_issuing" and (
                     address or destination_id != NOT_ISSUING_DESTINATION_ID
@@ -543,13 +553,23 @@ def resolve_destination(row, destinations):
             explicit_status or "ready",
         )
     if not destination_id:
-        if explicit_status in {"ready", "not_issuing", "redistributed"}:
+        if explicit_status in {
+            "ready",
+            "not_issuing",
+            "redistributed",
+            EXCHANGE_MANUAL_STATUS,
+        }:
             raise ValueError(
                 f"{explicit_status} destination has no address or id"
             )
         return "", "", "hold"
     if destination_id not in destinations:
-        if explicit_status in {"ready", "not_issuing", "redistributed"}:
+        if explicit_status in {
+            "ready",
+            "not_issuing",
+            "redistributed",
+            EXCHANGE_MANUAL_STATUS,
+        }:
             raise ValueError(
                 f"{explicit_status} destination id is undefined: "
                 f"{destination_id}"
@@ -569,6 +589,14 @@ def resolve_destination(row, destinations):
     ):
         raise ValueError(
             "explicit redistributed status requires the WONE redistribution "
+            "destination"
+        )
+    if (
+        explicit_status == EXCHANGE_MANUAL_STATUS
+        and destination["status"] not in {EXCHANGE_MANUAL_STATUS, "hold"}
+    ):
+        raise ValueError(
+            "explicit exchange_manual status requires an exchange_manual "
             "destination"
         )
     status = (
@@ -684,12 +712,20 @@ def pro_rata(amount, positions):
 
 
 def route_stage(claim, route):
-    if route["reason"] == "exchange_requested_aggregate_reroute":
-        return "exchange_aggregate"
+    if route["reason"] == EXCHANGE_ROUTE_REASON:
+        return EXCHANGE_STAGE
     return claim["migration_stage"]
 
 
 def route_treatment(route):
+    if route["reason"] == EXCHANGE_ROUTE_REASON:
+        if route["destination_status"] not in {EXCHANGE_MANUAL_STATUS, "hold"}:
+            raise ValueError(
+                "exchange manual delivery route has a non-exchange status"
+            )
+        return EXCHANGE_TREATMENT
+    if route["destination_status"] == EXCHANGE_MANUAL_STATUS:
+        raise ValueError("exchange_manual status requires an exchange route")
     if route["destination_status"] == "not_issuing":
         return "not_issued"
     if route["destination_status"] == "redistributed":
@@ -774,10 +810,10 @@ def main():
     destinations = load_destinations(args.destinations)
     pending_policy_decisions = load_policy_decisions(args.policy_decisions)
     routes = load_routes(args.routes, destinations)
-    aggregate_exchange_addresses = {
+    exchange_manual_addresses = {
         route["source_address"]
         for route in routes
-        if route["reason"] == "exchange_requested_aggregate_reroute"
+        if route["reason"] == EXCHANGE_ROUTE_REASON
     }
     contract_policy_states = {
         tuple(route["policy_state"].values())
@@ -842,8 +878,8 @@ def main():
             f"missing={missing}, extra={extra}"
         )
     for claim in claims.values():
-        if claim["address"] in aggregate_exchange_addresses:
-            claim["routing_category"] = "exchange_aggregate"
+        if claim["address"] in exchange_manual_addresses:
+            claim["routing_category"] = EXCHANGE_STAGE
         elif claim["category"] == "automatic":
             claim["routing_category"] = (
                 "validator_account"
@@ -1241,11 +1277,12 @@ def main():
             raise ValueError(
                 f"routed share references unknown validator {validator}"
             )
-        bucket = (
-            "not_issued"
-            if row["issuance_treatment"] == "not_issued"
-            else row["migration_stage"]
-        )
+        if row["issuance_treatment"] == "not_issued":
+            bucket = "not_issued"
+        elif row["issuance_treatment"] == EXCHANGE_TREATMENT:
+            bucket = EXCHANGE_STAGE
+        else:
+            bucket = row["migration_stage"]
         if not bucket or row["issuance_treatment"] == "redistributed":
             raise ValueError("invalid vault stage/treatment combination")
         represented_vault_stages[validator][bucket] += int(
@@ -1263,10 +1300,13 @@ def main():
                 f"routed vault shares exceed base assets for {validator}"
             )
         not_issued = stages["not_issued"]
-        post_policy = base["assets"] - not_issued
+        # Exchange principal is released from the vault and delivered as ONE
+        # from the 2050 supply reserve, so it leaves the deployed vault assets
+        # exactly like a not-issued amount does.
+        exchange_manual = stages[EXCHANGE_STAGE]
+        post_policy = base["assets"] - not_issued - exchange_manual
         if (
             stages["initial"]
-            + stages["exchange_aggregate"]
             + stages["next_stage"]
             + stages["deferred"]
             + stages["manual_review"]
@@ -1282,9 +1322,7 @@ def main():
                 "validator_secure_key": base["key"],
                 "base_vault_assets_atto": str(base["assets"]),
                 "initial_assets_atto": str(stages["initial"]),
-                "exchange_aggregate_assets_atto": str(
-                    stages["exchange_aggregate"]
-                ),
+                "exchange_manual_assets_atto": str(exchange_manual),
                 "next_stage_assets_atto": str(stages["next_stage"]),
                 "qualified_deferred_assets_atto": str(stages["deferred"]),
                 "manual_review_assets_atto": str(stages["manual_review"]),
@@ -1377,6 +1415,18 @@ def main():
         if row["component"] == "vault_shares"
         and row["destination_status"] == "redistributed"
     )
+    exchange_manual_wallet = sum(
+        int(row["amount_atto"])
+        for row in routing_exceptions
+        if row["component"] == "wallet_airdrop"
+        and row["issuance_treatment"] == EXCHANGE_TREATMENT
+    )
+    exchange_manual_staked = sum(
+        int(row["amount_atto"])
+        for row in routing_exceptions
+        if row["component"] == "vault_shares"
+        and row["issuance_treatment"] == EXCHANGE_TREATMENT
+    )
     wone_retained_not_issued = sum(
         int(row["amount_atto"])
         for row in routing_exceptions
@@ -1429,6 +1479,10 @@ def main():
     stage_override_wallet = Counter()
     stage_override_staked = Counter()
     stage_override_addresses = defaultdict(set)
+    ready_statuses = {
+        "issue": "ready",
+        EXCHANGE_TREATMENT: EXCHANGE_MANUAL_STATUS,
+    }
     for row in wallet_rows:
         amount = int(row["wallet_airdrop_atto"])
         stage = row["migration_stage"]
@@ -1436,11 +1490,11 @@ def main():
         if treatment != route_treatment(row):
             raise ValueError("wallet issuance treatment contradicts destination")
         treatment_wallet[treatment] += amount
-        if treatment == "issue":
+        if treatment in ready_statuses:
             if not stage:
                 raise ValueError("issued wallet row has no migration stage")
             stage_wallet[stage] += amount
-            if row["destination_status"] == "ready":
+            if row["destination_status"] == ready_statuses[treatment]:
                 ready_stage_wallet[stage] += amount
             elif row["destination_status"] == "hold":
                 held_stage_wallet[stage] += amount
@@ -1464,11 +1518,11 @@ def main():
         if treatment == "redistributed":
             raise ValueError("redistribution cannot contain vault shares")
         treatment_staked[treatment] += amount
-        if treatment == "issue":
+        if treatment in ready_statuses:
             if not stage:
                 raise ValueError("issued vault row has no migration stage")
             stage_staked[stage] += amount
-            if row["destination_status"] == "ready":
+            if row["destination_status"] == ready_statuses[treatment]:
                 ready_stage_staked[stage] += amount
             elif row["destination_status"] == "hold":
                 held_stage_staked[stage] += amount
@@ -1552,6 +1606,8 @@ def main():
         or treatment_staked["not_issued"] != not_issued_staked
         or treatment_wallet["redistributed"] != redistributed_wallet
         or treatment_staked["redistributed"] != redistributed_staked
+        or treatment_wallet[EXCHANGE_TREATMENT] != exchange_manual_wallet
+        or treatment_staked[EXCHANGE_TREATMENT] != exchange_manual_staked
     ):
         raise ValueError("issuance-treatment totals do not close")
     vault_stage_totals = {
@@ -1562,9 +1618,12 @@ def main():
     if (
         vault_stage_totals["base_vault_assets_atto"]
         - vault_stage_totals["not_issued_assets_atto"]
+        - vault_stage_totals["exchange_manual_assets_atto"]
         != vault_stage_totals["post_policy_assets_atto"]
         or vault_stage_totals["not_issued_assets_atto"]
         != not_issued_staked
+        or vault_stage_totals["exchange_manual_assets_atto"]
+        != exchange_manual_staked
     ):
         raise ValueError("compiled vault-stage totals do not close")
     held_governor_assets = Counter()
@@ -1581,8 +1640,8 @@ def main():
         held_governor_assets["initial"] += int(
             stages["initial_assets_atto"]
         )
-        held_governor_assets["exchange_aggregate"] += int(
-            stages["exchange_aggregate_assets_atto"]
+        held_governor_assets[EXCHANGE_STAGE] += int(
+            stages["exchange_manual_assets_atto"]
         )
         held_governor_assets["next_stage"] += int(
             stages["next_stage_assets_atto"]
@@ -1594,7 +1653,7 @@ def main():
             stages["manual_review_assets_atto"]
         )
     stage_policy_gates = defaultdict(list)
-    release_stages = {"initial", "exchange_aggregate"}
+    release_stages = {"initial", EXCHANGE_STAGE}
     for decision in pending_policy_decisions:
         scope = POLICY_DECISION_STAGE_SCOPE.get(
             decision,
@@ -1605,7 +1664,7 @@ def main():
     stage_readiness = {}
     for stage in (
         "initial",
-        "exchange_aggregate",
+        EXCHANGE_STAGE,
         "next_stage",
         "deferred",
         "manual_review",
@@ -1710,6 +1769,12 @@ def main():
         "redistributed_total_claim_atto": str(
             redistributed_wallet + redistributed_staked
         ),
+        "exchange_manual_wallet_airdrop_atto": str(exchange_manual_wallet),
+        "exchange_manual_staked_to_vault_atto": str(exchange_manual_staked),
+        "exchange_manual_total_claim_atto": str(
+            exchange_manual_wallet + exchange_manual_staked
+        ),
+        "exchange_manual_delivery_source": "year_2050_supply_reserve",
         "wone_reserve_source_atto": str(wone_reserve_source),
         "wone_redistributed_to_holders_atto": str(
             redistributed_wallet
@@ -1721,10 +1786,16 @@ def main():
             wone_recipient_not_issued
         ),
         "issuable_wallet_airdrop_atto": str(
-            source_wallet - not_issued_wallet - redistributed_wallet
+            source_wallet
+            - not_issued_wallet
+            - redistributed_wallet
+            - exchange_manual_wallet
         ),
         "issuable_staked_to_vault_atto": str(
-            source_staked - not_issued_staked - redistributed_staked
+            source_staked
+            - not_issued_staked
+            - redistributed_staked
+            - exchange_manual_staked
         ),
         "issuable_total_claim_atto": str(
             source_wallet
@@ -1733,6 +1804,8 @@ def main():
             - not_issued_staked
             - redistributed_wallet
             - redistributed_staked
+            - exchange_manual_wallet
+            - exchange_manual_staked
         ),
         "exception_wallet_airdrop_atto": str(exception_wallet),
         "exception_staked_to_vault_atto": str(exception_staked),
