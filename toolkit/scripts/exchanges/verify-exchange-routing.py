@@ -49,14 +49,19 @@ def atomic_json(path, value, replace):
 def load_policy(path):
     with open(path, encoding="utf-8") as source:
         policy = json.load(source)
-    if policy.get("schema_version") != 1:
+    if policy.get("schema_version") != 2:
         raise ValueError("unsupported exchange policy schema")
     return policy
 
 
+EXCHANGE_ROUTE_REASON = "exchange_manual_reserve_delivery"
+EXCHANGE_STAGE = "exchange_manual"
+EXCHANGE_TREATMENT = "manual_from_reserve"
+EXCHANGE_STATUS = "exchange_manual"
+
+
 def load_expected(policy, audits_dir):
     expected = {}
-    gate_addresses = set()
     for config in policy["exchanges"]:
         exchange_id = config["id"]
         path = Path(audits_dir) / f"{exchange_id}.csv"
@@ -68,6 +73,12 @@ def load_expected(policy, audits_dir):
                 "migration_stage",
                 "issuance_treatment",
                 "planned_total_entitlement_atto",
+                "wallet_component_atto",
+                "staking_component_atto",
+                "planned_wallet_destination",
+                "planned_staking_destination",
+                "planned_delivery_status",
+                "delivery_tier",
                 "delivery_policy",
             }
             if not required <= set(reader.fieldnames or ()):
@@ -79,74 +90,107 @@ def load_expected(policy, audits_dir):
                 amount = int(row["planned_total_entitlement_atto"])
                 if amount < 0:
                     raise ValueError(f"{path}:{line}: negative planned amount")
+                if row["delivery_policy"] != "manual_from_reserve":
+                    raise ValueError(f"{path}:{line}: unexpected delivery policy")
                 sources[address] = {
                     "amount": amount,
+                    "wallet_component": int(row["wallet_component_atto"]),
+                    "staking_component": int(row["staking_component_atto"]),
                     "stage": row["migration_stage"],
                     "treatment": row["issuance_treatment"],
+                    "tier": row["delivery_tier"],
+                    "status": row["planned_delivery_status"],
+                    "destinations": {
+                        row["planned_wallet_destination"].lower(),
+                        row["planned_staking_destination"].lower(),
+                    }
+                    - {""},
                 }
-                if exchange_id == "gate":
-                    gate_addresses.add(address)
         expected[exchange_id] = {
             "config": config,
             "path": path,
             "sources": sources,
         }
-    return expected, gate_addresses
+    return expected
 
 
-def load_routes(path, policy, expected, gate_addresses):
+def load_routes(path, policy, expected):
     routes = {}
-    expected_priority = int(policy["manual_route_priority"])
+    base_priority = int(policy["manual_route_priority"])
     with open(path, newline="") as source:
         reader = csv.DictReader(source)
         for line, row in enumerate(reader, start=2):
             route_id = row["route_id"]
-            destination_id = row["destination_id"]
-            if not destination_id.startswith("exchange-"):
-                raise ValueError(f"{path}:{line}: non-exchange destination")
-            exchange_id = destination_id[len("exchange-") :]
-            record = expected.get(exchange_id)
-            if (
-                record is None
-                or record["config"]["delivery_policy"]
-                != "manual_current_claim"
-            ):
-                raise ValueError(f"{path}:{line}: invalid exchange route")
+            if not route_id.startswith("exchange-"):
+                raise ValueError(f"{path}:{line}: non-exchange route")
             address = row["source_address"].lower()
+            exchange_id = route_id[len("exchange-") : route_id.index(address[2:]) - 1]
+            record = expected.get(exchange_id)
+            if record is None:
+                raise ValueError(f"{path}:{line}: unknown exchange {exchange_id}")
             planned = record["sources"].get(address)
             if planned is None or planned["amount"] <= 0:
                 raise ValueError(f"{path}:{line}: source has no planned amount")
-            if planned["treatment"] != "issue":
-                raise ValueError(f"{path}:{line}: routed source is not issued")
-            if address in gate_addresses:
-                raise ValueError(f"{path}:{line}: Gate source was rerouted")
-            if (
-                route_id != f"exchange-{exchange_id}-{address[2:]}"
-                or int(row["priority"]) != expected_priority
-                or row["amount_atto"] != "ALL"
-                or row["allocation_method"]
-                != "wallet_first_pro_rata_vault"
-                or row["destination_address"]
-            ):
-                raise ValueError(f"{path}:{line}: invalid route policy")
+            if planned["treatment"] != EXCHANGE_TREATMENT:
+                raise ValueError(f"{path}:{line}: routed source is not manual")
+            if row["reason"] != EXCHANGE_ROUTE_REASON:
+                raise ValueError(f"{path}:{line}: invalid route reason")
+            held = planned["status"] != EXCHANGE_STATUS
+            if row["status"] != ("hold" if held else EXCHANGE_STATUS):
+                raise ValueError(f"{path}:{line}: route status contradicts audit")
+            suffix = route_id[len(f"exchange-{exchange_id}-{address[2:]}") :]
+            destination_id = row["destination_id"]
+            direct = row["destination_address"].lower()
+            if suffix == "":
+                if int(row["priority"]) != base_priority or row["amount_atto"] != "ALL":
+                    raise ValueError(f"{path}:{line}: invalid whole-claim route")
+                if row["allocation_method"] != "wallet_first_pro_rata_vault":
+                    raise ValueError(f"{path}:{line}: invalid allocation method")
+                if planned["tier"] in {"same_address", "same_address_initial"}:
+                    if destination_id or direct != address:
+                        raise ValueError(
+                            f"{path}:{line}: same-address route must target the source"
+                        )
+                elif destination_id not in {
+                    f"exchange-{exchange_id}",
+                    f"exchange-{exchange_id}-staking",
+                } or direct:
+                    raise ValueError(f"{path}:{line}: invalid aggregate destination")
+            elif suffix == "-wallet":
+                if (
+                    int(row["priority"]) != base_priority
+                    or row["allocation_method"] != "wallet_only"
+                    or int(row["amount_atto"]) != planned["wallet_component"]
+                    or destination_id != f"exchange-{exchange_id}"
+                    or direct
+                ):
+                    raise ValueError(f"{path}:{line}: invalid split wallet route")
+            elif suffix == "-staking":
+                if (
+                    int(row["priority"]) != base_priority + 1
+                    or row["allocation_method"] != "wallet_first_pro_rata_vault"
+                    or row["amount_atto"] != "ALL"
+                    or destination_id != f"exchange-{exchange_id}-staking"
+                    or direct
+                ):
+                    raise ValueError(f"{path}:{line}: invalid split staking route")
+            else:
+                raise ValueError(f"{path}:{line}: unexpected route id shape")
             if route_id in routes:
                 raise ValueError(f"{path}:{line}: duplicate route")
             routes[route_id] = {
                 "exchange_id": exchange_id,
                 "address": address,
-                "planned": planned["amount"],
-                "stage": planned["stage"],
+                "suffix": suffix,
+                "planned": planned,
             }
     expected_pairs = {
         (exchange_id, address)
         for exchange_id, record in expected.items()
-        if record["config"]["delivery_policy"] == "manual_current_claim"
         for address, planned in record["sources"].items()
         if planned["amount"] > 0
     }
-    actual_pairs = {
-        (row["exchange_id"], row["address"]) for row in routes.values()
-    }
+    actual_pairs = {(row["exchange_id"], row["address"]) for row in routes.values()}
     if actual_pairs != expected_pairs:
         raise ValueError(
             "exchange route set does not equal positive manual claims"
@@ -159,6 +203,8 @@ def load_compiled(path, routes):
     statuses = defaultdict(set)
     stages = defaultdict(set)
     treatments = defaultdict(set)
+    destinations = defaultdict(set)
+    by_source = defaultdict(int)
     unknown = []
     with open(path, newline="") as source:
         reader = csv.DictReader(source)
@@ -173,9 +219,12 @@ def load_compiled(path, routes):
             if amount <= 0:
                 raise ValueError(f"{path}:{line}: non-positive compiled amount")
             amounts[route_id] += amount
+            by_source[(routes[route_id]["exchange_id"], routes[route_id]["address"])] += amount
             statuses[route_id].add(row["destination_status"])
             stages[route_id].add(row["migration_stage"])
             treatments[route_id].add(row["issuance_treatment"])
+            if row["destination_address"]:
+                destinations[route_id].add(row["destination_address"].lower())
     if unknown:
         raise ValueError(f"unknown compiled exchange routes: {unknown[:10]}")
     missing = set(routes) - set(amounts)
@@ -185,31 +234,38 @@ def load_compiled(path, routes):
             f"{sorted(missing)[:10]}"
         )
     for route_id, route in routes.items():
-        if amounts[route_id] != route["planned"]:
+        planned = route["planned"]
+        if route["suffix"] == "-wallet" and amounts[route_id] != planned["wallet_component"]:
+            raise ValueError(f"{route_id}: compiled wallet component mismatch")
+        if route["suffix"] == "-staking" and amounts[route_id] != planned["staking_component"]:
+            raise ValueError(f"{route_id}: compiled staking component mismatch")
+        if by_source[(route["exchange_id"], route["address"])] != planned["amount"]:
             raise ValueError(
                 f"{route_id}: compiled amount does not match memo plan"
             )
-        if statuses[route_id] - {"ready", "hold"}:
+        if statuses[route_id] - {EXCHANGE_STATUS, "hold"}:
             raise ValueError(f"{route_id}: invalid compiled destination status")
-        if stages[route_id] != {"exchange_aggregate"}:
-            raise ValueError(
-                f"{route_id}: compiled aggregate-exchange stage mismatch"
-            )
-        if treatments[route_id] != {"issue"}:
+        if stages[route_id] != {EXCHANGE_STAGE}:
+            raise ValueError(f"{route_id}: compiled exchange stage mismatch")
+        if treatments[route_id] != {EXCHANGE_TREATMENT}:
             raise ValueError(f"{route_id}: compiled issuance treatment mismatch")
+        if destinations[route_id] - planned["destinations"]:
+            raise ValueError(f"{route_id}: compiled destination not in the memo plan")
     return amounts, statuses, stages
 
 
 def main():
     args = parse_args()
     policy = load_policy(args.policy)
-    expected, gate_addresses = load_expected(policy, args.audits_dir)
-    routes = load_routes(args.routes, policy, expected, gate_addresses)
+    expected = load_expected(policy, args.audits_dir)
+    routes = load_routes(args.routes, policy, expected)
     amounts, statuses, stages = load_compiled(args.routing_exceptions, routes)
     with open(args.exchange_summary, encoding="utf-8") as source:
         exchange_summary = json.load(source)
-    if exchange_summary.get("schema_version") != 1:
+    if exchange_summary.get("schema_version") != 2:
         raise ValueError("unsupported exchange summary schema")
+    if not exchange_summary.get("routes_emitted"):
+        raise ValueError("exchange summary was built without stage policy routes")
     if exchange_summary["outputs"]["routing_input"]["sha256"] != file_sha256(
         args.routes
     ):
@@ -234,6 +290,7 @@ def main():
         ]
         by_exchange[exchange_id] = {
             "delivery_policy": config["delivery_policy"],
+            "destination_mode": config["destination_mode"],
             "routes": len(exchange_routes),
             "compiled_routes": len(exchange_routes),
             "planned_total_and_compiled_atto": str(
@@ -268,7 +325,9 @@ def main():
         "routing_summary": args.routing_summary,
         "routing_summary_sha256": file_sha256(args.routing_summary),
         "manual_routes": len(routes),
-        "gate_exchange_routes": 0,
+        "exchange_stage": EXCHANGE_STAGE,
+        "exchange_treatment": EXCHANGE_TREATMENT,
+        "delivery_source": "year_2050_supply_reserve",
         "exchanges": by_exchange,
     }
     atomic_json(args.output, result, args.replace)
