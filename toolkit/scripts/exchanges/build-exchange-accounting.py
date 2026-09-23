@@ -33,6 +33,7 @@ NORMALIZED_FIELDS = (
     "submitted_balance_unit",
     "submitted_balance_atto",
     "configured_destination",
+    "configured_staking_destination",
     "configured_destination_status",
     "authorization_type",
     "authorization_destination",
@@ -48,6 +49,9 @@ AUDIT_FIELDS = (
     "claim_status",
     "liquid_shard0_atto",
     "liquid_shard1_atto",
+    "pending_cross_shard_atto",
+    "pending_undelegation_atto",
+    "unclaimed_staking_reward_atto",
     "native_wallet_airdrop_atto",
     "wone_balance_atto",
     "wone_airdrop_atto",
@@ -56,13 +60,20 @@ AUDIT_FIELDS = (
     "native_total_claim_atto",
     "qualification_total_atto",
     "total_claim_atto",
+    "wallet_component_atto",
+    "staking_component_atto",
     "qualification_status",
     "policy_category",
     "migration_stage",
     "issuance_treatment",
     "delivery_policy",
+    "destination_mode",
+    "delivery_tier",
     "configured_destination",
+    "configured_staking_destination",
     "configured_destination_status",
+    "planned_wallet_destination",
+    "planned_staking_destination",
     "planned_delivery_status",
     "planned_wallet_airdrop_atto",
     "planned_staked_to_vault_atto",
@@ -87,6 +98,7 @@ ROUTE_FIELDS = (
     "source_address",
     "destination_id",
     "destination_address",
+    "status",
     "amount_atto",
     "allocation_method",
     "reason",
@@ -105,15 +117,16 @@ EXCLUSION_FIELDS = (
     "reason",
     "evidence",
 )
-GATE_LIST_FIELDS = (
+TIER_LIST_FIELDS = (
     "address_hex",
     "address_one",
+    "delivery_tier",
+    "planned_wallet_destination",
     "qualification_total_atto",
     "total_claim_atto",
-    "planned_wallet_airdrop_atto",
-    "planned_staked_to_vault_atto",
+    "wallet_component_atto",
+    "staking_component_atto",
     "planned_total_entitlement_atto",
-    "remaining_not_airdropped_atto",
     "qualification_status",
     "migration_stage",
     "issuance_treatment",
@@ -124,6 +137,9 @@ GATE_LIST_FIELDS = (
 COMPONENTS = (
     "liquid_shard0",
     "liquid_shard1",
+    "pending_cross_shard",
+    "pending_undelegation",
+    "unclaimed_staking_reward",
     "native_wallet_airdrop",
     "wone_balance",
     "wone_airdrop",
@@ -132,11 +148,17 @@ COMPONENTS = (
     "native_total_claim",
     "qualification_total",
     "total_claim",
+    "wallet_component",
+    "staking_component",
     "planned_wallet_airdrop",
     "planned_staked_to_vault",
     "planned_total_entitlement",
     "remaining_not_airdropped",
 )
+EXCHANGE_ROUTE_REASON = "exchange_manual_reserve_delivery"
+EXCHANGE_STAGE = "exchange_manual"
+EXCHANGE_TREATMENT = "manual_from_reserve"
+EXCHANGE_STATUS = "exchange_manual"
 ACTIVITY_FIELDS = (
     "last_activity_time_utc",
     "last_activity_block",
@@ -253,11 +275,34 @@ def normalize_address(value, context):
 def load_policy(path):
     with open(path, encoding="utf-8") as source:
         policy = json.load(source)
-    if policy.get("schema_version") != 1:
+    if policy.get("schema_version") != 2:
         raise ValueError("unsupported exchange policy schema")
+    if policy.get("delivery_source") != "year_2050_supply_reserve":
+        raise ValueError("exchange policy must name the 2050 supply reserve")
     threshold = int(policy.get("minimum_atto", 0))
     if threshold <= 0:
         raise ValueError("invalid exchange threshold")
+    for config in policy["exchanges"]:
+        if config.get("delivery_policy") != "manual_from_reserve":
+            raise ValueError(f"{config['id']}: unsupported delivery policy")
+        if config.get("destination_mode") not in {
+            "aggregate",
+            "aggregate_split",
+            "same_address",
+            "tiered",
+        }:
+            raise ValueError(f"{config['id']}: unsupported destination mode")
+    if policy.get("wallet_destination_components") != [
+        "liquid_shard0",
+        "liquid_shard1",
+        "pending_cross_shard",
+        "wone",
+    ] or policy.get("staking_destination_components") != [
+        "active_staked_or_delegated",
+        "pending_undelegation",
+        "unclaimed_staking_reward",
+    ]:
+        raise ValueError("exchange policy component split is not the reviewed one")
     cutoff = parse_utc(policy["cutoff_time_utc"])
     return policy, threshold, cutoff
 
@@ -265,7 +310,7 @@ def load_policy(path):
 def load_normalized(policy, directory, summary_path):
     with open(summary_path, encoding="utf-8") as source:
         normalization = json.load(source)
-    if normalization.get("schema_version") != 1:
+    if normalization.get("schema_version") != 2:
         raise ValueError("unsupported normalization summary schema")
     result = {}
     all_addresses = set()
@@ -319,6 +364,10 @@ def load_claims(path, wanted):
             "address",
             "liquid_shard0_atto",
             "liquid_shard1_atto",
+            "pending_cross_shard_atto",
+            "pending_undelegation_atto",
+            "unclaimed_staking_reward_atto",
+            "active_staked_or_delegated_atto",
             "native_wallet_airdrop_atto",
             "wone_balance_atto",
             "wone_airdrop_atto",
@@ -343,11 +392,21 @@ def load_claims(path, wanted):
             wallet = int(row["wallet_airdrop_atto"])
             staked = int(row["staked_to_vault_atto"])
             total = int(row["total_claim_atto"])
+            native_wallet = (
+                int(row["liquid_shard0_atto"])
+                + int(row["liquid_shard1_atto"])
+                + int(row["pending_cross_shard_atto"])
+                + int(row["pending_undelegation_atto"])
+                + int(row["unclaimed_staking_reward_atto"])
+            )
             if (
                 min(native_total, wone, qualification, wallet, staked, total)
                 < 0
                 or qualification != native_total + wone
                 or total != wallet + staked
+                or native_wallet != int(row["native_wallet_airdrop_atto"])
+                or int(row["active_staked_or_delegated_atto"]) != staked
+                or wallet != native_wallet + int(row["wone_airdrop_atto"])
             ):
                 raise ValueError(f"{path}:{line}: claim arithmetic mismatch")
             claims[address] = row
@@ -488,6 +547,9 @@ def claim_values(claim, wone):
         for component in (
             "liquid_shard0",
             "liquid_shard1",
+            "pending_cross_shard",
+            "pending_undelegation",
+            "unclaimed_staking_reward",
             "native_wallet_airdrop",
             "wone_airdrop",
             "wallet_airdrop",
@@ -508,6 +570,25 @@ def claim_values(claim, wone):
         values["native_total_claim"] + values["wone_balance"]
     ):
         raise ValueError("qualification total does not close")
+    # Reviewed destination split: liquid balances, supported cross-shard
+    # receipts, and WONE go to the wallet destination; delegated principal,
+    # pending undelegation, and unclaimed rewards go to the staking destination.
+    values["wallet_component"] = (
+        values["liquid_shard0"]
+        + values["liquid_shard1"]
+        + values["pending_cross_shard"]
+        + values["wone_airdrop"]
+    )
+    values["staking_component"] = (
+        values["staked_to_vault"]
+        + values["pending_undelegation"]
+        + values["unclaimed_staking_reward"]
+    )
+    if (
+        values["wallet_component"] + values["staking_component"]
+        != values["total_claim"]
+    ):
+        raise ValueError("destination components do not close to total claim")
     return values
 
 
@@ -570,30 +651,17 @@ def build_audit_row(
             f"qualified exchange address missing migration stage: "
             f"{normalized['address_hex']}"
         )
-    if config["delivery_policy"] == "manual_current_claim":
-        migration_stage = (
-            "exchange_aggregate" if values["total_claim"] > 0 else ""
-        )
-        issuance_treatment = "issue"
-        target_allocation = values["total_claim"]
+    # Every exchange wallet is delivered manually from the 2050 supply reserve
+    # and excluded from the airdrop. The stage policy still records whether a
+    # wallet met the initial-distribution criteria, which decides Gate's tier.
+    ordinary_stage = stage_record["stage"] if stage_record is not None else ""
+    if stage_record is not None and stage_record["treatment"] == "not_issued":
+        issuance_treatment = "not_issued"
+        target_allocation = stage_record["allocation"]
     else:
-        migration_stage = (
-            stage_record["stage"]
-            if stage_record is not None
-            else "below_threshold"
-            if not qualifies
-            else "stage_pending"
-        )
-        issuance_treatment = (
-            stage_record["treatment"]
-            if stage_record is not None
-            else "issue"
-        )
-        target_allocation = (
-            stage_record["allocation"]
-            if stage_record is not None
-            else values["total_claim"]
-        )
+        issuance_treatment = EXCHANGE_TREATMENT
+        target_allocation = values["total_claim"]
+    migration_stage = EXCHANGE_STAGE if target_allocation > 0 else ""
     deduction = values["total_claim"] - target_allocation
     if deduction < 0:
         raise ValueError("stage allocation exceeds exchange claim")
@@ -614,52 +682,60 @@ def build_audit_row(
             f"{normalized['address_hex']}"
         )
     delivery_policy = config["delivery_policy"]
+    mode = config["destination_mode"]
     destination_status = normalized["configured_destination_status"]
+    own_address = normalized["address_hex"]
+    wallet_destination = ""
+    staking_destination = ""
+    if mode == "same_address":
+        tier = "same_address"
+        wallet_destination = staking_destination = own_address
+    elif mode == "aggregate":
+        tier = "aggregate"
+        wallet_destination = staking_destination = normalized[
+            "configured_destination"
+        ]
+    elif mode == "aggregate_split":
+        tier = "aggregate_split"
+        wallet_destination = normalized["configured_destination"]
+        staking_destination = normalized["configured_staking_destination"]
+    else:  # tiered: initial-criteria wallets keep their own address
+        if not stages_complete:
+            tier = "tier_pending"
+        elif ordinary_stage == "initial" and issuance_treatment != "not_issued":
+            tier = "same_address_initial"
+            wallet_destination = staking_destination = own_address
+        else:
+            tier = "aggregated_non_initial"
+            wallet_destination = staking_destination = normalized[
+                "configured_destination"
+            ]
     planned_wallet = 0
     planned_staked = 0
-    if delivery_policy == "automatic_threshold":
-        if not qualifies:
-            planned_status = "below_threshold_not_airdropped"
-        elif not categories_complete:
-            planned_status = "policy_category_pending"
-        elif category == "automatic":
-            if issuance_treatment == "not_issued":
-                planned_status = "not_issued"
-            elif stages_complete and migration_stage != "initial":
-                planned_status = f"{migration_stage}_stage_not_initial"
-            else:
-                planned_wallet = target_wallet
-                planned_staked = target_staked
-                planned_status = "automatic_same_address"
-        elif category == "contract_review":
-            planned_status = "contract_review_hold"
-        else:
-            planned_status = "higher_priority_policy_route"
+    if issuance_treatment == "not_issued":
+        planned_status = "not_issued"
+        wallet_destination = staking_destination = ""
+    elif target_allocation == 0:
+        planned_status = (
+            "wone_not_in_migration_claim" if wone else "no_cutoff_claim"
+        )
+        wallet_destination = staking_destination = ""
     else:
-        if issuance_treatment == "issue":
-            planned_wallet = target_wallet
-            planned_staked = target_staked
-        if issuance_treatment == "not_issued":
-            planned_status = "not_issued"
-        elif not planned_wallet and not planned_staked:
-            planned_status = (
-                "wone_not_in_migration_claim"
-                if wone
-                else "no_cutoff_claim"
-            )
-        elif destination_status == "configured":
-            planned_status = "manual_destination_configured"
-        else:
+        planned_wallet = target_wallet
+        planned_staked = target_staked
+        if tier == "tier_pending":
+            planned_status = "tier_pending"
+        elif not wallet_destination or (
+            values["staking_component"] > 0 and not staking_destination
+        ):
             planned_status = "manual_destination_hold"
+        else:
+            planned_status = EXCHANGE_STATUS
     planned_total = planned_wallet + planned_staked
     if planned_total != (
         target_allocation
         if planned_status
-        in {
-            "automatic_same_address",
-            "manual_destination_configured",
-            "manual_destination_hold",
-        }
+        in {EXCHANGE_STATUS, "manual_destination_hold", "tier_pending"}
         else 0
     ):
         raise ValueError("planned exchange delivery components do not close")
@@ -692,8 +768,15 @@ def build_audit_row(
         "migration_stage": migration_stage,
         "issuance_treatment": issuance_treatment,
         "delivery_policy": delivery_policy,
+        "destination_mode": mode,
+        "delivery_tier": tier,
         "configured_destination": normalized["configured_destination"],
+        "configured_staking_destination": normalized[
+            "configured_staking_destination"
+        ],
         "configured_destination_status": destination_status,
+        "planned_wallet_destination": wallet_destination,
+        "planned_staking_destination": staking_destination,
         "planned_delivery_status": planned_status,
         "last_activity_time_utc": activity_record["last_activity_time_utc"],
         "last_activity_block": activity_record["last_activity_block"],
@@ -883,18 +966,17 @@ def summarize_exchange(exchange, rows):
         != totals["remaining_not_airdropped"]
     ):
         raise ValueError("exchange residual component split does not close")
-    if exchange["config"]["delivery_policy"] == "manual_current_claim":
-        incomplete_wone_rows = [
-            row["address_hex"]
-            for row in rows
-            if int(row["wone_balance_atto"])
-            != int(row["wone_airdrop_atto"])
-        ]
-        if incomplete_wone_rows:
-            raise ValueError(
-                "manual aggregate exchange delivery omits WONE for: "
-                + ", ".join(incomplete_wone_rows[:10])
-            )
+    incomplete_wone_rows = [
+        row["address_hex"]
+        for row in rows
+        if int(row["wone_balance_atto"]) != int(row["wone_airdrop_atto"])
+        and row["issuance_treatment"] != "not_issued"
+    ]
+    if incomplete_wone_rows:
+        raise ValueError(
+            "manual exchange delivery omits WONE for: "
+            + ", ".join(incomplete_wone_rows[:10])
+        )
     balance_rows = [dict(row) for row in rows]
     for row in balance_rows:
         row["balance_bucket"] = balance_bucket(
@@ -909,10 +991,45 @@ def summarize_exchange(exchange, rows):
         and destination_status != "configured"
     ):
         memo_status = "hold_missing_destination"
-    elif exchange["config"]["delivery_policy"] == "automatic_threshold":
-        memo_status = "initial_wallet_stage_policy"
+    elif any(row["planned_delivery_status"] == "tier_pending" for row in rows):
+        memo_status = "stage_policy_pending"
     else:
-        memo_status = "ready_for_exchange_review"
+        memo_status = "ready_for_manual_reserve_delivery"
+    tier_groups = {}
+    for row in rows:
+        if int(row["planned_total_entitlement_atto"]) == 0:
+            continue
+        key = (row["delivery_tier"], row["planned_wallet_destination"], row["planned_staking_destination"])
+        group = tier_groups.setdefault(
+            key,
+            {
+                "delivery_tier": key[0],
+                "wallet_destination": key[1],
+                "staking_destination": key[2],
+                "wallets": 0,
+                "wallet_component_atto": 0,
+                "staking_component_atto": 0,
+            },
+        )
+        group["wallets"] += 1
+        group["wallet_component_atto"] += int(row["wallet_component_atto"])
+        group["staking_component_atto"] += int(row["staking_component_atto"])
+    delivery_groups = [
+        {
+            **group,
+            "wallet_component_atto": str(group["wallet_component_atto"]),
+            "staking_component_atto": str(group["staking_component_atto"]),
+            "total_atto": str(
+                group["wallet_component_atto"] + group["staking_component_atto"]
+            ),
+        }
+        for _key, group in sorted(tier_groups.items())
+    ]
+    same_address_rows = sum(
+        row["delivery_tier"] in {"same_address", "same_address_initial"}
+        and int(row["planned_total_entitlement_atto"]) > 0
+        for row in rows
+    )
     submitted_values = [
         int(row["submitted_balance_atto"])
         for row in rows
@@ -949,7 +1066,16 @@ def summarize_exchange(exchange, rows):
     return {
         "display_name": exchange["config"]["display_name"],
         "delivery_policy": exchange["config"]["delivery_policy"],
+        "destination_mode": exchange["config"]["destination_mode"],
         "memo_status": memo_status,
+        "delivery_groups": delivery_groups,
+        "same_address_delivery_rows": same_address_rows,
+        "aggregated_delivery_rows": sum(
+            row["delivery_tier"]
+            in {"aggregate", "aggregate_split", "aggregated_non_initial"}
+            and int(row["planned_total_entitlement_atto"]) > 0
+            for row in rows
+        ),
         "rolled_back_deposit_claim": rolled_back_claim,
         "wallet_rows": len(rows),
         "claim_rows_found": sum(
@@ -964,15 +1090,18 @@ def summarize_exchange(exchange, rows):
         "below_threshold_rows": sum(
             row["qualification_status"] == "below_threshold" for row in rows
         ),
-        "automatic_airdrop_rows": sum(
-            row["planned_delivery_status"] == "automatic_same_address"
-            for row in rows
-        ),
         "manual_delivery_rows": sum(
-            row["planned_delivery_status"].startswith("manual_destination_")
+            row["planned_delivery_status"] == EXCHANGE_STATUS for row in rows
+        ),
+        "held_delivery_rows": sum(
+            row["planned_delivery_status"]
+            in {"manual_destination_hold", "tier_pending"}
             for row in rows
         ),
         "destination": normalization["configured_destination"],
+        "staking_destination": normalization.get(
+            "configured_staking_destination", ""
+        ),
         "destination_status": destination_status,
         "authorization_designated_rows": normalization.get(
             "authorization_designated_rows",
@@ -1074,22 +1203,84 @@ def markdown_table(headers, rows):
     return "\n".join(lines)
 
 
+MODE_TEXT = {
+    "aggregate": (
+        "Every positive native or WONE claim in the inventory is aggregated "
+        "and delivered to the configured exchange destination."
+    ),
+    "aggregate_split": (
+        "Every positive claim is aggregated and split by component: liquid "
+        "balances, supported cross-shard receipts, and WONE go to the wallet "
+        "destination; delegated principal, pending undelegation, and unclaimed "
+        "staking rewards go to the staking destination."
+    ),
+    "same_address": (
+        "Every positive native or WONE claim is delivered to the same wallet "
+        "address the exchange holds on Harmony, transferred manually rather "
+        "than through the airdrop."
+    ),
+    "tiered": (
+        "Wallets meeting the initial-distribution criteria (at least 1,000 ONE "
+        "and indexed activity in the six months before cutoff) are delivered "
+        "to their own addresses; every other positive claim is aggregated to "
+        "the configured exchange destination."
+    ),
+}
+
+
 def render_memo(config, summary, cutoff_text, threshold):
-    manual = config["delivery_policy"] == "manual_current_claim"
+    mode = config["destination_mode"]
     policy_text = (
-        "Manual aggregate delivery to the configured exchange destination. "
-        "Every positive native or WONE claim is explicitly routed regardless "
-        "of the ordinary automatic-wallet threshold or activity stage. "
-        "Threshold overlap is retained only to suppress accidental "
-        "same-address delivery."
-        if manual
-        else (
-            "Ordinary same-address automatic delivery applies only to wallets "
-            "meeting the inclusive threshold and passing the normal account "
-            "policy classification. Gate requested no aggregate reroute."
-        )
+        "All exchange delivery is manual and drawn directly from the year 2050 "
+        "supply reserve; no exchange wallet is included in the airdrop and any "
+        "delegated principal is released from the validator vaults. "
+        + MODE_TEXT[mode]
     )
-    destination = summary["destination"] or "Not yet supplied"
+    if mode == "same_address":
+        destination = "each source wallet's own address"
+    else:
+        destination = summary["destination"] or "Not yet supplied"
+    staking_destination = (
+        summary["staking_destination"]
+        if mode == "aggregate_split"
+        else ""
+    )
+    group_rows = [
+        (
+            group["delivery_tier"],
+            f"{group['wallets']:,}",
+            one_display(group["wallet_component_atto"]),
+            one_display(group["staking_component_atto"]),
+            one_display(group["total_atto"]),
+            (
+                "own address"
+                if group["delivery_tier"] in {"same_address", "same_address_initial"}
+                else group["wallet_destination"] or "hold"
+            )
+            + (
+                f" / staking → {group['staking_destination']}"
+                if group["staking_destination"]
+                and group["staking_destination"] != group["wallet_destination"]
+                else ""
+            ),
+        )
+        for group in summary["delivery_groups"]
+    ]
+    delivery_table = (
+        markdown_table(
+            (
+                "Delivery tier",
+                "Wallets",
+                "Wallet component ONE",
+                "Staking component ONE",
+                "Total ONE",
+                "Destination",
+            ),
+            group_rows,
+        )
+        if group_rows
+        else "No positive cutoff claim in this inventory."
+    )
     totals = summary["totals"]
     submitted_stats = summary["submitted_balance_statistics"]
     qualification_stats = summary["qualification_balance_statistics"]
@@ -1225,39 +1416,35 @@ def render_memo(config, summary, cutoff_text, threshold):
         ].items()
     ]
     threshold_scope = (
-        "- Aggregate delivery threshold: none. Ordinary-threshold overlap is "
-        "retained only in the automatic-path exclusion audit."
-        if manual
-        else (
-            "- Inclusive ordinary automatic threshold: "
-            f"`{one_display(threshold)} ONE`"
+        "- Manual delivery threshold: none. The ordinary "
+        f"`{one_display(threshold)} ONE` threshold is used only to remove "
+        "exchange wallets from the automatic same-address airdrop"
+        + (
+            " and, with six-month activity, to decide the same-address tier."
+            if mode == "tiered"
+            else "."
         )
     )
-    outside_delivery_label = (
-        "Value outside aggregate delivery (must be zero)"
-        if manual
-        else "Combined qualification value outside this initial delivery"
-    )
+    outside_delivery_label = "Value outside manual delivery (must be zero)"
     threshold_counts = (
-        ""
-        if manual
-        else (
-            "- Wallets meeting the ordinary threshold: "
-            f"{summary['qualified_rows']:,}\n"
-            "- Wallets below the ordinary threshold: "
-            f"{summary['below_threshold_rows']:,}\n"
-        )
+        "- Wallets meeting the ordinary threshold: "
+        f"{summary['qualified_rows']:,}\n"
+        "- Wallets below the ordinary threshold: "
+        f"{summary['below_threshold_rows']:,}\n"
+        "- Wallets delivered to their own address: "
+        f"{summary['same_address_delivery_rows']:,}\n"
+        "- Wallets aggregated to an exchange destination: "
+        f"{summary['aggregated_delivery_rows']:,}\n"
     )
     activity_policy = (
-        "Activity is audit context only and does not gate this aggregate "
-        "exchange delivery. `not_collected` means the wallet was outside the "
-        "ordinary activity scan; it does not mean the wallet was inactive."
-        if manual
-        else (
-            "Last-activity data was previously collected for the ordinary "
-            "qualifying set. `not_collected` means the source wallet was "
-            "outside that set; it does not mean the wallet was inactive."
+        "Activity is audit context"
+        + (
+            " and, together with the threshold, selects the same-address tier."
+            if mode == "tiered"
+            else " only and does not gate manual exchange delivery."
         )
+        + " `not_collected` means the wallet was outside the ordinary "
+        "activity scan; it does not mean the wallet was inactive."
     )
     rolled_back_section = ""
     rolled_back = summary.get("rolled_back_deposit_claim")
@@ -1292,40 +1479,50 @@ Status: `{summary['memo_status']}`
 ## Scope and policy
 
 - Cutoff: `{cutoff_text}`
+- Delivery source: year 2050 supply reserve, manual transfer; excluded from
+  the airdrop
+- Destination mode: `{mode}`
 {threshold_scope}
 - Wallet inventory rows: {summary['wallet_rows']:,}
 - Cutoff claim rows found: {summary['claim_rows_found']:,}
 - Cutoff claim rows not found: {summary['claim_rows_not_found']:,}
-- Configured Ethereum destination: `{destination}`
+- Wallet-component destination: `{destination}`
+{f"- Staking-component destination: `{staking_destination}`" if staking_destination else ""}
 
 {policy_text}
 
 Exchange-submitted balances are reconciliation evidence only. Proposed amounts
 come from the cutoff-pinned Harmony migration claim ledger.
 
-## Proposed delivery
+## Proposed manual delivery
 
-- ERC-20 ONE proposed for direct airdrop:
+- ONE delivered from the reserve for wallet balances (native liquid, supported
+  cross-shard receipts, unclaimed rewards, pending undelegation, and WONE):
   **{one_display(totals['planned_wallet_airdrop_atto'])} ONE**
-- Validator-vault share principal:
+- Delegated principal released from validator vaults and delivered as ONE:
   {one_display(totals['planned_staked_to_vault_atto'])} ONE
-- Total routed ONE-equivalent entitlement:
-  {one_display(totals['planned_total_entitlement_atto'])} ONE
+- Total manual delivery:
+  **{one_display(totals['planned_total_entitlement_atto'])} ONE**
 - {outside_delivery_label}:
-  **{one_display(totals['remaining_not_airdropped_atto'])} ONE**
-- Remaining native ONE: {one_display(summary['remaining_native_not_airdropped_atto'])} ONE
-- Remaining WONE: {one_display(summary['remaining_wone_not_airdropped_atto'])} WONE
+  {one_display(totals['remaining_not_airdropped_atto'])} ONE
 - Native cutoff claim value: {one_display(totals['native_total_claim_atto'])} ONE
 - Cutoff WONE value: {one_display(totals['wone_balance_atto'])} WONE
 {threshold_counts}
+### Delivery by tier and destination
+
+Wallet component = liquid shard-0 and shard-1 balance, supported pending
+cross-shard receipts, and WONE. Staking component = active delegated
+principal, pending undelegation, and unclaimed staking reward.
+
+{delivery_table}
 
 ## Wallet balance statistics
 
 Submitted values use the exchange-declared `{summary['submitted_balance_scope']}`
 scope. Cutoff native-plus-WONE value is
-`native_total_claim_atto + wone_balance_atto`; for non-Gate exchanges this is
-an aggregate-delivery amount, not an eligibility test. Mean and median are
-rounded to the nearest atto-ONE.
+`native_total_claim_atto + wone_balance_atto`; it is the manual-delivery
+amount, not an eligibility test. Mean and median are rounded to the nearest
+atto-ONE.
 
 {markdown_table(
         ('Statistic', 'Submitted ONE', 'Cutoff native + WONE'),
@@ -1339,16 +1536,17 @@ rounded to the nearest atto-ONE.
 ## Cutoff balance breakdown
 
 Buckets use combined cutoff native-plus-WONE value
-(`native_total_claim_atto + wone_balance_atto`). The bucket boundary controls
-Gate automatic delivery only.
+(`native_total_claim_atto + wone_balance_atto`). The bucket boundary only
+removes exchange wallets from the automatic airdrop and selects the tier of a
+tiered exchange; it does not limit manual delivery.
 
 {markdown_table(
         (
             'Balance bucket',
             'Wallets',
             'Cutoff native + WONE',
-            'ERC-20 ONE',
-            'Vault principal',
+            'Wallet ONE from reserve',
+            'Released vault principal',
         ),
         balance_rows,
     )}
@@ -1362,8 +1560,8 @@ Gate automatic delivery only.
             'Activity status',
             'Wallets',
             'Cutoff native + WONE',
-            'ERC-20 ONE',
-            'Vault principal',
+            'Wallet ONE from reserve',
+            'Released vault principal',
         ),
         activity_rows,
     )}
@@ -1375,8 +1573,8 @@ Activity recency uses exclusive calendar-month buckets relative to the cutoff:
             'Last activity',
             'Wallets',
             'Cutoff native + WONE',
-            'ERC-20 ONE',
-            'Vault principal',
+            'Wallet ONE from reserve',
+            'Released vault principal',
         ),
         activity_age_rows,
     )}
@@ -1416,51 +1614,58 @@ retained in the private exchange-accounting artifact bundle.
 """
 
 
-def render_gate_report(summary, output_dir, cutoff_text):
+def render_tier_report(config, summary, same_path, aggregated_path, cutoff_text):
     totals = summary["totals"]
-    airdropped_path = output_dir / "gate-airdropped.csv"
-    not_airdropped_path = output_dir / "gate-not-airdropped.csv"
-    return f"""# Gate initial-stage same-address audit
+    same_group = [
+        group
+        for group in summary["delivery_groups"]
+        if group["delivery_tier"] == "same_address_initial"
+    ]
+    aggregated_group = [
+        group
+        for group in summary["delivery_groups"]
+        if group["delivery_tier"] == "aggregated_non_initial"
+    ]
+    same_total = sum(int(group["total_atto"]) for group in same_group)
+    aggregated_total = sum(int(group["total_atto"]) for group in aggregated_group)
+    same_wallets = sum(group["wallets"] for group in same_group)
+    aggregated_wallets = sum(group["wallets"] for group in aggregated_group)
+    return f"""# {config['display_name']} tiered manual delivery
 
-Gate did not request aggregate rerouting. Its submitted wallets therefore
-remain under the ordinary inclusive threshold, account-policy, and six-month
-wallet-stage rules.
+{config['display_name']} asked for wallets that meet the initial-distribution
+criteria (at least 1,000 ONE of combined native and WONE value and indexed
+activity in the six months before cutoff) to be delivered to their own
+addresses, and for every other positive claim to be aggregated to
+`{summary['destination']}`. Both tiers are delivered manually from the year
+2050 supply reserve; none of these wallets is in the airdrop.
 
 - Cutoff: `{cutoff_text}`
-- Submitted Gate wallets: {summary['wallet_rows']:,}
-- Wallets in the initial same-address batch:
-  {summary['automatic_airdrop_rows']:,}
-- Initial ERC-20 ONE allocation:
-  **{one_display(totals['planned_wallet_airdrop_atto'])} ONE**
-- Validator-vault share principal:
+- Submitted wallets (including supplemental additions): {summary['wallet_rows']:,}
+- Same-address tier wallets: {same_wallets:,}
+- Same-address tier ONE: **{one_display(same_total)} ONE**
+- Aggregated tier wallets (positive claims): {aggregated_wallets:,}
+- Aggregated tier ONE: **{one_display(aggregated_total)} ONE**
+- Total manual delivery: **{one_display(totals['planned_total_entitlement_atto'])} ONE**
+- Of which delegated principal released from validator vaults:
   {one_display(totals['planned_staked_to_vault_atto'])} ONE
-- Total initial ONE-equivalent allocation:
-  {one_display(totals['planned_total_entitlement_atto'])} ONE
-- Wallets outside the current initial batch:
-  {summary['wallet_rows'] - summary['automatic_airdrop_rows']:,}
-- Combined native ONE plus WONE value not airdropped:
-  **{one_display(totals['remaining_not_airdropped_atto'])} ONE**
-- Native ONE not airdropped:
-  {one_display(summary['remaining_native_not_airdropped_atto'])} ONE
-- WONE not airdropped:
-  {one_display(summary['remaining_wone_not_airdropped_atto'])} WONE
 - Native cutoff claim value across the submitted set:
   {one_display(totals['native_total_claim_atto'])} ONE
 - Cutoff WONE across the submitted set:
   {one_display(totals['wone_balance_atto'])} WONE
+- Wallets with no positive cutoff claim:
+  {summary['wallet_rows'] - same_wallets - aggregated_wallets:,}
 
 Address lists:
 
-- `{airdropped_path.name}` — wallets in the current initial same-address stage;
-  SHA-256 `{file_sha256(airdropped_path)}`.
-- `{not_airdropped_path.name}` — wallets outside the current initial stage,
-  including deferred and zero/no-cutoff-claim rows; SHA-256
-  `{file_sha256(not_airdropped_path)}`.
+- `{same_path.name}` — same-address tier; SHA-256 `{file_sha256(same_path)}`.
+- `{aggregated_path.name}` — aggregated tier (positive claims only); SHA-256
+  `{file_sha256(aggregated_path)}`.
 
-The detailed `audits/gate.csv` file retains cutoff components, policy category,
-activity evidence, and the reason for each disposition. Missing activity means
-no qualifying indexed transaction was found or activity was not previously
-collected; it is not proof that the wallet was never used.
+The detailed `audits/{config['id']}.csv` file retains cutoff components,
+policy category, stage, activity evidence, and each wallet's planned
+destination. Missing activity means no qualifying indexed transaction was
+found or activity was not previously collected; it is not proof that the
+wallet was never used.
 """
 
 
@@ -1481,23 +1686,36 @@ def render_summary_report(policy, summaries, cutoff_text):
                 f"({one_display(claim['total_atto'])} ONE across "
                 f"{claim['rows']:,} transactions)"
             )
+        if summary["destination_mode"] == "same_address":
+            destination_text = "same addresses"
+        elif summary["destination_mode"] == "tiered":
+            destination_text = (
+                f"initial-criteria wallets: same addresses; others: "
+                f"{summary['destination'] or 'hold'}"
+            )
+        elif summary["destination_mode"] == "aggregate_split":
+            destination_text = (
+                f"wallet: {summary['destination'] or 'hold'}; staking: "
+                f"{summary['staking_destination'] or 'hold'}"
+            )
+        else:
+            destination_text = summary["destination"] or "hold"
         delivery_rows.append(
             (
                 config["display_name"],
+                summary["destination_mode"],
                 summary["memo_status"],
                 f"{summary['wallet_rows']:,}",
                 one_display(
-                    summary["totals"]["planned_wallet_airdrop_atto"]
+                    summary["totals"]["wallet_component_atto"]
                 ),
                 one_display(
-                    summary["totals"]["planned_staked_to_vault_atto"]
+                    summary["totals"]["staking_component_atto"]
                 ),
                 one_display(
                     summary["totals"]["planned_total_entitlement_atto"]
                 ),
-                one_display(
-                    summary["totals"]["remaining_not_airdropped_atto"]
-                ),
+                destination_text,
             )
         )
         statistics = summary["qualification_balance_statistics"]
@@ -1574,32 +1792,36 @@ This private finding applies exchange-provided wallet inventories to the
 cutoff-pinned migration ledger without re-deriving chain state.
 
 - Cutoff: `{cutoff_text}`
-- Gate: ordinary same-address destination policy, subject to the wallet-only
-  migration stage.
-- Other exchanges: every positive native and WONE claim is routed manually to
-  the configured aggregate destination, regardless of the ordinary wallet
-  threshold or activity, in the release-authorized `exchange_aggregate` stage.
+- Every exchange wallet is excluded from the airdrop. All exchange migration is
+  delivered manually, directly from the year 2050 supply reserve, in the
+  `exchange_manual` stage; delegated principal is released from the validator
+  vaults and delivered as ONE.
+- Destination modes: `aggregate` (one destination), `aggregate_split` (wallet
+  and staking components to separate destinations), `same_address` (each
+  exchange wallet's own address), and `tiered` (initial-criteria wallets to
+  their own addresses, all other positive claims aggregated).
 - A blank destination produces a hold; it never falls back to a source wallet.
 - Exchange-submitted balances are checked but never replace chain accounting.
-- The totals below describe current routed entitlements across stages, not the
-  initial migration population.
 
 ## Delivery summary
 
-The ordinary threshold is absent from this table because it does not limit
-non-Gate aggregate delivery. Gate's threshold disposition remains in its
-dedicated audit. Non-Gate overlap with the automatic set is retained only in
-the generated exclusion artifact.
+The ordinary threshold does not limit manual delivery; it only removes
+exchange wallets from the automatic same-address airdrop (recorded in the
+generated exclusion artifact) and, with six-month activity, selects the
+same-address tier of a tiered exchange. Wallet component = liquid balances,
+supported cross-shard receipts, and WONE; staking component = delegated
+principal, pending undelegation, and unclaimed rewards.
 
 {markdown_table(
         (
             'Exchange',
+            'Mode',
             'Status',
             'Wallets',
-            'ERC-20 ONE',
-            'Vault principal',
-            'Current routed entitlement',
-            'Outside current delivery',
+            'Wallet component ONE',
+            'Staking component ONE',
+            'Manual delivery ONE',
+            'Destination(s)',
         ),
         delivery_rows,
     )}
@@ -1609,8 +1831,8 @@ the generated exclusion artifact.
 Submitted totals reproduce exchange-provided balance evidence in the declared
 scope. Cutoff statistics use combined native-plus-WONE value
 `native_total_claim_atto + wone_balance_atto`, including zero/no-claim
-inventory rows. This is an aggregate-delivery amount for non-Gate exchanges,
-not an eligibility test. Mean and median are rounded to the nearest atto-ONE.
+inventory rows. This is the manual-delivery amount, not an eligibility test.
+Mean and median are rounded to the nearest atto-ONE.
 
 {markdown_table(
         (
@@ -1651,20 +1873,107 @@ signature proof. A successful normalization emits no invalid designated row.
         signature_rows,
     )}
 
-Full per-exchange memos, normalized inputs, address audits, Gate split lists,
-eligibility exclusions, and manual route inputs are hash-pinned in the private
-artifact bundle.
+Full per-exchange memos, normalized inputs, address audits, tiered-exchange
+address lists, airdrop exclusions, and manual route inputs are hash-pinned in
+the private artifact bundle.
 
 {chr(10).join(completion_notes)}
 
 After route compilation,
 `verify-exchange-routing.py` independently compares every positive memo amount
-with the resulting exchange exception rows.
+and planned destination with the compiled `exchange_manual` exception rows.
 """
 
 
-def gate_list_row(row):
-    return {field: row[field] for field in GATE_LIST_FIELDS}
+def tier_list_row(row):
+    return {field: row[field] for field in TIER_LIST_FIELDS}
+
+
+def exchange_routes(exchange_id, row, route_priority):
+    """Return the manual reserve-delivery route(s) for one positive audit row."""
+    address = row["address_hex"].lower()
+    evidence = f"exchanges/wallets-standardized/{exchange_id}.csv"
+    wallet_destination = row["planned_wallet_destination"]
+    staking_destination = row["planned_staking_destination"]
+    held = row["planned_delivery_status"] != EXCHANGE_STATUS
+    same_address = row["delivery_tier"] in {"same_address", "same_address_initial"}
+    base = {
+        "priority": str(route_priority),
+        "source_address": address,
+        "status": "hold" if held else EXCHANGE_STATUS,
+        "reason": EXCHANGE_ROUTE_REASON,
+        "evidence": evidence,
+    }
+    if same_address:
+        return [
+            {
+                **base,
+                "route_id": f"exchange-{exchange_id}-{address[2:]}",
+                "destination_id": "",
+                "destination_address": wallet_destination,
+                "amount_atto": "ALL",
+                "allocation_method": "wallet_first_pro_rata_vault",
+                "notes": (
+                    f"{row['delivery_tier']}: manual reserve delivery to the "
+                    "exchange's own wallet address; excluded from the airdrop"
+                ),
+            }
+        ]
+    wallet_component = int(row["wallet_component_atto"])
+    staking_component = int(row["staking_component_atto"])
+    split = (
+        row["destination_mode"] == "aggregate_split"
+        and wallet_component > 0
+        and staking_component > 0
+    )
+    if split:
+        return [
+            {
+                **base,
+                "route_id": f"exchange-{exchange_id}-{address[2:]}-wallet",
+                "destination_id": f"exchange-{exchange_id}",
+                "destination_address": "",
+                "amount_atto": str(wallet_component),
+                "allocation_method": "wallet_only",
+                "notes": (
+                    "liquid, cross-shard receipt, and WONE component to the "
+                    "wallet destination; manual reserve delivery"
+                ),
+            },
+            {
+                **base,
+                "priority": str(route_priority + 1),
+                "route_id": f"exchange-{exchange_id}-{address[2:]}-staking",
+                "destination_id": f"exchange-{exchange_id}-staking",
+                "destination_address": "",
+                "amount_atto": "ALL",
+                "allocation_method": "wallet_first_pro_rata_vault",
+                "notes": (
+                    "delegated principal, pending undelegation, and unclaimed "
+                    "reward component to the staking destination; released "
+                    "from validator vaults"
+                ),
+            },
+        ]
+    destination_suffix = (
+        "-staking"
+        if row["destination_mode"] == "aggregate_split" and wallet_component == 0
+        else ""
+    )
+    return [
+        {
+            **base,
+            "route_id": f"exchange-{exchange_id}-{address[2:]}",
+            "destination_id": f"exchange-{exchange_id}{destination_suffix}",
+            "destination_address": "",
+            "amount_atto": "ALL",
+            "allocation_method": "wallet_first_pro_rata_vault",
+            "notes": (
+                f"{row['delivery_tier']}: manual reserve delivery to the "
+                "configured exchange destination; excluded from the airdrop"
+            ),
+        }
+    ]
 
 
 def main():
@@ -1745,47 +2054,24 @@ def main():
             rows.append(row)
             if (
                 categories_complete
-                and config["delivery_policy"] == "manual_current_claim"
                 and row["qualification_status"] == "qualified"
                 and row["policy_category"] != "excluded_address"
             ):
                 raise ValueError(
-                    "qualifying non-Gate exchange wallet remains outside "
-                    f"the policy-routed category: {address}"
+                    "qualifying exchange wallet remains outside the "
+                    f"policy-routed category: {address}"
                 )
             if (
-                config["delivery_policy"] == "manual_current_claim"
-                and int(row["total_claim_atto"]) > 0
+                stages_complete
+                and int(row["planned_total_entitlement_atto"]) > 0
             ):
-                routes.append(
-                    {
-                        "route_id": f"exchange-{exchange_id}-{address[2:]}",
-                        "priority": str(route_priority),
-                        "source_address": address,
-                        "destination_id": f"exchange-{exchange_id}",
-                        "destination_address": "",
-                        "amount_atto": "ALL",
-                        "allocation_method": "wallet_first_pro_rata_vault",
-                        "reason": "exchange_requested_aggregate_reroute",
-                        "evidence": (
-                            f"exchanges/wallets-standardized/"
-                            f"{exchange_id}.csv"
-                        ),
-                        "notes": (
-                            "manual destination route; migration stage remains "
-                            "separately gated"
-                        ),
-                    }
-                )
-            if (
-                config["delivery_policy"] == "manual_current_claim"
-                and row["qualification_status"] == "qualified"
-            ):
+                routes.extend(exchange_routes(exchange_id, row, route_priority))
+            if row["qualification_status"] == "qualified":
                 exclusions.append(
                     {
                         "address": address,
                         "exchange_id": exchange_id,
-                        "reason": "exchange_requested_aggregate_reroute",
+                        "reason": EXCHANGE_ROUTE_REASON,
                         "evidence": (
                             f"exchanges/wallets-standardized/"
                             f"{exchange_id}.csv"
@@ -1811,23 +2097,41 @@ def main():
             ),
             args.replace,
         )
-        if config["delivery_policy"] == "manual_current_claim":
-            state = exchange["normalization"][
-                "configured_destination_status"
-            ]
+        if config["destination_mode"] != "same_address":
+            normalization_record = exchange["normalization"]
+            state = normalization_record["configured_destination_status"]
             destinations.append(
                 {
                     "destination_id": f"exchange-{exchange_id}",
-                    "destination_address": exchange["normalization"][
+                    "destination_address": normalization_record[
                         "configured_destination"
                     ],
-                    "status": "ready" if state == "configured" else "hold",
+                    "status": EXCHANGE_STATUS if state == "configured" else "hold",
                     "notes": (
-                        f"{config['display_name']} aggregate migration "
-                        "destination; confirm out of band before transfer"
+                        f"{config['display_name']} manual delivery destination "
+                        "(wallet component) funded from the 2050 supply "
+                        "reserve; confirm out of band before transfer"
                     ),
                 }
             )
+            if config["destination_mode"] == "aggregate_split":
+                destinations.append(
+                    {
+                        "destination_id": f"exchange-{exchange_id}-staking",
+                        "destination_address": normalization_record[
+                            "configured_staking_destination"
+                        ],
+                        "status": (
+                            EXCHANGE_STATUS if state == "configured" else "hold"
+                        ),
+                        "notes": (
+                            f"{config['display_name']} manual delivery "
+                            "destination (delegated principal, pending "
+                            "undelegation, unclaimed reward) funded from the "
+                            "2050 supply reserve"
+                        ),
+                    }
+                )
 
     exclusions.sort(
         key=lambda row: (bytes.fromhex(row["address"][2:]), row["exchange_id"])
@@ -1838,7 +2142,7 @@ def main():
         raise ValueError("duplicate exchange eligibility exclusion")
     if len({row["route_id"] for row in routes}) != len(routes):
         raise ValueError("duplicate exchange route id")
-    exclusion_path = output_dir / "qualified-non-gate-exclusions.csv"
+    exclusion_path = output_dir / "qualified-exchange-exclusions.csv"
     artifact_routes = output_dir / "exchange-routes.csv"
     artifact_destinations = output_dir / "exchange-destinations.csv"
     atomic_csv(
@@ -1862,55 +2166,66 @@ def main():
         args.replace,
     )
 
-    gate_rows = all_audits["gate"]
-    gate_airdropped = [
-        gate_list_row(row)
-        for row in gate_rows
-        if int(row["planned_total_entitlement_atto"]) > 0
-    ]
-    gate_not_airdropped = [
-        gate_list_row(row)
-        for row in gate_rows
-        if int(row["planned_total_entitlement_atto"]) == 0
-    ]
-    gate_airdropped_addresses = {
-        row["address_hex"].lower() for row in gate_airdropped
-    }
-    gate_not_airdropped_addresses = {
-        row["address_hex"].lower() for row in gate_not_airdropped
-    }
-    gate_addresses = {row["address_hex"].lower() for row in gate_rows}
-    if (
-        gate_airdropped_addresses & gate_not_airdropped_addresses
-        or gate_airdropped_addresses | gate_not_airdropped_addresses
-        != gate_addresses
-    ):
-        raise ValueError(
-            "Gate airdropped and not-airdropped lists do not partition "
-            "the normalized inventory"
+    tier_outputs = {}
+    tier_reports = {}
+    for config in policy["exchanges"]:
+        if config["destination_mode"] != "tiered":
+            continue
+        exchange_id = config["id"]
+        tier_rows = all_audits[exchange_id]
+        same_rows = [
+            tier_list_row(row)
+            for row in tier_rows
+            if row["delivery_tier"] == "same_address_initial"
+            and int(row["planned_total_entitlement_atto"]) > 0
+        ]
+        aggregated_rows = [
+            tier_list_row(row)
+            for row in tier_rows
+            if row["delivery_tier"] == "aggregated_non_initial"
+            and int(row["planned_total_entitlement_atto"]) > 0
+        ]
+        positive = {
+            row["address_hex"].lower()
+            for row in tier_rows
+            if int(row["planned_total_entitlement_atto"]) > 0
+        }
+        listed = {row["address_hex"].lower() for row in same_rows} | {
+            row["address_hex"].lower() for row in aggregated_rows
+        }
+        if stages_complete and listed != positive:
+            raise ValueError(
+                f"{exchange_id}: tier lists do not partition positive claims"
+            )
+        same_path = output_dir / f"{exchange_id}-same-address-initial.csv"
+        aggregated_path = (
+            output_dir / f"{exchange_id}-aggregated-non-initial.csv"
         )
-    atomic_csv(
-        output_dir / "gate-airdropped.csv",
-        GATE_LIST_FIELDS,
-        gate_airdropped,
-        args.replace,
-    )
-    atomic_csv(
-        output_dir / "gate-not-airdropped.csv",
-        GATE_LIST_FIELDS,
-        gate_not_airdropped,
-        args.replace,
-    )
-    gate_report = output_dir / "GATE_AUTOMATIC_AIRDROP_AUDIT_2026-09-17.md"
-    atomic_text(
-        gate_report,
-        render_gate_report(
-            summaries["gate"],
-            output_dir,
-            policy["cutoff_time_utc"],
-        ),
-        args.replace,
-    )
+        atomic_csv(same_path, TIER_LIST_FIELDS, same_rows, args.replace)
+        atomic_csv(
+            aggregated_path, TIER_LIST_FIELDS, aggregated_rows, args.replace
+        )
+        report_path = (
+            output_dir / f"{exchange_id.upper()}_DELIVERY_TIERS_2026-09-22.md"
+        )
+        atomic_text(
+            report_path,
+            render_tier_report(
+                config,
+                summaries[exchange_id],
+                same_path,
+                aggregated_path,
+                policy["cutoff_time_utc"],
+            ),
+            args.replace,
+        )
+        tier_outputs[f"{exchange_id}_same_address_initial"] = same_path
+        tier_outputs[f"{exchange_id}_aggregated_non_initial"] = aggregated_path
+        tier_reports[f"{exchange_id}_tier_report"] = report_path
+        summaries[exchange_id]["tier_rows"] = {
+            "same_address_initial": len(same_rows),
+            "aggregated_non_initial": len(aggregated_rows),
+        }
     aggregate_report = (
         output_dir / "EXCHANGE_MIGRATION_ACCOUNTING_2026-09-17.md"
     )
@@ -1926,9 +2241,8 @@ def main():
 
     outputs = {
         "aggregate_report": aggregate_report,
-        "gate_report": gate_report,
-        "gate_airdropped": output_dir / "gate-airdropped.csv",
-        "gate_not_airdropped": output_dir / "gate-not-airdropped.csv",
+        **tier_reports,
+        **tier_outputs,
         "eligibility_exclusions": exclusion_path,
         "exchange_routes": artifact_routes,
         "exchange_destinations": artifact_destinations,
@@ -1936,15 +2250,21 @@ def main():
         "destination_input": Path(args.destinations_output),
     }
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": (
             "hold"
             if any(
-                summary["memo_status"].startswith(("hold_", "awaiting_"))
+                summary["memo_status"].startswith(
+                    ("hold_", "awaiting_", "stage_policy_pending")
+                )
                 for summary in summaries.values()
             )
             else "passed"
         ),
+        "delivery_policy": "manual_from_reserve",
+        "delivery_source": policy["delivery_source"],
+        "exchange_stage": EXCHANGE_STAGE,
+        "routes_emitted": stages_complete,
         "cutoff_time_utc": policy["cutoff_time_utc"],
         "minimum_atto": str(threshold),
         "manual_route_priority": route_priority,
@@ -1966,10 +2286,8 @@ def main():
             if args.migration_stages
             else None
         ),
-        "qualified_non_gate_exclusions": len(exclusions),
+        "qualified_exchange_exclusions": len(exclusions),
         "manual_routes": len(routes),
-        "gate_airdropped_rows": len(gate_airdropped),
-        "gate_not_airdropped_rows": len(gate_not_airdropped),
         "exchanges": summaries,
         "outputs": {
             label: {
