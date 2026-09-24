@@ -151,7 +151,7 @@ fd6950e55bececeb3e9d436e16083bd5065a5fa11ad037add5b3129d1fccb4c3  15137  toolkit
 f544cbfb43407a7738132182ec48bd3a2e0bb818a771e86d3c4c1e64410e6bfd  5684  toolkit/scripts/cutoff/verify-diff-arithmetic.py
 21348eadf10b4db694dc10d89083ab4347a6ccffb85de3bb163ef953a8c21f17  4783  toolkit/scripts/cutoff/verify-pending-receipts.py
 282d2f71852b7820b4c9c2761b49f71ae0b72d7ef2cf2bcd9451f1cdff41c6c8  5202  toolkit/scripts/cutoff/verify-state-diff-rpc.py
-f37e58286e648660cffad531cd47c4765147ce27774ecf0d3fd29d8865fcb001  86337  toolkit/scripts/exchanges/build-exchange-accounting.py
+6d67ddd3073872e475ee81b3da72ca448faf35ac0eefebdd1c200d3bc19806d3  87511  toolkit/scripts/exchanges/build-exchange-accounting.py
 020e08b13ba6aa3f10f151aee3c2e4736e01896fafac95be0855308351e0e309  52265  toolkit/scripts/exchanges/build-exchange-native-policy.py
 53747d8e4fdd1d26799e5b8f098984ba8a8eeaffa5629bf3d8f80503408022b4  61673  toolkit/scripts/exchanges/normalize-exchange-wallets.py
 86b04695e7962299327f034ddfc11c62898334d3911f156030c824247959b1cd  16626  toolkit/scripts/exchanges/verify-exchange-routing.py
