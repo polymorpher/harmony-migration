@@ -11,7 +11,15 @@ import posixpath
 import re
 import sys
 import zipfile
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import (
+    Context,
+    Decimal,
+    Inexact,
+    InvalidOperation,
+    ROUND_HALF_UP,
+    Rounded,
+    localcontext,
+)
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -98,19 +106,29 @@ def normalize_address(value, context):
     return address
 
 
+# The default decimal context rounds to 28 significant digits, which silently
+# truncates atto precision on balances above ten billion ONE. Every ONE/atto
+# conversion runs in this context, which is wide enough for any supply figure
+# and traps rounding instead of applying it.
+EXACT_DECIMAL = Context(prec=120, traps=[Inexact, Rounded, InvalidOperation])
+
+
 def decimal_one_to_atto(value, context):
     """Exact ONE -> atto-ONE for plain or scientific-notation cell text."""
     text = str(value or "").strip()
-    try:
-        amount = Decimal(text)
-    except InvalidOperation as error:
-        raise ValueError(f"{context}: invalid ONE amount {value!r}") from error
-    if not amount.is_finite() or amount < 0:
-        raise ValueError(f"{context}: invalid ONE amount {value!r}")
-    atto = amount.scaleb(18)
-    if atto != atto.to_integral_value():
-        raise ValueError(f"{context}: ONE amount exceeds 18 decimals {value!r}")
-    return int(atto)
+    with localcontext(EXACT_DECIMAL):
+        try:
+            amount = Decimal(text)
+            if not amount.is_finite() or amount < 0:
+                raise ValueError(f"{context}: invalid ONE amount {value!r}")
+            atto = amount.scaleb(18)
+            if atto != atto.to_integral_value():
+                raise ValueError(
+                    f"{context}: ONE amount exceeds 18 decimals {value!r}"
+                )
+            return int(atto)
+        except (InvalidOperation, Inexact, Rounded) as error:
+            raise ValueError(f"{context}: invalid ONE amount {value!r}") from error
 
 
 def displayed_total_matches(exact_atto, displayed, context):
@@ -121,24 +139,30 @@ def displayed_total_matches(exact_atto, displayed, context):
     text at the number of decimals the exchange actually wrote.
     """
     text = str(displayed or "").strip()
-    try:
-        shown = Decimal(text)
-    except InvalidOperation as error:
-        raise ValueError(f"{context}: invalid displayed total {displayed!r}") from error
-    decimals = max(-shown.as_tuple().exponent, 0)
-    exact = Decimal(exact_atto).scaleb(-18)
-    rounded = exact.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
-    if rounded != shown:
-        raise ValueError(
-            f"{context}: displayed total {text} does not match independent "
-            f"sum {exact}"
+    with localcontext(Context(prec=120, traps=[InvalidOperation])):
+        try:
+            shown = Decimal(text)
+        except InvalidOperation as error:
+            raise ValueError(
+                f"{context}: invalid displayed total {displayed!r}"
+            ) from error
+        decimals = max(-shown.as_tuple().exponent, 0)
+        exact = Decimal(exact_atto).scaleb(-18)
+        rounded = exact.quantize(
+            Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP
         )
+        if rounded != shown:
+            raise ValueError(
+                f"{context}: displayed total {text} does not match independent "
+                f"sum {exact}"
+            )
+        shown_atto = int(shown.scaleb(18))
     return {
         "displayed": text,
         "displayed_decimals": decimals,
         "independent_atto": str(exact_atto),
         "independent_one": lib.atto_to_one_str(exact_atto),
-        "rounding_delta_atto": str(exact_atto - int(shown.scaleb(18))),
+        "rounding_delta_atto": str(exact_atto - shown_atto),
     }
 
 
@@ -502,28 +526,57 @@ def row_identity(source_sha256, sheet, row_number):
 DESTINATION_MODES = ("aggregate", "aggregate_split", "same_address", "tiered")
 
 
-def parse_destination_lines(path):
-    """Return [(checksum address, note)] from a destination file.
+DESTINATION_ROLES = ("aggregate", "wallet", "staking")
+DESTINATION_HEADER = ("role", "address", "notes")
 
-    Each non-blank line is `<address>` optionally followed by `,` and a quoted
-    or bare note. Line 1 is the wallet-component destination; line 2, allowed
-    only for `aggregate_split`, is the staking-component destination.
+
+def parse_destination_lines(path):
+    """Return {role: (checksum address, note)} from a destination file.
+
+    Every non-blank, non-comment line is a CSV row `role,address,notes` (an
+    optional `role,address,notes` header is skipped). `role` is `aggregate`
+    for a single destination or `wallet`/`staking` for a split delivery; the
+    role, not the line order, decides which components the address receives.
+    `notes` must be a non-empty English description of what the address is
+    for, so a reviewer can confirm each destination without reading code.
     """
-    lines = []
+    roles = {}
     for number, raw in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
+        path.read_text(encoding="utf-8-sig").splitlines(), start=1
     ):
         text = raw.strip()
-        if not text:
+        if not text or text.startswith("#"):
             continue
-        address_text, _separator, note = text.partition(",")
-        address = normalize_address(address_text.strip(), f"{path}:{number}")
-        lines.append((lib.to_checksum(address), note.strip().strip('"').strip()))
-    return lines
+        fields = next(csv.reader([text], skipinitialspace=True))
+        fields = [field.strip() for field in fields]
+        if tuple(field.lower() for field in fields) == DESTINATION_HEADER:
+            continue
+        if len(fields) != 3:
+            raise ValueError(
+                f"{path}:{number}: destination rows must be "
+                "`role,address,notes`; got {len(fields)} field(s)"
+            )
+        role, address_text, note = fields
+        role = role.lower()
+        if role not in DESTINATION_ROLES:
+            raise ValueError(
+                f"{path}:{number}: unknown destination role {role!r}; "
+                f"expected one of {', '.join(DESTINATION_ROLES)}"
+            )
+        if role in roles:
+            raise ValueError(f"{path}:{number}: duplicate destination role {role}")
+        address = normalize_address(address_text, f"{path}:{number}")
+        if not any(character.isalpha() for character in note):
+            raise ValueError(
+                f"{path}:{number}: destination role {role} needs an English "
+                "note describing what the address receives"
+            )
+        roles[role] = (lib.to_checksum(address), note)
+    return roles
 
 
 def destination_status(config, destinations_dir):
-    """Return (wallet destination, staking destination, status, path)."""
+    """Return (wallet destination, staking destination, status, path, notes)."""
     mode = config["destination_mode"]
     filename = config.get("destination_file")
     if mode == "same_address":
@@ -531,26 +584,33 @@ def destination_status(config, destinations_dir):
             raise ValueError(
                 f"{config['id']}: same_address delivery takes no destination file"
             )
-        return "", "", "same_address", None
+        return "", "", "same_address", None, {}
     if not filename:
-        return "", "", "missing_file", None
+        return "", "", "missing_file", None, {}
     path = destinations_dir / filename
     if not path.is_file():
-        return "", "", "missing_file", path
-    lines = parse_destination_lines(path)
-    if not lines:
-        return "", "", "blank", path
-    expected_lines = 2 if mode == "aggregate_split" else 1
-    if len(lines) != expected_lines:
+        return "", "", "missing_file", path, {}
+    roles = parse_destination_lines(path)
+    if not roles:
+        return "", "", "blank", path, {}
+    expected_roles = (
+        {"wallet", "staking"} if mode == "aggregate_split" else {"aggregate"}
+    )
+    if set(roles) != expected_roles:
         raise ValueError(
-            f"{path}: {mode} destination file must have {expected_lines} "
-            f"address line(s), found {len(lines)}"
+            f"{path}: {mode} destination file must define exactly the roles "
+            f"{sorted(expected_roles)}, found {sorted(roles)}"
         )
-    wallet_destination = lines[0][0]
-    staking_destination = lines[1][0] if mode == "aggregate_split" else ""
-    if staking_destination and staking_destination.lower() == wallet_destination.lower():
-        raise ValueError(f"{path}: split destinations must differ")
-    return wallet_destination, staking_destination, "configured", path
+    if mode == "aggregate_split":
+        wallet_destination = roles["wallet"][0]
+        staking_destination = roles["staking"][0]
+        if staking_destination.lower() == wallet_destination.lower():
+            raise ValueError(f"{path}: wallet and staking destinations must differ")
+    else:
+        wallet_destination = roles["aggregate"][0]
+        staking_destination = ""
+    notes = {role: note for role, (_address, note) in sorted(roles.items())}
+    return wallet_destination, staking_destination, "configured", path, notes
 
 
 def base_row(
@@ -1452,6 +1512,7 @@ def main():
             staking_destination,
             destination_state,
             destination_path,
+            destination_notes,
         ) = destination_status(config, destinations_dir)
         raw_name = config.get("raw_file")
         raw_path = raw_dir / raw_name if raw_name else None
@@ -1542,6 +1603,7 @@ def main():
             "configured_destination": destination,
             "configured_staking_destination": staking_destination,
             "configured_destination_status": destination_state,
+            "configured_destination_notes": destination_notes,
             "delivery_policy": config["delivery_policy"],
             "destination_mode": config["destination_mode"],
             "destination_file": (
