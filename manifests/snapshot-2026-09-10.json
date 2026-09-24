@@ -43,7 +43,7 @@
     "contract": "0xcf664087a5bb0237a0bad6742852ec6c8d69a27a",
     "source_shard": 0,
     "holder_source": "cutoff-pinned archival-node event replay reconciled to totalSupply and native reserve",
-    "qualified_holder_treatment": "wallet delivery for ordinary-threshold rows plus a non-Gate aggregate-exchange exception, with matching reserve source classified as redistributed",
+    "qualified_holder_treatment": "wallet delivery for ordinary-threshold rows plus every confirmed exchange wallet delivered manually from the 2050 supply reserve, with matching reserve source classified as redistributed",
     "remainder_treatment": "not issued; retained in the 2050 premint reserve",
     "self_held_wone": "excluded from recipient delivery"
   },
@@ -51,7 +51,7 @@
     "threshold": "native_total_claim_atto + wone_balance_atto >= 1000 ONE",
     "threshold_timing": "evaluate snapshot qualification before deductions or routing",
     "initial_stage": "positive eligible wallets with indexed activity in the six calendar months before cutoff",
-    "exchange_aggregate_stage": "every positive native ONE, WONE, and vault-share entitlement in a confirmed non-Gate inventory; no individual threshold or activity gate",
+    "exchange_manual_stage": "every positive native ONE, WONE, and delegated entitlement in a confirmed exchange inventory is excluded from the airdrop and delivered manually from the 2050 supply reserve to the exchange's confirmed destination(s); no individual threshold or activity gate; issuance_treatment manual_from_reserve; delegated principal released from the validator vaults",
     "code_bearing_accounts": "preliminary review; verified validator-wrapper accounts remain key-controlled wallets",
     "reviewed_contracts": "multisig, LayerZero collateral, and 1wallet allocations are next stage; SmartVault and other reviewed genuine-contract allocations are not issued",
     "stage_and_treatment": "migration stage, issuance treatment, account classification, and destination readiness are separate fields",
@@ -62,8 +62,14 @@
   },
   "exchange_delivery_overlay": {
     "policy": "exchanges/exchange-policy.json",
-    "gate": "ordinary inclusive threshold and account classification; no aggregate reroute",
-    "non_gate": "route every positive native and WONE claim through a release-authorized aggregate exchange stage regardless of individual threshold or activity; remove threshold overlap from implicit automatic delivery",
+    "delivery": "manual_from_reserve for every exchange: the complete cutoff entitlement (native ONE, WONE, delegated principal) is delivered by hand from the year 2050 supply reserve and never enters the airdrop",
+    "destination_modes": {
+      "aggregate": "every component to one confirmed destination",
+      "aggregate_split": "wallet components (liquid, pending cross-shard, WONE) to a wallet destination and staking components (delegated principal, pending undelegation, unclaimed reward) to a staking destination; roles are named explicitly in the destination file",
+      "same_address": "each source wallet receives its own entitlement at its own address",
+      "tiered": "wallets meeting the initial distribution criteria (inclusive threshold and six-month indexed activity) receive their entitlement at their own addresses; every other wallet is aggregated to the confirmed destination"
+    },
+    "threshold_overlap": "removed from implicit automatic same-address delivery only; not an entitlement calculation",
     "missing_destination": "hold with no source-address fallback",
     "submitted_balance_role": "reconciliation evidence only; never a replacement for cutoff chain accounting"
   },
