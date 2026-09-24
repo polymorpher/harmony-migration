@@ -1102,6 +1102,9 @@ def summarize_exchange(exchange, rows):
         "staking_destination": normalization.get(
             "configured_staking_destination", ""
         ),
+        "destination_notes": normalization.get(
+            "configured_destination_notes", {}
+        ),
         "destination_status": destination_status,
         "authorization_designated_rows": normalization.get(
             "authorization_designated_rows",
@@ -1244,6 +1247,23 @@ def render_memo(config, summary, cutoff_text, threshold):
         summary["staking_destination"]
         if mode == "aggregate_split"
         else ""
+    )
+    notes = summary.get("destination_notes", {})
+    wallet_note = notes.get("wallet" if mode == "aggregate_split" else "aggregate", "")
+    staking_note = notes.get("staking", "")
+    destination_lines = "\n".join(
+        line
+        for line in (
+            f"- Wallet-component destination: `{destination}`",
+            f"  - Destination file note: {wallet_note}" if wallet_note else "",
+            f"- Staking-component destination: `{staking_destination}`"
+            if staking_destination
+            else "",
+            f"  - Destination file note: {staking_note}"
+            if staking_destination and staking_note
+            else "",
+        )
+        if line
     )
     group_rows = [
         (
@@ -1486,8 +1506,7 @@ Status: `{summary['memo_status']}`
 - Wallet inventory rows: {summary['wallet_rows']:,}
 - Cutoff claim rows found: {summary['claim_rows_found']:,}
 - Cutoff claim rows not found: {summary['claim_rows_not_found']:,}
-- Wallet-component destination: `{destination}`
-{f"- Staking-component destination: `{staking_destination}`" if staking_destination else ""}
+{destination_lines}
 
 {policy_text}
 
@@ -2100,6 +2119,26 @@ def main():
         if config["destination_mode"] != "same_address":
             normalization_record = exchange["normalization"]
             state = normalization_record["configured_destination_status"]
+            configured_notes = normalization_record.get(
+                "configured_destination_notes", {}
+            )
+            if state == "configured":
+                expected_roles = (
+                    {"wallet", "staking"}
+                    if config["destination_mode"] == "aggregate_split"
+                    else {"aggregate"}
+                )
+                if set(configured_notes) != expected_roles or not all(
+                    configured_notes.values()
+                ):
+                    raise ValueError(
+                        f"{exchange_id}: configured destination roles "
+                        f"{sorted(configured_notes)} lack the English notes "
+                        f"required for {sorted(expected_roles)}"
+                    )
+            wallet_role = (
+                "wallet" if config["destination_mode"] == "aggregate_split" else "aggregate"
+            )
             destinations.append(
                 {
                     "destination_id": f"exchange-{exchange_id}",
@@ -2110,7 +2149,8 @@ def main():
                     "notes": (
                         f"{config['display_name']} manual delivery destination "
                         "(wallet component) funded from the 2050 supply "
-                        "reserve; confirm out of band before transfer"
+                        "reserve; confirm out of band before transfer. "
+                        f"Destination file note: {configured_notes.get(wallet_role, '')}"
                     ),
                 }
             )
@@ -2128,7 +2168,8 @@ def main():
                             f"{config['display_name']} manual delivery "
                             "destination (delegated principal, pending "
                             "undelegation, unclaimed reward) funded from the "
-                            "2050 supply reserve"
+                            "2050 supply reserve. Destination file note: "
+                            f"{configured_notes.get('staking', '')}"
                         ),
                     }
                 )
