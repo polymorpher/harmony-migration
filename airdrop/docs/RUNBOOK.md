@@ -36,8 +36,11 @@ Read the summary it prints: number of recipients, number of batches, total, root
 on duplicate addresses, wrong checksums, the zero address, and non-positive amounts. Put the run
 directory name in `.env` as `RUN_DIR=runs/<name>`.
 
-If a few rows should go out first (for example, exchange destinations), put them at the top of
-the input and build with `--order input`; otherwise keep the default address order.
+Exchange wallets are not in the airdrop input: every confirmed exchange inventory is delivered
+manually from the 2050 supply reserve (`exchange_manual` rows in the routing exceptions), so the
+input must exclude `not_issuing`, `redistributed`, and `exchange_manual` rows. If a few rows
+should nevertheless go out first, put them at the top of the input and build with
+`--order input`; otherwise keep the default address order.
 
 ## 2. Verify the run directory, twice
 

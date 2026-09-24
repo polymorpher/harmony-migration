@@ -60,8 +60,10 @@ stage policy needs is pinned in this repository at
 
 ## Do not run by default
 
-Unless the user explicitly requests a complete release rebuild, do not modify
-or regenerate:
+Unless the user explicitly requests a complete release rebuild, or the fast
+path shows that the changed inventory adds or removes an address that holds
+WONE or meets the ordinary threshold (which forces the chain below), do not
+modify or regenerate:
 
 - `apply-wone-qualification.py` outputs;
 - WONE holder, redistribution, or retained-reserve artifacts;
@@ -138,9 +140,11 @@ it rather than stopping to ask; it takes roughly thirty minutes end to end
    `build-non-issuance-report.py`, `build-wone-report.py`);
 9. `make private-manifest`, `make verify-private`, `make check-public`.
 
-This is a provenance re-pin, not a WONE recalculation: the WONE holder census,
-reserve split, and redistribution do not change with an exchange update, and
-the step must prove that by reproducing the ledger hashes.
+When the changed inventory holds no WONE this is a provenance re-pin, not a
+WONE recalculation: the WONE holder census does not change, and the step must
+prove that by reproducing the ledger hashes. When it does hold WONE, the
+census is still unchanged but the redistributed/retained split moves by exactly
+the exchange WONE added to wallet rows; record the before/after amounts.
 
 ## Escalation
 

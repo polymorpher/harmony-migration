@@ -85,7 +85,9 @@
   delivery worksheet funded from the 2050 supply reserve (per exchange, tier,
   and destination), delegated principal released from every affected validator
   vault, Gate tier and reported-total reconciliation, and the DigitalX
-  submitted-total reconciliation with its excluded rolled-back deposit claim
+  submitted-total reconciliation with its excluded rolled-back deposit claim;
+  refuses audit CSVs whose hashes, destinations, modes, or readiness differ
+  from the accounting summary they came from
 
 The runtime configuration, raw/normalized inventories, destinations, and
 operator README under `exchanges/` are private and intentionally absent from

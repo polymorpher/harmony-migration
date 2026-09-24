@@ -223,11 +223,13 @@ The private exchange overlay additionally verifies:
   exchange wallet remains in the airdrop;
 - every positive native, WONE, or delegated exchange claim has manual routes
   whose compiled amounts equal its planned entitlement regardless of the
-  ordinary threshold, and all such routes use the `exchange_manual` stage with
-  `manual_from_reserve` treatment and a destination in the memo plan;
-- the manual delivery worksheet totals equal that stage exactly, delegated
-  principal released from the vaults equals the exchange staked total, and no
-  destination is held;
+  ordinary threshold, and every such route compiles to exactly the planned
+  destination and status (a ready plan compiled as a hold fails) in the
+  `exchange_manual` stage with `manual_from_reserve` treatment;
+- the manual delivery worksheet is built only from audit CSVs whose hashes,
+  destinations, modes, and readiness match the accounting summary, its totals
+  equal that stage exactly, delegated principal released from the vaults
+  equals the exchange staked total, and no destination is held;
 - Gate's same-address-initial and aggregated lists partition its complete
   inventory, and its reported total reconstructs exactly from the workbook's
   shard-0 balances plus the supplemental addresses;

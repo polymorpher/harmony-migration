@@ -218,6 +218,16 @@ remain holds. Per-exchange memos, Gate delivery-tier lists, and the manual
 delivery worksheet were generated from existing cutoff and activity artifacts
 rather than a new chain scan.
 
+A September 23 review hardened that delivery path without changing any
+amount: destination files now name each address's role explicitly with an
+English note instead of relying on line order; the manual delivery worksheet
+is built only from audit CSVs whose hashes, destinations, modes, and readiness
+match the accounting summary; exchange routing verification requires each
+route to compile to exactly its planned destination and status; the routing
+compiler rejects a second `ALL` route for one source and any route that
+compiles to zero; and every ONE-to-atto conversion runs in an exact,
+rounding-trapped decimal context.
+
 ## 13. Migration-stage and reviewed-contract policy
 
 The September 17 policy fixed threshold membership before deductions and

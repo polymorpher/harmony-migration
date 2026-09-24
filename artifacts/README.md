@@ -9,11 +9,12 @@ It contains:
 - cutoff state and staking exports;
 - complete total-claim, direct wallet-airdrop, staked-to-vault, and
   difference CSVs;
-- archival WONE holder, combined-threshold, aggregate-exchange,
+- archival WONE holder, combined-threshold, exchange manual-delivery,
   redistribution, and retained-reserve evidence;
 - exchange normalization provenance, per-exchange memos, address audits,
-  Gate airdropped/not-airdropped lists, generated policy/route inputs, and
-  materialized release-authorized aggregate delivery;
+  Gate delivery-tier lists, generated policy/route inputs, the manual
+  delivery worksheet funded from the 2050 supply reserve, and the delegated
+  principal released from validator vaults;
 - address-preimage recovery evidence;
 - contract-classification facts, reports, and category CSVs;
 - historical treasury-routing and current non-issuance calculations;

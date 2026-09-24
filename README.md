@@ -28,7 +28,8 @@ cross-shard receipts.
 Total claim is not the same as direct wallet airdrop. Active stake/delegation
 is moved to the corresponding validator's ERC-4626 vault and represented by
 vault shares. The direct wallet airdrop excludes that staked amount and
-includes WONE for rows in the current qualifying batch.
+includes WONE for rows in the current qualifying batch and for confirmed
+exchange wallets.
 
 The inclusive result is split into ordinary EOAs, verified validator-wrapper
 accounts that are also key-controlled, reviewed genuine contracts, and
@@ -40,21 +41,25 @@ split between terminal non-issuance and the ordinary destination. The gross
 claim ledger stays unchanged, but not-issued amounts are excluded from final
 token and vault-share creation.
 
-Exchange-provided wallet inventories add a separate delivery overlay. Gate
-remains under the ordinary inclusive threshold and same-address rules because
-it did not request rerouting. Other exchanges' submitted native ONE wallet
-holdings are aggregated at a confirmed destination. Any overlap with the
-ordinary threshold set may be removed from implicit same-address delivery, but
-that overlap is not an exchange entitlement calculation. A missing destination
-is a hold and never falls back to the source wallet.
+Exchange-provided wallet inventories add a separate delivery overlay. Every
+wallet in a confirmed exchange inventory is excluded from the airdrop; its
+complete cutoff entitlement (native ONE, WONE, and delegated principal
+released from the validator vaults) is delivered manually, directly from the
+2050 supply reserve, to the destination(s) the exchange confirmed: one
+aggregate address, a wallet/staking address pair, the source wallets
+themselves, or Gate's tiering by the initial-distribution criteria. Overlap
+with the ordinary threshold set is removed from implicit same-address delivery,
+but that overlap is not an exchange entitlement calculation. A missing
+destination is a hold and never falls back to the source wallet.
 
 Before any exchange-only refresh, read `docs/EXCHANGE_UPDATE_SCOPE.md`. It
-defines the fast path and prevents accidental WONE/global-policy regeneration.
+defines the fast path and the full chain an inventory change requires.
 
 WONE uses a separate conservation overlay. The source reserve paired with
-qualified-holder WONE is terminal `redistributed`; the remaining
+qualified-holder and exchange WONE is terminal `redistributed`; the remaining
 below-threshold/excluded reserve is `not_issuing` and retained in the 2050
-premint reserve. Exchange inventory updates do not modify this overlay.
+premint reserve. Because exchange WONE enters through the normalized
+inventory, an exchange inventory change re-pins this overlay.
 
 The initial stage contains eligible wallets with indexed activity in the six
 calendar months before the cutoff. Reviewed multisig, LayerZero collateral,
@@ -151,7 +156,7 @@ cross-shard receipt records are primary sources. Explorer balances are not
 used.
 
 Exchange submissions are authoritative only for the exchange's source-wallet
-inventory and requested destination. Their stated balances are compared
+inventory and confirmed destination(s). Their stated balances are compared
 against, but never substituted for, cutoff consensus state.
 
 Every recovered address must satisfy:

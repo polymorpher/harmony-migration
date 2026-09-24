@@ -308,6 +308,9 @@ before a destination is approved.
 
 - Non-issuance, treasury, burn, inaccessible, and perpetrator routes take
   precedence over same-address delivery.
+- A source may have at most one `ALL` route, and every explicit route must
+  compile to a positive amount; a route left with nothing to consume fails the
+  build instead of silently disappearing.
 - Exchange wallets overlapping the ordinary threshold may not remain implicit
   automatic deliveries; every positive native, WONE, or delegated claim in a
   received exchange inventory must have exchange manual-delivery routes
