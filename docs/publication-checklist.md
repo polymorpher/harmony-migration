@@ -66,9 +66,10 @@ Before publishing the migration allocation:
    provided, and cryptographically verified sets to match, with zero failed or
    missing proof rows and a signed destination equal to the configured
    destination.
-6. State explicitly whether identified rollback-exploit proceeds are honored
-   as state claims or redirected. Do not imply that the existing treasury
-   inventory covers that incident.
+6. State that rollback-exploit proceeds are not issued: retained balances at
+   the incident-contract recipients, and the credited amount at every wallet a
+   proven rollback-leak receipt credited, capped at what the wallet still
+   holds. Legitimate remainders stay eligible.
 7. Reconcile the WONE holder ledger to `totalSupply()` and the native reserve.
    Confirm that ordinary-threshold and exchange manual-delivery WONE amounts
    are added once to wallet rows and offset once as `redistributed`, while the

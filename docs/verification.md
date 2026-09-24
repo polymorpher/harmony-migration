@@ -249,6 +249,10 @@ The incident non-issuance overlay must additionally verify:
   preserve explicitly reported and transaction-linked roles separately, and
   do not overlap the reported victim population;
 - reported victim wallets receive no automatic non-issuance route;
+- each wallet credited by a proven rollback-leak receipt is not issued
+  `min(credited amount, native cutoff claim - earlier non-issuance)`, and a
+  wallet listed in both the retained-cap and rollback-leak inventories loses
+  its retained cap first;
 - every `not_issuing` row has no destination address and is absent from the
   unresolved work queue;
 - no token is created for a not-issued wallet row, and every not-issued staked

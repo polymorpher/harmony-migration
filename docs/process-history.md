@@ -251,6 +251,23 @@ address-level policy now records stage separately from `not_issued` and
 next-stage destinations from being misreported as initial-stage blockers, and
 an independent materializer expands only initial issued wallet/vault rows.
 
+On September 23 the `rollback-exploit-proceeds` decision, open since the
+routing toolkit was first built, was resolved to match the September 16
+non-issuance policy. The September 16 inventory covered the wallets funded by
+the May 2025 and April 2026 incident contracts; it did not cover the smaller
+June–July 2026 rollback-leak cohort, whose signers credited the leaked ONE
+directly to their own wallets. A second inventory now withholds, from every
+wallet credited by a proven rollback-leak receipt, the credited amount capped
+at what the wallet still holds after the earlier deduction, and the stage
+policy and route builder accept both inventories.
+
+The same day an Ethereum-side code check of the initial list found one address
+that is a token contract on Ethereum (a legacy bridged ONE token) while on
+Harmony it had only ever received transfers. Replacement ONE delivered there
+would be stuck, so it was reviewed as inaccessible and its whole claim is not
+issued, through a new reviewed-inaccessible inventory read alongside the
+existing one.
+
 ## 14. Preservation
 
 All irreplaceable generated outputs, source snapshots, manifests, and runtime

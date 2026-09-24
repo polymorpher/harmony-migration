@@ -199,9 +199,14 @@ assets. The route data preserves the actual identity and policy reason.
 
 ## Additional policy decisions
 
-- Historical rollback-exploit proceeds remain part of state-derived total
-  claims unless an explicit route file redirects identified addresses. The
-  treasury inventory does not implicitly cover that incident.
+- Rollback-exploit proceeds are not issued (decision
+  `rollback-exploit-proceeds`, resolved 2026-09-23). Two exact inventories
+  implement it: the retained balances at the wallets the May 2025 and April
+  2026 incident contracts funded, and, for every wallet credited by a proven
+  rollback-leak receipt, the credited amount capped at what the wallet still
+  holds after earlier deductions. A wallet that holds only exploit credit loses
+  its whole claim; a wallet that also held legitimate funds keeps the
+  difference. Wallets that merely passed exploit funds on are not deducted.
 - If a validator address is explicitly frozen, non-issued, or
   treasury-routed, its vault governor defaults to hold until
   `validator-governors.csv` names an approved Ethereum governor.

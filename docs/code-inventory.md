@@ -178,8 +178,12 @@ See `docs/contract-account-review.md`.
 - `toolkit/scripts/routing/init-local-routing.py` — create held-by-default local
   route and policy files without overwriting operator decisions
 - `toolkit/scripts/routing/build-non-issuance-routes.py` — convert the current
-  reviewed non-issuance inventory into terminal routes without changing
+  reviewed non-issuance inventory, the retained historical-incident caps and
+  the rollback-leak credit inventory into terminal routes without changing
   partial-row remainders
+- `toolkit/scripts/routing/build-inaccessible-inventory.py` — turn reviewed
+  inaccessible addresses into `burn_or_inaccessible` inventory rows that
+  withhold the whole cutoff claim
 - `toolkit/scripts/routing/build-wone-routes.py` — split the WONE source
   reserve into exact redistributed and retained-not-issued routes
 - `toolkit/scripts/routing/merge-wallet-theft-inventory.py` — validate reviewed
