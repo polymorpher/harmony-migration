@@ -7,7 +7,6 @@ import csv
 import hashlib
 import json
 import os
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 
@@ -15,18 +14,14 @@ ATTO_PER_ONE = 10**18
 
 
 def parse_one(value):
-    try:
-        amount = Decimal(value)
-    except InvalidOperation as error:
-        raise argparse.ArgumentTypeError(str(error)) from error
-    if amount < 0 or amount.as_tuple().exponent < -18:
+    """Exact ONE -> atto-ONE from decimal text without context rounding."""
+    text = str(value).strip()
+    whole, dot, fraction = text.partition(".")
+    if not whole.isdigit() or (dot and not fraction.isdigit()) or len(fraction) > 18:
         raise argparse.ArgumentTypeError(
-            "threshold must be non-negative with at most 18 decimals"
+            f"invalid exact ONE value: {value!r} (non-negative, at most 18 decimals)"
         )
-    atto = amount * ATTO_PER_ONE
-    if atto != atto.to_integral_value():
-        raise argparse.ArgumentTypeError("threshold is not an exact atto value")
-    return int(atto)
+    return int(whole) * ATTO_PER_ONE + int(fraction.ljust(18, "0") or 0)
 
 
 def parse_args():

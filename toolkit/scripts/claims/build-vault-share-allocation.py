@@ -9,7 +9,6 @@ import json
 import os
 import sys
 from collections import defaultdict
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 
@@ -30,14 +29,14 @@ DETAIL_FIELDS = (
 
 
 def parse_one(value):
-    try:
-        amount = Decimal(value)
-    except InvalidOperation as error:
-        raise argparse.ArgumentTypeError(str(error)) from error
-    atto = amount * ATTO_PER_ONE
-    if amount < 0 or atto != atto.to_integral_value():
-        raise argparse.ArgumentTypeError("invalid exact ONE threshold")
-    return int(atto)
+    """Exact ONE -> atto-ONE from decimal text without context rounding."""
+    text = str(value).strip()
+    whole, dot, fraction = text.partition(".")
+    if not whole.isdigit() or (dot and not fraction.isdigit()) or len(fraction) > 18:
+        raise argparse.ArgumentTypeError(
+            f"invalid exact ONE value: {value!r} (non-negative, at most 18 decimals)"
+        )
+    return int(whole) * ATTO_PER_ONE + int(fraction.ljust(18, "0") or 0)
 
 
 def parse_args():
