@@ -100,11 +100,8 @@ def load_expected(policy, audits_dir):
                     "treatment": row["issuance_treatment"],
                     "tier": row["delivery_tier"],
                     "status": row["planned_delivery_status"],
-                    "destinations": {
-                        row["planned_wallet_destination"].lower(),
-                        row["planned_staking_destination"].lower(),
-                    }
-                    - {""},
+                    "wallet_destination": row["planned_wallet_destination"].lower(),
+                    "staking_destination": row["planned_staking_destination"].lower(),
                 }
         expected[exchange_id] = {
             "config": config,
@@ -178,11 +175,24 @@ def load_routes(path, policy, expected):
                 raise ValueError(f"{path}:{line}: unexpected route id shape")
             if route_id in routes:
                 raise ValueError(f"{path}:{line}: duplicate route")
+            # Each route must compile to exactly the destination the memo
+            # planned for its component group; a held plan compiles blank.
+            if planned["tier"] in {"same_address", "same_address_initial"}:
+                expected_destination = address
+            elif destination_id.endswith("-staking"):
+                expected_destination = planned["staking_destination"]
+            else:
+                expected_destination = planned["wallet_destination"]
+            if not held and not expected_destination:
+                raise ValueError(f"{path}:{line}: ready route has no planned destination")
             routes[route_id] = {
                 "exchange_id": exchange_id,
                 "address": address,
                 "suffix": suffix,
                 "planned": planned,
+                "status": row["status"],
+                "destination_id": destination_id,
+                "expected_destination": expected_destination,
             }
     expected_pairs = {
         (exchange_id, address)
@@ -223,8 +233,7 @@ def load_compiled(path, routes):
             statuses[route_id].add(row["destination_status"])
             stages[route_id].add(row["migration_stage"])
             treatments[route_id].add(row["issuance_treatment"])
-            if row["destination_address"]:
-                destinations[route_id].add(row["destination_address"].lower())
+            destinations[route_id].add(row["destination_address"].lower())
     if unknown:
         raise ValueError(f"unknown compiled exchange routes: {unknown[:10]}")
     missing = set(routes) - set(amounts)
@@ -243,15 +252,41 @@ def load_compiled(path, routes):
             raise ValueError(
                 f"{route_id}: compiled amount does not match memo plan"
             )
-        if statuses[route_id] - {EXCHANGE_STATUS, "hold"}:
-            raise ValueError(f"{route_id}: invalid compiled destination status")
+        if statuses[route_id] != {route["status"]}:
+            raise ValueError(
+                f"{route_id}: compiled destination status {sorted(statuses[route_id])} "
+                f"does not equal the planned status {route['status']}"
+            )
         if stages[route_id] != {EXCHANGE_STAGE}:
             raise ValueError(f"{route_id}: compiled exchange stage mismatch")
         if treatments[route_id] != {EXCHANGE_TREATMENT}:
             raise ValueError(f"{route_id}: compiled issuance treatment mismatch")
-        if destinations[route_id] - planned["destinations"]:
-            raise ValueError(f"{route_id}: compiled destination not in the memo plan")
+        expected = {route["expected_destination"]} if route["status"] == EXCHANGE_STATUS else {""}
+        if destinations[route_id] != expected:
+            raise ValueError(
+                f"{route_id}: compiled destinations {sorted(destinations[route_id])} "
+                f"do not equal the planned destination {sorted(expected)}"
+            )
     return amounts, statuses, stages
+
+
+def require_pinned_audits(exchange_summary, policy, audits_dir):
+    """The memo plans come from audit CSVs; accept them only if they are the
+    byte-identical files the accounting run hashed into its summary."""
+    if exchange_summary.get("status") != "passed":
+        raise ValueError("exchange accounting summary did not pass")
+    recorded = exchange_summary.get("audit_outputs", {})
+    exchange_ids = {config["id"] for config in policy["exchanges"]}
+    if set(recorded) != exchange_ids:
+        raise ValueError("exchange summary audit set differs from the policy")
+    for exchange_id in sorted(exchange_ids):
+        path = Path(audits_dir) / f"{exchange_id}.csv"
+        if Path(recorded[exchange_id]["path"]).name != path.name:
+            raise ValueError(f"{exchange_id}: audit path differs from the summary")
+        if file_sha256(path) != recorded[exchange_id]["sha256"]:
+            raise ValueError(
+                f"{exchange_id}: audit CSV hash does not match the accounting summary"
+            )
 
 
 def main():
@@ -270,6 +305,7 @@ def main():
         args.routes
     ):
         raise ValueError("exchange summary does not identify route input")
+    require_pinned_audits(exchange_summary, policy, args.audits_dir)
     with open(args.routing_summary, encoding="utf-8") as source:
         routing_summary = json.load(source)
     if routing_summary.get("inactive_routes"):
