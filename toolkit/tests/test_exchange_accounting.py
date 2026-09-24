@@ -481,6 +481,125 @@ class ExchangeNormalizationTest(unittest.TestCase):
                     "configured",
                 )
 
+    WALLET = "0x28c6c06298d514db089934071355e5743bf21d60"
+    STAKING = "0xf977814e90da44bfa03b6295a0616a897441acec"
+
+    def destination_status(self, mode, text, filename="dest.txt"):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / filename
+            path.write_text(text, encoding="utf-8")
+            config = {
+                "id": "example",
+                "destination_mode": mode,
+                "destination_file": filename,
+                "destination_required": True,
+            }
+            return self.module.destination_status(config, Path(directory))
+
+    def test_split_destinations_are_role_based_not_positional(self):
+        reversed_order = (
+            "role,address,notes\n"
+            f'staking,{self.STAKING},"delegated principal and unclaimed rewards"\n'
+            f'wallet,{self.WALLET},"liquid balances and WONE"\n'
+        )
+        wallet, staking, status, _path, notes = self.destination_status(
+            "aggregate_split", reversed_order
+        )
+        self.assertEqual(status, "configured")
+        self.assertEqual(wallet.lower(), self.WALLET)
+        self.assertEqual(staking.lower(), self.STAKING)
+        self.assertEqual(
+            notes,
+            {
+                "staking": "delegated principal and unclaimed rewards",
+                "wallet": "liquid balances and WONE",
+            },
+        )
+
+    def test_destination_rows_require_roles_and_english_notes(self):
+        cases = (
+            (f"{self.WALLET}\n{self.STAKING}\n", "role,address,notes"),
+            (f"wallet,{self.WALLET},\nstaking,{self.STAKING},x\n", "English"),
+            (f"wallet,{self.WALLET},note\nwallet,{self.STAKING},note\n", "duplicate"),
+            (f"wallet,{self.WALLET},note\n", "exactly the roles"),
+            (f"wallet,{self.WALLET},note\nstaking,{self.WALLET},note\n", "must differ"),
+            (f"treasury,{self.WALLET},note\n", "unknown destination role"),
+        )
+        for text, message in cases:
+            with self.assertRaisesRegex(ValueError, message):
+                self.destination_status("aggregate_split", text)
+        with self.assertRaisesRegex(ValueError, "exactly the roles"):
+            self.destination_status(
+                "aggregate", f"wallet,{self.WALLET},liquid balances\n"
+            )
+        wallet, staking, status, _path, notes = self.destination_status(
+            "aggregate", f"# comment\naggregate,{self.WALLET},all components\n"
+        )
+        self.assertEqual((wallet.lower(), staking, status), (self.WALLET, "", "configured"))
+        self.assertEqual(notes, {"aggregate": "all components"})
+
+    def test_bybit_csv_requires_matching_pair_and_total_row(self):
+        header = "Site,Chain,Coin,ONE Address,0x Address,amount,,,\n"
+        one_a = self.module.lib.hex_to_bech32(self.WALLET)
+        one_b = self.module.lib.hex_to_bech32(self.STAKING)
+        rows = (
+            f"Bybit,ONE,ONE,{one_a},{self.WALLET},\"1,000.5\",,,\n"
+            f"Bybit,ONE,ONE,{one_b},{self.STAKING},\"237,988,937.9034\",,,\n"
+        )
+        config = {"id": "bybit"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bybit.csv"
+            path.write_text(
+                "\ufeff" + header + rows + "总计,\"237,989,938.4034\",,,,,,,\n",
+                encoding="utf-8",
+            )
+            parsed, physical, blank, details = self.module.parse_bybit(
+                config, path, self.module.file_sha256(path), "", "same_address"
+            )
+            self.assertEqual(len(parsed), 2)
+            self.assertEqual(
+                sum(int(row["submitted_balance_atto"]) for row in parsed),
+                237_989_938_403_400_000_000_000_000,
+            )
+            self.assertEqual(
+                details["source_total_row_atto"],
+                str(237_989_938_403_400_000_000_000_000),
+            )
+            path.write_text(
+                "\ufeff" + header + rows + "总计,\"237,989,938.4035\",,,,,,,\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "total"):
+                self.module.parse_bybit(
+                    config, path, self.module.file_sha256(path), "", "same_address"
+                )
+            swapped = rows.replace(f"{one_a},{self.WALLET}", f"{one_a},{self.STAKING}", 1)
+            path.write_text(
+                "\ufeff" + header + swapped + "总计,\"237,989,938.4034\",,,,,,,\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                self.module.parse_bybit(
+                    config, path, self.module.file_sha256(path), "", "same_address"
+                )
+
+    def test_one_to_atto_conversion_is_exact_for_large_values(self):
+        self.assertEqual(
+            self.module.decimal_one_to_atto("12345678901.123456789012345678", "t"),
+            12345678901123456789012345678,
+        )
+        self.assertEqual(
+            self.module.decimal_one_to_atto("9.876543210987654321E+12", "t"),
+            9876543210987654321000000000000,
+        )
+        for bad in ("1.0000000000000000001", "-1", "abc", "1e-19"):
+            with self.assertRaises(ValueError):
+                self.module.decimal_one_to_atto(bad, "t")
+        check = self.module.displayed_total_matches(
+            12345678901123456789012345678, "12345678901.1235", "t"
+        )
+        self.assertEqual(check["rounding_delta_atto"], str(-43210987654322))
+
     def test_formulas_outside_allowed_columns_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             workbook = Path(directory) / "wallets.xlsx"

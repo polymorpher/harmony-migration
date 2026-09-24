@@ -645,6 +645,87 @@ class ExplicitRoutingTest(unittest.TestCase):
                 "explicit_governor_route",
             )
 
+            # Routing safety: a second ALL route for one source, or any route
+            # that compiles to zero after higher-priority routes consumed the
+            # claim, must fail loudly instead of silently producing nothing.
+            with routes.open(newline="") as handle:
+                base_routes = list(csv.DictReader(handle))
+            command = (
+                sys.executable,
+                str(SCRIPT),
+                "--all-claims", str(all_claims),
+                "--automatic-claims", str(automatic),
+                "--contract-claims", str(contracts),
+                "--excluded-claims", str(excluded),
+                "--priority-shares", str(shares),
+                "--deferred-shares", str(deferred_shares),
+                "--base-vault-deposits", str(base_vaults),
+                "--validator-accounts", str(validator_accounts),
+                "--migration-stages", str(migration_stages),
+                "--routes", str(routes),
+                "--destinations", str(destinations),
+                "--governors", str(governors),
+                "--policy-decisions", str(policy_decisions),
+                "--exceptions-output", str(exceptions),
+                "--governor-exceptions-output", str(governor_exceptions),
+                "--vault-stage-output", str(vault_stages),
+                "--unresolved-output", str(unresolved),
+                "--summary", str(summary),
+                "--replace",
+            )
+            for extras, message in (
+                (
+                    [
+                        {
+                            "route_id": "deferred-treasury-duplicate",
+                            "priority": "200",
+                            "source_address": f"0x{4:040x}",
+                            "destination_id": "treasury",
+                            "amount_atto": "ALL",
+                            "allocation_method": "wallet_first_pro_rata_vault",
+                        }
+                    ],
+                    "both consume ALL",
+                ),
+                (
+                    [
+                        # partial-treasury already takes 150 of address 1's
+                        # 200; this exact route takes the other 50, so the
+                        # later ALL route has nothing left to compile.
+                        {
+                            "route_id": "partial-treasury-rest",
+                            "priority": "100",
+                            "source_address": f"0x{1:040x}",
+                            "destination_id": "treasury",
+                            "amount_atto": "50",
+                            "allocation_method": "wallet_first_pro_rata_vault",
+                        },
+                        {
+                            "route_id": "partial-treasury-sweep",
+                            "priority": "200",
+                            "source_address": f"0x{1:040x}",
+                            "destination_id": "treasury",
+                            "amount_atto": "ALL",
+                            "allocation_method": "wallet_first_pro_rata_vault",
+                        },
+                    ],
+                    "compiles to zero",
+                ),
+            ):
+                write_csv(
+                    routes,
+                    route_fields,
+                    base_routes
+                    + [
+                        {field: extra.get(field, "") for field in route_fields}
+                        for extra in extras
+                    ],
+                )
+                failed = subprocess.run(command, capture_output=True, text=True)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn(message, failed.stderr)
+            write_csv(routes, route_fields, base_routes)
+
 
 class PolicyDecisionGateTest(unittest.TestCase):
     @classmethod
