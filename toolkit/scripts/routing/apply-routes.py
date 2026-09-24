@@ -666,6 +666,18 @@ def load_routes(paths, destinations):
                     }
                 )
     routes.sort(key=lambda row: (row["priority"], row["route_id"]))
+    # A second `ALL` route for the same source would always compile to zero
+    # and silently hide a mis-specified policy; require one per source.
+    all_routes = {}
+    for route in routes:
+        if route["amount"] != "ALL":
+            continue
+        previous = all_routes.setdefault(route["source_address"], route)
+        if previous is not route:
+            raise ValueError(
+                f"routes {previous['route_id']} and {route['route_id']} both "
+                f"consume ALL of {route['source_address']}"
+            )
     return routes
 
 
@@ -996,6 +1008,11 @@ def main():
             if amount > remaining_total:
                 raise ValueError(
                     f"route {route['route_id']} exceeds remaining claim"
+                )
+            if amount == 0:
+                raise ValueError(
+                    f"route {route['route_id']} compiles to zero: the source "
+                    "claim was already consumed by higher-priority routes"
                 )
             wallet_amount = 0
             vault_amount = 0
