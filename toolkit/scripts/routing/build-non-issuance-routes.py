@@ -28,6 +28,12 @@ ALLOWED_CATEGORIES = {
     "historical_incident_retained_cap",
     "report_linked_theft_recipient",
     "reported_wallet_theft_perpetrator",
+    "rollback_leak_credit_recipient",
+}
+# The rollback-leak inventory is computed after the retained-cap deduction, so
+# an address may appear in both; every other combination is an overlap error.
+STACKABLE_CATEGORIES = {
+    frozenset({"historical_incident_retained_cap", "rollback_leak_credit_recipient"}),
 }
 
 
@@ -39,8 +45,8 @@ def parse_args():
         required=True,
         help=(
             "audited inventory; repeatable. Existing inventories use "
-            "not_issued_atto and retained historical inventories use "
-            "retained_cap_atto"
+            "not_issued_atto; retained historical and rollback-leak "
+            "inventories use retained_cap_atto"
         ),
     )
     parser.add_argument("--output", required=True)
@@ -69,7 +75,7 @@ def main():
             os.makedirs(parent, exist_ok=True)
 
     rows = []
-    seen = set()
+    seen = {}
     total = 0
     categories = {}
     inventory_records = []
@@ -85,6 +91,9 @@ def main():
             if {"category", "not_issued_atto"} <= fields:
                 amount_field = "not_issued_atto"
                 fixed_category = None
+            elif {"unbacked_credit_atto", "retained_cap_atto", "migration_treatment"} <= fields:
+                amount_field = "retained_cap_atto"
+                fixed_category = "rollback_leak_credit_recipient"
             elif {"incident", "retained_cap_atto", "migration_treatment"} <= fields:
                 amount_field = "retained_cap_atto"
                 fixed_category = "historical_incident_retained_cap"
@@ -106,19 +115,21 @@ def main():
                     )
                 ):
                     raise ValueError(f"{inventory}:{line}: invalid address")
-                if address in seen:
+                category = fixed_category or row["category"]
+                if address in seen and frozenset(
+                    {seen[address], category}
+                ) not in STACKABLE_CATEGORIES:
                     raise ValueError(
                         f"{inventory}:{line}: duplicate inventory address"
                     )
-                seen.add(address)
-                category = fixed_category or row["category"]
+                seen[address] = category
                 if category not in ALLOWED_CATEGORIES:
                     raise ValueError(
                         f"{inventory}:{line}: unsupported category {category}"
                     )
                 if fixed_category and row["migration_treatment"] != "not_issued":
                     raise ValueError(
-                        f"{inventory}:{line}: retained cap is not not_issued"
+                        f"{inventory}:{line}: {fixed_category} row is not not_issued"
                     )
                 category_stats = categories.setdefault(
                     category,

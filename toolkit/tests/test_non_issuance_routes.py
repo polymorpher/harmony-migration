@@ -169,6 +169,66 @@ class NonIssuanceRoutesTest(unittest.TestCase):
                 "11",
             )
 
+    def write(self, path, fields, rows):
+        with path.open("w", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=fields, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def run_builder(self, root, *inventories):
+        command = [sys.executable, str(SCRIPT)]
+        for inventory in inventories:
+            command += ["--inventory", str(inventory)]
+        command += ["--output", str(root / "routes.csv"), "--summary", str(root / "summary.json")]
+        return subprocess.run(command, capture_output=True, text=True)
+
+    def test_rollback_leak_stacks_only_on_retained_caps(self):
+        retained_fields = ("address_hex", "incident", "retained_cap_atto", "migration_treatment")
+        leak_fields = ("address_hex", "incident", "unbacked_credit_atto", "retained_cap_atto", "migration_treatment")
+        shared = f"0x{5:040x}"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            retained = root / "retained.csv"
+            leak = root / "leak.csv"
+            existing = root / "existing.csv"
+            self.write(retained, retained_fields, [
+                {"address_hex": shared, "incident": "may-2025", "retained_cap_atto": "3",
+                 "migration_treatment": "not_issued"},
+            ])
+            self.write(leak, leak_fields, [
+                {"address_hex": shared, "incident": "may-2025", "unbacked_credit_atto": "900",
+                 "retained_cap_atto": "4", "migration_treatment": "not_issued"},
+                {"address_hex": f"0x{6:040x}", "incident": "june-july-2026", "unbacked_credit_atto": "50",
+                 "retained_cap_atto": "50", "migration_treatment": "not_issued"},
+            ])
+            result = self.run_builder(root, retained, leak)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with (root / "routes.csv").open(newline="") as source:
+                rows = list(csv.DictReader(source))
+            self.assertEqual(
+                sorted((row["source_address"], row["reason"], row["amount_atto"]) for row in rows),
+                sorted([
+                    (shared, "not_issuing_historical_incident_retained_cap", "3"),
+                    (shared, "not_issuing_rollback_leak_credit_recipient", "4"),
+                    (f"0x{6:040x}", "not_issuing_rollback_leak_credit_recipient", "50"),
+                ]),
+            )
+            summary = json.loads((root / "summary.json").read_text())
+            self.assertEqual(summary["categories"]["rollback_leak_credit_recipient"]["not_issued_atto"], "54")
+
+            self.write(existing, ("address_hex", "category", "not_issued_atto"), [
+                {"address_hex": f"0x{6:040x}", "category": "burn_or_inaccessible", "not_issued_atto": "1"},
+            ])
+            (root / "routes.csv").unlink()
+            (root / "summary.json").unlink()
+            result = self.run_builder(root, existing, leak)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("duplicate inventory address", result.stderr)
+
+            result = self.run_builder(root, leak, leak)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("duplicate inventory address", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

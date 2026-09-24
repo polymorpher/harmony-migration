@@ -22,6 +22,9 @@ CATEGORY_LABELS = {
     "reported_wallet_theft_perpetrator": (
         "Report-identified wallet-theft perpetrator amounts"
     ),
+    "rollback_leak_credit_recipient": (
+        "Rollback-exploit credit at the wallets that received it"
+    ),
 }
 
 
@@ -106,8 +109,9 @@ def main():
         "historical_incident_retained_cap",
         "report_linked_theft_recipient",
         "reported_wallet_theft_perpetrator",
+        "rollback_leak_credit_recipient",
     ):
-        values = routes["categories"][category]
+        values = routes["categories"].get(category, {"routes": 0, "not_issued_atto": "0"})
         category_rows.append(
             (
                 CATEGORY_LABELS[category],
@@ -136,6 +140,18 @@ classification and routing update, not additional supply.
 
 Twenty reported victim wallets are recorded separately and are not routed to
 non-issuance.
+
+The September 23 update removes exploit credit from the wallets that received
+it: every wallet credited by a proven rollback-leak receipt (May 2025, April
+2026, and the June–July 2026 cohort) is not issued the credited amount, capped
+at what it still holds after the earlier deductions. A wallet that holds only
+exploit credit loses its whole claim; one that also held legitimate funds keeps
+the difference. This resolves the `rollback-exploit-proceeds` decision.
+
+The same day, one reviewed address was added to the burn and inaccessible
+category: on Ethereum it is the legacy bridged ERC-20 contract named Harmony ONE
+(symbol 1ONE), so replacement ONE delivered to it would be stuck, and on Harmony
+it never sent a transaction. Its whole cutoff claim is not issued.
 
 ## Exact non-issuance
 
@@ -171,7 +187,9 @@ gross expanded claim = remaining issuable + not issued + redistributed source + 
 ## Routing behavior
 
 - `build-non-issuance-routes.py` copies each positive `not_issued_atto` or
-  `retained_cap_atto` amount exactly and rejects inventory overlap.
+  `retained_cap_atto` amount exactly and rejects inventory overlap, except that
+  a wallet may carry both a retained cap and the rollback-leak amount computed
+  from what the cap leaves.
 - `apply-routes.py` emits `destination_status = not_issuing` with no
   destination address.
 - WONE redistribution is reported separately from `not_issuing`; only the
