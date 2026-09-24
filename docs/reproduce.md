@@ -672,6 +672,7 @@ python3 toolkit/scripts/exchanges/verify-exchange-routing.py \
 
 python3 toolkit/scripts/exchanges/build-exchange-native-policy.py \
   --policy exchanges/exchange-policy.json \
+  --exchange-summary artifacts/exchange-accounting-20260917/summary.json \
   --audits-dir artifacts/exchange-accounting-20260917/audits \
   --normalization-summary exchanges/wallets-standardized/summary.json \
   --native-claims artifacts/cutoff-20260910/claims/all-address-native-claims-cutoff-metadata.csv \

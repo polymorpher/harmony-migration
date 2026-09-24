@@ -16,7 +16,6 @@ import json
 import os
 import sys
 from collections import defaultdict
-from decimal import Decimal
 from pathlib import Path
 
 
@@ -98,6 +97,7 @@ TIER_TEXT = {
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--policy", required=True)
+    parser.add_argument("--exchange-summary", required=True)
     parser.add_argument("--audits-dir", required=True)
     parser.add_argument("--normalization-summary", required=True)
     parser.add_argument("--native-claims", required=True)
@@ -135,6 +135,106 @@ def load_policy(path):
     return policy
 
 
+def load_exchange_summary(path, policy, audits_dir, normalization_summary):
+    """Pin the audit CSVs to the accounting run that produced them.
+
+    The audits are plain CSVs; this builder must not trust their contents
+    unless they are byte-identical to what `build-exchange-accounting.py`
+    hashed into its summary, and that summary must itself be pinned to the
+    same policy and normalization inputs used here.
+    """
+    with open(path, encoding="utf-8") as source:
+        summary = json.load(source)
+    if summary.get("schema_version") != 2:
+        raise ValueError("unsupported exchange accounting summary schema")
+    if summary.get("status") != "passed" or not summary.get("routes_emitted"):
+        raise ValueError(
+            "exchange accounting summary is not a passed, stage-complete run"
+        )
+    if summary.get("delivery_policy") != "manual_from_reserve" or summary.get(
+        "delivery_source"
+    ) != DELIVERY_SOURCE:
+        raise ValueError("exchange accounting summary delivery policy mismatch")
+    for label, actual in (
+        ("policy", file_sha256(policy)),
+        ("normalization_summary", file_sha256(normalization_summary)),
+    ):
+        if summary.get(f"{label}_sha256") != actual:
+            raise ValueError(
+                f"exchange accounting summary pins a different {label} "
+                "than the one supplied"
+            )
+    exchange_ids = [config["id"] for config in load_policy(policy)["exchanges"]]
+    audit_outputs = summary.get("audit_outputs", {})
+    if set(audit_outputs) != set(exchange_ids) or set(summary["exchanges"]) != set(
+        exchange_ids
+    ):
+        raise ValueError("exchange accounting summary covers a different exchange set")
+    for exchange_id in exchange_ids:
+        recorded = audit_outputs[exchange_id]
+        actual_path = Path(audits_dir) / f"{exchange_id}.csv"
+        if Path(recorded["path"]).resolve() != actual_path.resolve():
+            raise ValueError(f"{exchange_id}: audit path differs from the summary")
+        if file_sha256(actual_path) != recorded["sha256"]:
+            raise ValueError(
+                f"{exchange_id}: audit CSV hash does not match the accounting "
+                "summary; regenerate the accounting before building deliveries"
+            )
+    return summary
+
+
+def require_summary_agreement(exchange_id, config, exchange_summary, rows, deliveries):
+    """Cross-check audit rows against the accounting summary's own view."""
+    recorded = exchange_summary["exchanges"][exchange_id]
+    if recorded["destination_mode"] != config["destination_mode"]:
+        raise ValueError(f"{exchange_id}: destination mode differs from the summary")
+    if recorded["memo_status"] != "ready_for_manual_reserve_delivery":
+        raise ValueError(
+            f"{exchange_id}: accounting memo is {recorded['memo_status']}, "
+            "not ready for manual reserve delivery"
+        )
+    if recorded["destination_status"] not in {"configured", "same_address"}:
+        raise ValueError(f"{exchange_id}: destination is not configured")
+    planned_wallet = {row["planned_wallet_destination"].lower() for row in rows if int(row["planned_total_entitlement_atto"]) > 0}
+    planned_staking = {row["planned_staking_destination"].lower() for row in rows if int(row["planned_total_entitlement_atto"]) > 0}
+    mode = config["destination_mode"]
+    if mode == "aggregate":
+        expected = {recorded["destination"].lower()}
+        if planned_wallet != expected or planned_staking != expected:
+            raise ValueError(f"{exchange_id}: audit destinations differ from the summary")
+    elif mode == "aggregate_split":
+        if planned_wallet != {recorded["destination"].lower()} or planned_staking != {
+            recorded["staking_destination"].lower()
+        }:
+            raise ValueError(f"{exchange_id}: audit split destinations differ from the summary")
+    elif mode == "same_address":
+        if any(row["planned_wallet_destination"].lower() != row["address_hex"].lower() for row in rows if int(row["planned_total_entitlement_atto"]) > 0):
+            raise ValueError(f"{exchange_id}: same-address audit row targets another address")
+    else:  # tiered
+        aggregated = {
+            row["planned_wallet_destination"].lower()
+            for row in rows
+            if row["delivery_tier"] == "aggregated_non_initial"
+            and int(row["planned_total_entitlement_atto"]) > 0
+        }
+        own = [
+            row
+            for row in rows
+            if row["delivery_tier"] == "same_address_initial"
+            and int(row["planned_total_entitlement_atto"]) > 0
+            and row["planned_wallet_destination"].lower() != row["address_hex"].lower()
+        ]
+        if aggregated != {recorded["destination"].lower()} or own:
+            raise ValueError(f"{exchange_id}: tiered destinations differ from the summary")
+    recorded_total = int(recorded["totals"]["planned_total_entitlement_atto"])
+    if recorded_total != sum(int(row["total_delivery_atto"]) for row in deliveries):
+        raise ValueError(f"{exchange_id}: delivery total differs from the accounting summary")
+    if int(recorded["totals"].get("planned_staked_to_vault_atto", 0)) != sum(
+        int(row["staked_released_atto"]) for row in deliveries
+    ):
+        raise ValueError(f"{exchange_id}: released delegation differs from the accounting summary")
+
+
 def load_address_list(path):
     addresses = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
@@ -151,11 +251,12 @@ def load_address_list(path):
 
 
 def load_reported_total(path):
-    text = Path(path).read_text(encoding="utf-8").strip()
-    value = Decimal(text) * 10**18
-    if value < 0 or value != value.to_integral_value():
-        raise ValueError("Gate reported total is not exact atto-ONE")
-    return int(value)
+    """Exact ONE -> atto-ONE without default-context Decimal rounding."""
+    text = Path(path).read_text(encoding="utf-8").strip().replace(",", "")
+    whole, dot, fraction = text.partition(".")
+    if not whole.isdigit() or (dot and not fraction.isdigit()) or len(fraction) > 18:
+        raise ValueError(f"Gate reported total is not exact atto-ONE: {text!r}")
+    return int(whole) * 10**18 + int(fraction.ljust(18, "0") or 0)
 
 
 def load_digitalx_submission(path):
@@ -716,6 +817,36 @@ def render_report(result):
             f"each source wallet | {wallets:,} | {one(native, True)} | "
             f"{one(wone, True)} | {one(staked, True)} | {one(total, True)} |"
         )
+    shared = defaultdict(list)
+    for row in result["deliveries"]:
+        shared[row["destination_address"]].append(row)
+    shared_lines = [
+        f"- `{address}` ({DISPLAY_NAMES[rows[0]['exchange_id']]}): "
+        + " + ".join(
+            f"{one(row['total_delivery_atto'], True)} ({TIER_TEXT[row['delivery_tier']]}"
+            f"{', its own wallet claim' if row['delivery_tier'] in {'same_address', 'same_address_initial'} else ''})"
+            for row in rows
+        )
+        + f" = **{one(sum(int(row['total_delivery_atto']) for row in rows), True)} ONE**"
+        for address, rows in sorted(shared.items())
+        if len(rows) > 1
+    ]
+    shared_text = (
+        "\n".join(
+            (
+                "The following destination addresses appear in more than one "
+                "worksheet row because the address is itself a source wallet in "
+                "the inventory as well as the exchange's aggregate destination. "
+                "Operators may send the rows as separate transfers or as one "
+                "combined transfer; either way the address must receive exactly "
+                "the total shown:",
+                "",
+                *shared_lines,
+            )
+        )
+        if shared_lines
+        else "No destination address appears in more than one worksheet row."
+    )
     vault = result["vault_release"]
     gate = result["gate"]
     digitalx = result["digitalx"]
@@ -739,6 +870,8 @@ rows are in `exchange-wallet-deliveries.csv`. Aggregate destinations receive
 one transfer each.
 
 {chr(10).join(delivery_table)}
+
+{shared_text}
 
 ## Delegated principal released from validator vaults
 
@@ -832,6 +965,9 @@ def main():
     policy = load_policy(args.policy)
     audits_dir = Path(args.audits_dir)
     output_dir = Path(args.output_dir)
+    exchange_summary = load_exchange_summary(
+        args.exchange_summary, args.policy, audits_dir, args.normalization_summary
+    )
     gate_supplemental = load_address_list(args.gate_supplemental)
     gate_reported_total = load_reported_total(args.gate_reported_total)
     digitalx_submission = load_digitalx_submission(args.normalization_summary)
@@ -867,6 +1003,8 @@ def main():
     for exchange_id in exchange_ids:
         rows = audits[exchange_id]
         deliveries, wallets = build_deliveries(exchange_id, rows)
+        config = next(item for item in policy["exchanges"] if item["id"] == exchange_id)
+        require_summary_agreement(exchange_id, config, exchange_summary, rows, deliveries)
         delivery_rows.extend(deliveries)
         wallet_rows.extend(wallets)
         totals = exchange_totals(rows)
@@ -1032,6 +1170,10 @@ def main():
         "digitalx": digitalx_result,
         "inputs": {
             "policy": {"path": args.policy, "sha256": file_sha256(args.policy)},
+            "exchange_summary": {
+                "path": args.exchange_summary,
+                "sha256": file_sha256(args.exchange_summary),
+            },
             "audits": {
                 exchange_id: {
                     "path": str(audits_dir / f"{exchange_id}.csv"),
