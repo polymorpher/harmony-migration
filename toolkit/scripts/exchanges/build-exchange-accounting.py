@@ -1008,16 +1008,19 @@ def summarize_exchange(exchange, rows):
                 "staking_destination": key[2],
                 "wallets": 0,
                 "wallet_component_atto": 0,
+                "wone_atto": 0,
                 "staking_component_atto": 0,
             },
         )
         group["wallets"] += 1
         group["wallet_component_atto"] += int(row["wallet_component_atto"])
+        group["wone_atto"] += int(row["wone_airdrop_atto"])
         group["staking_component_atto"] += int(row["staking_component_atto"])
     delivery_groups = [
         {
             **group,
             "wallet_component_atto": str(group["wallet_component_atto"]),
+            "wone_atto": str(group["wone_atto"]),
             "staking_component_atto": str(group["staking_component_atto"]),
             "total_atto": str(
                 group["wallet_component_atto"] + group["staking_component_atto"]
@@ -1269,7 +1272,10 @@ def render_memo(config, summary, cutoff_text, threshold):
         (
             group["delivery_tier"],
             f"{group['wallets']:,}",
-            one_display(group["wallet_component_atto"]),
+            one_display(
+                int(group["wallet_component_atto"]) - int(group["wone_atto"])
+            ),
+            one_display(group["wone_atto"]),
             one_display(group["staking_component_atto"]),
             one_display(group["total_atto"]),
             (
@@ -1291,9 +1297,10 @@ def render_memo(config, summary, cutoff_text, threshold):
             (
                 "Delivery tier",
                 "Wallets",
-                "Wallet component ONE",
+                "Liquid + cross-shard ONE",
+                "WONE",
                 "Staking component ONE",
-                "Total ONE",
+                "Total manual delivery ONE",
                 "Destination",
             ),
             group_rows,
@@ -1529,9 +1536,12 @@ come from the cutoff-pinned Harmony migration claim ledger.
 {threshold_counts}
 ### Delivery by tier and destination
 
-Wallet component = liquid shard-0 and shard-1 balance, supported pending
-cross-shard receipts, and WONE. Staking component = active delegated
-principal, pending undelegation, and unclaimed staking reward.
+The wallet destination receives liquid shard-0 and shard-1 balance plus
+supported pending cross-shard receipts (`Liquid + cross-shard ONE`) and the
+cutoff WONE balance delivered as ONE (`WONE`). The staking destination
+receives the staking component: active delegated principal, pending
+undelegation, and unclaimed staking reward. `Total manual delivery ONE` is the
+sum of the three amount columns.
 
 {delivery_table}
 
@@ -1719,21 +1729,30 @@ def render_summary_report(policy, summaries, cutoff_text):
             )
         else:
             destination_text = summary["destination"] or "hold"
+        totals = summary["totals"]
+        liquid_cross_shard = (
+            int(totals["liquid_shard0_atto"])
+            + int(totals["liquid_shard1_atto"])
+            + int(totals["pending_cross_shard_atto"])
+        )
+        wone = int(totals["wone_airdrop_atto"])
+        staking = int(totals["staking_component_atto"])
+        manual_total = int(totals["planned_total_entitlement_atto"])
+        if liquid_cross_shard + wone + staking != manual_total:
+            raise ValueError(
+                f"{config['id']}: delivery summary columns do not sum to the "
+                "total manual delivery"
+            )
         delivery_rows.append(
             (
                 config["display_name"],
                 summary["destination_mode"],
                 summary["memo_status"],
                 f"{summary['wallet_rows']:,}",
-                one_display(
-                    summary["totals"]["wallet_component_atto"]
-                ),
-                one_display(
-                    summary["totals"]["staking_component_atto"]
-                ),
-                one_display(
-                    summary["totals"]["planned_total_entitlement_atto"]
-                ),
+                one_display(liquid_cross_shard),
+                one_display(wone),
+                one_display(staking),
+                one_display(manual_total),
                 destination_text,
             )
         )
@@ -1827,9 +1846,12 @@ cutoff-pinned migration ledger without re-deriving chain state.
 The ordinary threshold does not limit manual delivery; it only removes
 exchange wallets from the automatic same-address airdrop (recorded in the
 generated exclusion artifact) and, with six-month activity, selects the
-same-address tier of a tiered exchange. Wallet component = liquid balances,
-supported cross-shard receipts, and WONE; staking component = delegated
-principal, pending undelegation, and unclaimed rewards.
+same-address tier of a tiered exchange. The wallet destination receives
+`Liquid + cross-shard ONE` (liquid shard-0 and shard-1 balances and supported
+cross-shard receipts) and `WONE` (the cutoff WONE balance, delivered as ONE);
+the staking destination receives `Staking component ONE` (delegated principal,
+pending undelegation, and unclaimed rewards). `Total manual delivery ONE` is
+the sum of those three columns.
 
 {markdown_table(
         (
@@ -1837,9 +1859,10 @@ principal, pending undelegation, and unclaimed rewards.
             'Mode',
             'Status',
             'Wallets',
-            'Wallet component ONE',
+            'Liquid + cross-shard ONE',
+            'WONE',
             'Staking component ONE',
-            'Manual delivery ONE',
+            'Total manual delivery ONE',
             'Destination(s)',
         ),
         delivery_rows,
