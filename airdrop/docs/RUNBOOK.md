@@ -146,6 +146,15 @@ reconciliation files) and the broadcast log as the record of the distribution.
   and approves the new contract for the new total. Publish both run directories and note which
   batches of the first contract were executed.
 
+## Paying directly from the Safe instead
+
+When the signers approve each batch themselves, no contract is deployed: choose the batch with
+`./airdrop.py select-batch`, prepare its Safe transactions with `./airdrop.py safe-batch build`,
+have a second person run `./airdrop.py safe-batch verify`, then propose, check and sign each
+transaction in the Safe web app. `docs/SAFE_DIRECT.md` is the full procedure, including what every
+signer compares before signing. Pass each finished batch's `recipients.csv` to the next
+`select-batch --paid` so nobody is paid twice.
+
 ## Rehearsal plan
 
 1. **Local**: `./airdrop.py local-demo`. Exercises every command against a local chain.

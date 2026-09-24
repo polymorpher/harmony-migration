@@ -543,7 +543,9 @@ class Rpc:
 
     def _post(self, payload):
         data = json.dumps(payload).encode()
-        request = urllib.request.Request(self.url, data=data, headers={"Content-Type": "application/json"})
+        # Some public endpoints reject urllib's default User-Agent (Cloudflare error 1010).
+        headers = {"Content-Type": "application/json", "User-Agent": "harmony-airdrop-tools/1"}
+        request = urllib.request.Request(self.url, data=data, headers=headers)
         last_error = None
         for attempt in range(self.retries):
             try:

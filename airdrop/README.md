@@ -23,6 +23,15 @@ anything already sent is rejected. The operator cannot change an address, change
 payment, or pay anyone twice. If the list ever has to change, a new contract is deployed with a new
 root and the old one is switched off by revoking its allowance.
 
+## A second way: paying directly from the Safe
+
+For a distribution the signers prefer to approve batch by batch, the tools can also prepare Safe
+transactions that pay a list with plain token transfers from the Safe itself, with no contract and
+no operator wallet. Every batch is then a Safe transaction the signers check against three hashes
+before signing. `docs/SAFE_DIRECT.md` explains the procedure; `tools/select_batch.py` chooses the
+recipients of a batch and `tools/safe_batch.py` prepares, verifies and hashes the Safe
+transactions.
+
 ## What you can check yourself
 
 - That the published list produces the root written in the contract, using either the Python
@@ -55,6 +64,8 @@ tools/verify.py                recompute everything from the list and compare (P
 tools/status.py                what the deployed contract says
 tools/reconcile.py             read every recipient's balance after the run
 tools/approve_calldata.py      the one transaction the reserve has to send
+tools/select_batch.py          choose the recipients of the next batch (budget, required, held, paid)
+tools/safe_batch.py            without the contract: Safe transactions that pay a list, their hashes
 tools/common.py                keccak, ABI encoding, the tree, CSV reading, JSON-RPC
 test/                          Solidity tests, including a cross-check against the Python tool
 examples/recipients-example.csv a small made-up list to try the tools on
@@ -134,3 +145,4 @@ Gas: a batch of 400 recipients uses about 11 million gas. Ethereum caps a single
   Ethereum, and the real distributions.
 - `docs/VERIFY.md`: how to check the published files and the contract without trusting anyone.
 - `docs/DESIGN.md`: why this design was chosen over alternatives, and the exact hashing rules.
+- `docs/SAFE_DIRECT.md`: paying a list directly from the Safe, and what each signer checks.

@@ -90,6 +90,24 @@ python3 tools/reconcile.py --run-dir <run directory> --airdrop <address> --rpc-u
 It reads each recipient's balance at that block and reports any address holding less than its
 published amount (there should be none), plus the contract's counters and the remaining allowance.
 
+## Batches paid directly from the Safe
+
+Some batches may be paid by the Safe itself instead of the contract (see `docs/SAFE_DIRECT.md`).
+For those, the published folder contains `recipients.csv`, `manifest.json` and one folder per Safe
+transaction. To check them:
+
+```bash
+python3 tools/safe_batch.py verify --out-dir <published folder> --rpc-url <endpoint> --balances
+```
+
+This rebuilds every Safe transaction and hash from `recipients.csv`, checks the Safe and token on
+the chain, and counts the recipients whose balance covers their amount. To check an executed
+transaction directly, copy its input data from Etherscan (the Safe's `execTransaction` call; the
+`data` argument) into a file and run `python3 tools/safe_batch.py hash --safe <Safe> --chain-id 1
+--nonce <nonce> --to <to argument> --operation <operation argument> --data-file data.hex
+--list-out decoded.csv`: it decodes every transfer and recomputes the Safe transaction hash that
+the owners signed.
+
 ## 7. Is the deployed code what is in this repository?
 
 The contract is verified on Etherscan, so the source is visible there and Etherscan has already

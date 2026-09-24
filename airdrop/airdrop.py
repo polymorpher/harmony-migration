@@ -30,6 +30,8 @@ import approve_calldata  # noqa: E402
 import build  # noqa: E402
 import common  # noqa: E402
 import reconcile  # noqa: E402
+import safe_batch  # noqa: E402
+import select_batch  # noqa: E402
 import status  # noqa: E402
 import verify  # noqa: E402
 
@@ -242,6 +244,14 @@ def cmd_test(env: dict, ns: argparse.Namespace) -> None:
     run(["forge", "test", *ns.args])
 
 
+def cmd_select_batch(env: dict, ns: argparse.Namespace) -> None:
+    select_batch.main(ns.args)
+
+
+def cmd_safe_batch(env: dict, ns: argparse.Namespace) -> None:
+    safe_batch.main(ns.args)
+
+
 # ---------------------------------------------------------------------------------------------
 # local demo: the whole flow against an Anvil node, using Anvil's well-known development keys
 # ---------------------------------------------------------------------------------------------
@@ -348,6 +358,8 @@ PASSTHROUGH = {
     "status": (cmd_status, "options for tools/status.py"),
     "reconcile": (cmd_reconcile, "options for tools/reconcile.py, e.g. --block N"),
     "test": (cmd_test, "forge test flags"),
+    "select-batch": (cmd_select_batch, "options for tools/select_batch.py: --input FILE --out-dir DIR [--budget N] ..."),
+    "safe-batch": (cmd_safe_batch, "tools/safe_batch.py build|verify|hash ..."),
 }
 FORGE_EXTRA_HELP = "Extra forge flags may follow a `--` separator."
 
@@ -393,6 +405,10 @@ def build_parser() -> argparse.ArgumentParser:
             cmd_local_demo)
     p.add_argument("--port", type=int, default=8546)
     add("test", "Run the Solidity test suite. " + PASSTHROUGH["test"][1], cmd_test)
+    add("select-batch", "Choose the recipients of the next batch (budget, required and held addresses). "
+        + PASSTHROUGH["select-batch"][1], cmd_select_batch)
+    add("safe-batch", "Without a contract: prepare, verify, or hash Safe transactions that pay a list directly. "
+        + PASSTHROUGH["safe-batch"][1], cmd_safe_batch)
     add("help", "Show this help.", None)
     return parser
 
