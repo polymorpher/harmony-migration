@@ -51,8 +51,18 @@ def parse_args():
     parser.add_argument("--activity-summary", required=True)
     parser.add_argument("--migration-summary", required=True)
     parser.add_argument("--contract-review", required=True)
-    parser.add_argument("--existing-non-issuance", required=True)
-    parser.add_argument("--historical-retention", required=True)
+    parser.add_argument(
+        "--existing-non-issuance",
+        action="append",
+        required=True,
+        help="reviewed non-issuance inventory (not_issued_atto); repeatable, an address may appear in only one",
+    )
+    parser.add_argument(
+        "--historical-retention",
+        action="append",
+        required=True,
+        help="retained-cap export (retained_cap_atto); repeatable, amounts for one address add up",
+    )
     parser.add_argument("--manual-wallets", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", required=True)
@@ -424,12 +434,20 @@ def main():
     if parse_utc(windows[args.initial_months]["since_time_utc"]) != initial_since:
         raise ValueError("initial activity window does not match cutoff")
 
-    existing = load_amounts(
-        args.existing_non_issuance, "not_issued_atto", "non-issuance"
-    )
-    historical = load_amounts(
-        args.historical_retention, "retained_cap_atto", "retained cap"
-    )
+    existing = {}
+    for path in args.existing_non_issuance:
+        for address, amount in load_amounts(
+            path, "not_issued_atto", "non-issuance"
+        ).items():
+            if address in existing:
+                raise ValueError(f"{path}: {address} is in more than one non-issuance inventory")
+            existing[address] = amount
+    historical = defaultdict(int)
+    for path in args.historical_retention:
+        for address, amount in load_amounts(
+            path, "retained_cap_atto", "retained cap"
+        ).items():
+            historical[address] += amount
     overlap = set(existing) & set(historical)
     if overlap:
         raise ValueError(
@@ -802,14 +820,14 @@ def main():
             "path": args.contract_review,
             "sha256": file_sha256(args.contract_review),
         },
-        "existing_non_issuance": {
-            "path": args.existing_non_issuance,
-            "sha256": file_sha256(args.existing_non_issuance),
-        },
-        "historical_retention": {
-            "path": args.historical_retention,
-            "sha256": file_sha256(args.historical_retention),
-        },
+        "existing_non_issuance": [
+            {"path": path, "sha256": file_sha256(path)}
+            for path in args.existing_non_issuance
+        ],
+        "historical_retention": [
+            {"path": path, "sha256": file_sha256(path)}
+            for path in args.historical_retention
+        ],
         "manual_wallets": {
             "path": args.manual_wallets,
             "sha256": file_sha256(args.manual_wallets),

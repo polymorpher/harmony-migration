@@ -85,10 +85,11 @@ def main():
         raise ValueError("stage summary does not identify stage policy")
     if routing["migration_stages_sha256"] != stage_hash:
         raise ValueError("routing summary does not identify stage policy")
-    for name, record in summary["sources"].items():
-        source = resolve_source(record["path"], args.stage_summary)
-        if file_sha256(source) != record["sha256"]:
-            raise ValueError(f"stage source hash mismatch: {name}")
+    for name, records in summary["sources"].items():
+        for record in records if isinstance(records, list) else [records]:
+            source = resolve_source(record["path"], args.stage_summary)
+            if file_sha256(source) != record["sha256"]:
+                raise ValueError(f"stage source hash mismatch: {name}")
 
     stages = defaultdict(lambda: {"addresses": 0, "allocation_atto": 0})
     treatments = Counter()

@@ -50,7 +50,9 @@ migration-policy: check-python
 		--migration-summary artifacts/cutoff-20260910/claims/all-address-migration-claims-cutoff-summary.json \
 		--contract-review artifacts/contract-review-20260911/out/contract-review-policy.csv \
 		--existing-non-issuance artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
+		--existing-non-issuance artifacts/supply-reconciliation-20260911/inaccessible-address-inventory-20260923.csv \
 		--historical-retention artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv \
+		--historical-retention artifacts/supply-reconciliation-20260911/not-issued-rollback-leak-recipients.csv \
 		--manual-wallets artifacts/exchange-accounting-20260917/qualified-exchange-exclusions.csv \
 		--output artifacts/migration-policy-20260917/migration-stage-policy.csv \
 		--summary artifacts/migration-policy-20260917/migration-stage-summary.json \
