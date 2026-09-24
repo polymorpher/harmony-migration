@@ -634,8 +634,8 @@ These unredacted files are under the numerical-results embargo:
 - `claim-accounting/initial-stage-materialization.md` — initial-only wallet,
   vault-share, validator-vault, unresolved, and readiness outputs;
 - `claim-accounting/wone-holder-qualification.md` — cutoff WONE holder
-  reconciliation, combined threshold, aggregate-exchange exception, wallet
-  amount, and source split;
+  reconciliation, combined threshold, exchange manual-delivery exception,
+  wallet amount, and source split;
 - `destination-mapping/contract-account-review.md` — contract
   classifications, balances, destination evidence, and reviewed stage policy;
 - `destination-mapping/historical-treasury-routing-audit.md` — retained

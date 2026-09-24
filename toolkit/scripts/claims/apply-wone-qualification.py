@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Add ordinary-threshold and aggregate-exchange WONE to migration claims."""
+"""Add ordinary-threshold and exchange manual-delivery WONE to migration claims."""
 
 import argparse
 import csv

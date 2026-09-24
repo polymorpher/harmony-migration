@@ -333,8 +333,9 @@ It is not an inactivity detector or a finding about beneficial ownership.
 Before explicit routing, the ordinary initial wallet cohort contains
 `{result["initial_wallets"]["automatic_policy_addresses"]:,}` automatic-policy
 rows and `{result["initial_wallets"]["manual_routing_addresses"]:,}`
-exchange/manual rows. Confirmed non-Gate rows are removed from this cohort when
-routing compiles the separate exchange stage. This report is not an
+exchange/manual rows. Confirmed exchange rows are removed from this cohort when
+routing compiles the separate `exchange_manual` stage, which is delivered by
+hand from the 2050 supply reserve and never airdropped. This report is not an
 unconditional same-address distribution manifest.
 
 ## Wallet activity windows

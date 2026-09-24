@@ -180,7 +180,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Verify WONE holders, claim overlay, ordinary-threshold and "
-            "aggregate-exchange selection, and reserve routing without "
+            "exchange manual-delivery selection, and reserve routing without "
             "changing source artifacts."
         )
     )
