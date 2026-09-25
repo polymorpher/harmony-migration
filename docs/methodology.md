@@ -102,8 +102,10 @@ historical metadata and would double-count rewards already represented in
 delegation state.
 
 The inclusive threshold is evaluated on snapshot
-`qualification_total_atto` before deductions. A separate stage policy then
-applies the six-month activity window only to wallets, holds approved reviewed
+`qualification_total_atto` before deductions to define the review scope. A
+separate stage policy then retests wallets after incident deductions (reviewed
+non-issuance and retained exploit caps), defers wallets that fall below
+1,000 ONE, applies the six-month activity window only to wallets, holds approved reviewed
 contracts for the next stage regardless of activity, and excludes the
 remaining reviewed contracts from both token and vault-share issuance.
 

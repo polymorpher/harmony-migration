@@ -68,7 +68,7 @@ Before publishing the migration allocation:
    destination.
 6. State that rollback-exploit proceeds are not issued: retained balances at
    the incident-contract recipients, and the credited amount at every wallet a
-   proven rollback-leak receipt credited, capped at what the wallet still
+   proven revert-leak receipt credited, capped at what the wallet still
    holds. Legitimate remainders stay eligible.
 7. Reconcile the WONE holder ledger to `totalSupply()` and the native reserve.
    Confirm that ordinary-threshold and exchange manual-delivery WONE amounts

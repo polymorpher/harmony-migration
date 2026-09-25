@@ -255,9 +255,9 @@ On September 23 the `rollback-exploit-proceeds` decision, open since the
 routing toolkit was first built, was resolved to match the September 16
 non-issuance policy. The September 16 inventory covered the wallets funded by
 the May 2025 and April 2026 incident contracts; it did not cover the smaller
-June–July 2026 rollback-leak cohort, whose signers credited the leaked ONE
+June–July 2026 revert-leak cohort, whose signers credited the leaked ONE
 directly to their own wallets. A second inventory now withholds, from every
-wallet credited by a proven rollback-leak receipt, the credited amount capped
+wallet credited by a proven revert-leak receipt, the credited amount capped
 at what the wallet still holds after the earlier deduction, and the stage
 policy and route builder accept both inventories.
 
@@ -267,6 +267,19 @@ Harmony it had only ever received transfers. Replacement ONE delivered there
 would be stuck, so it was reviewed as inaccessible and its whole claim is not
 issued, through a new reviewed-inaccessible inventory read alongside the
 existing one.
+
+On September 24 two corrections were made before any batch was sent. First,
+incident deductions (reviewed non-issuance and retained exploit caps) now apply
+before the 1,000 ONE test for the wallet stage, so wallets with mixed
+legitimate and incident funds qualify only on the legitimate part; wallets
+that fall below are deferred. Second, a directional per-account scan of the
+explorer node's address index (`account-directional-activity`, which also
+finds self-transfers and self-staking that the index stores only as received)
+supplied later activity for some candidates; wallets that signed transactions
+on August 20–21, 2026 now meet the six-month rule and enter the initial
+distribution. The batch 1 draw built from the previous list was marked
+deprecated and drawn again from the regenerated list with a new seed
+commitment.
 
 ## 14. Preservation
 

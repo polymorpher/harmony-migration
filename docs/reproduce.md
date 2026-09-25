@@ -510,11 +510,11 @@ is the `harmony-supply-audit` toolkit's `build-non-issuance-audit.py` export
 (SHA-256 `7a5a73648e404f38aaf465a863756c216e4c45489773684bc5526d00e443376e`),
 kept as this repository's own pinned copy rather than referenced from another
 agent's forensic workspace. The second retained input,
-`artifacts/supply-reconciliation-20260911/not-issued-rollback-leak-recipients.csv`,
-is the same toolkit's `build-rollback-leak-retention.py` export (pinned copy of
-`harmony-supply-audit/artifacts/rollback-leak-retention-20260923/`; SHA-256
-`b809b5f9d45fd9e997dc5731e2c0ce8ecc50663971dbb0bc46d1e2f2784baec3`). It lists
-every wallet credited by a proven rollback-leak receipt and withholds the
+`artifacts/supply-reconciliation-20260911/not-issued-revert-leak-recipients.csv`,
+is the same toolkit's `build-revert-leak-retention.py` export (pinned copy of
+`harmony-supply-audit/artifacts/revert-leak-retention-20260923/`; SHA-256
+`021da743265ca8504fb760c62a2b3af411bc8d80eb175e54dcd4317870c4fd48`). It lists
+every wallet credited by a proven revert-leak receipt and withholds the
 credited amount, capped at what the wallet still holds after the first file's
 deduction. Addresses found to be inaccessible after that inventory was built,
 where nobody can move funds on Harmony or at the same address on Ethereum
@@ -541,7 +541,7 @@ python3 toolkit/scripts/routing/build-inaccessible-inventory.py \
   --claims "$OUT/claims/all-address-migration-claims-cutoff-metadata.csv" \
   --other-inventory artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
   --other-inventory artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv \
-  --other-inventory artifacts/supply-reconciliation-20260911/not-issued-rollback-leak-recipients.csv \
+  --other-inventory artifacts/supply-reconciliation-20260911/not-issued-revert-leak-recipients.csv \
   --output artifacts/supply-reconciliation-20260911/inaccessible-address-inventory-20260923.csv \
   --summary artifacts/supply-reconciliation-20260911/inaccessible-address-inventory-20260923-summary.json
 
@@ -553,7 +553,7 @@ python3 toolkit/scripts/claims/build-migration-stage-policy.py \
   --existing-non-issuance artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
   --existing-non-issuance artifacts/supply-reconciliation-20260911/inaccessible-address-inventory-20260923.csv \
   --historical-retention artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv \
-  --historical-retention artifacts/supply-reconciliation-20260911/not-issued-rollback-leak-recipients.csv \
+  --historical-retention artifacts/supply-reconciliation-20260911/not-issued-revert-leak-recipients.csv \
   --manual-wallets artifacts/exchange-accounting-20260917/qualified-exchange-exclusions.csv \
   --output artifacts/migration-policy-20260917/migration-stage-policy.csv \
   --summary artifacts/migration-policy-20260917/migration-stage-summary.json \
@@ -638,7 +638,7 @@ paths:
 python3 toolkit/scripts/routing/build-non-issuance-routes.py \
   --inventory artifacts/supply-reconciliation-20260911/non-issuance-inventory.csv \
   --inventory artifacts/supply-reconciliation-20260911/not-issued-retained-initial-addresses.csv \
-  --inventory artifacts/supply-reconciliation-20260911/not-issued-rollback-leak-recipients.csv \
+  --inventory artifacts/supply-reconciliation-20260911/not-issued-revert-leak-recipients.csv \
   --inventory artifacts/supply-reconciliation-20260911/inaccessible-address-inventory-20260923.csv \
   --output routing/local/not-issuing.csv \
   --summary routing/local/not-issuing-summary.json

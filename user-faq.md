@@ -9,9 +9,11 @@ The cutoff time (asset migration snapshot time) is Thursday, September 10, 2026,
 
 Wallets with at least 1,000 ONE in combined snapshot qualification value and
 indexed activity in the six calendar months before cutoff are in the initial
-stage. Liquid ONE, active delegation or validator stake, pending undelegation,
-unclaimed staking rewards, supported pending cross-shard transfers, and WONE
-held on Harmony are summed before deductions for threshold membership.
+distribution. Liquid ONE, active delegation or validator stake, pending
+undelegation, unclaimed staking rewards, supported pending cross-shard
+transfers, and WONE held on Harmony are summed. Amounts withheld because of a
+reviewed incident (for example exploit proceeds) are deducted before the
+1,000 ONE test, so only a wallet's legitimate funds count toward it.
 
 Wallets with below 1,000 ONE may claim from a claim portal at a later time, or wait for another batch of airdrop when it makes economic sense to do so - there is no scheduled time for that at this time.
 

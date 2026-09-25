@@ -39,10 +39,17 @@ contract. The portion paired with ordinary-threshold and exchange
 manual-delivery rows is classified as `redistributed`; the remaining backing is
 `not_issuing` and retained in the 2050 premint reserve.
 
-Ordinary threshold membership is determined from the snapshot qualification
-total before non-issuance deductions or routing adjustments. It controls the
-ordinary wallet path and staging and is not retested against a smaller net
-allocation. Exchange manual delivery is an explicit delivery exception: the
+Snapshot threshold membership is determined from the gross snapshot
+qualification total. It defines the review scope and the account and routing
+classification. The ordinary wallet stage then retests the threshold after
+incident deductions: `qualification_total_atto - existing_non_issuance_atto -
+historical_retained_cap_atto` (reviewed non-issuance and retained exploit
+caps) must still be at least 1,000 ONE for the initial distribution. A wallet
+below that is deferred with the below-threshold wallets, which keeps wallets
+with mixed legitimate and incident funds on the same footing as everyone else:
+only the legitimate part counts. Other adjustments (WONE source offset,
+reviewed-contract non-issuance, vault routing) do not enter the test. Exchange
+manual delivery is an explicit delivery exception: the
 threshold is used only to remove overlap from automatic same-address delivery,
 not to limit an exchange's entitlement. Validator vaults retain backing for
 active principal belonging to deferred accounts until their stage is

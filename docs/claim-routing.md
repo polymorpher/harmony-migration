@@ -20,8 +20,10 @@ remove deferred delegators' backing from the vault.
 
 Apply routing decisions in this order:
 
-1. determine inclusive `>= 1,000 ONE` snapshot membership before deductions,
-   classify account identity, and assign migration stage separately;
+1. determine inclusive `>= 1,000 ONE` snapshot membership (the gross review
+   scope), classify account identity, and assign migration stage separately;
+   a wallet's stage retests the threshold after incident deductions, so
+   incident funds never qualify it;
 2. apply explicitly approved non-issuance, treasury, and incident-recovery
    rules;
 3. exclude every qualifying exchange wallet from the implicit automatic path
@@ -203,7 +205,7 @@ assets. The route data preserves the actual identity and policy reason.
   `rollback-exploit-proceeds`, resolved 2026-09-23). Two exact inventories
   implement it: the retained balances at the wallets the May 2025 and April
   2026 incident contracts funded, and, for every wallet credited by a proven
-  rollback-leak receipt, the credited amount capped at what the wallet still
+  revert-leak receipt, the credited amount capped at what the wallet still
   holds after earlier deductions. A wallet that holds only exploit credit loses
   its whole claim; a wallet that also held legitimate funds keeps the
   difference. Wallets that merely passed exploit funds on are not deducted.

@@ -198,7 +198,12 @@ automatically classified as perpetrators or routed to `not-issuing`.
   non-issuance, final wallet/vault, and total migration-allocation atto fields;
 - `stage_reason` — policy rationale, not destination evidence.
 
-Threshold membership is evaluated before every deduction in that file.
+Snapshot membership in that file is gross. A wallet row is `initial` only if
+`qualification_total_atto - existing_non_issuance_atto -
+historical_retained_cap_atto` is at least 1,000 ONE; a wallet below that is
+`deferred` with `stage_reason` `below 1,000 ONE after incident deductions`,
+and the stage summary counts these rows under
+`deferred_wallets.below_threshold_after_incident_deductions_*`.
 
 The account-category CSVs carry `native_wallet_airdrop_atto`,
 `wone_airdrop_atto`, `wallet_airdrop_atto`, and `staked_to_vault_atto`. A

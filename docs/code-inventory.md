@@ -179,7 +179,7 @@ See `docs/contract-account-review.md`.
   route and policy files without overwriting operator decisions
 - `toolkit/scripts/routing/build-non-issuance-routes.py` — convert the current
   reviewed non-issuance inventory, the retained historical-incident caps and
-  the rollback-leak credit inventory into terminal routes without changing
+  the revert-leak credit inventory into terminal routes without changing
   partial-row remainders
 - `toolkit/scripts/routing/build-inaccessible-inventory.py` — turn reviewed
   inaccessible addresses into `burn_or_inaccessible` inventory rows that
