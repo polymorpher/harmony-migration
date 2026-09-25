@@ -38,10 +38,18 @@ def parse_args():
     parser.add_argument("--shard0-summary", required=True)
     parser.add_argument("--shard1-activity", required=True)
     parser.add_argument("--shard1-summary", required=True)
+    parser.add_argument(
+        "--supplemental-activity",
+        help="build-directional-activity.py output covering every candidate; the latest record wins",
+    )
+    parser.add_argument("--supplemental-summary")
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--replace", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if bool(args.supplemental_activity) != bool(args.supplemental_summary):
+        parser.error("--supplemental-activity and --supplemental-summary go together")
+    return args
 
 
 def file_sha256(path):
@@ -127,7 +135,27 @@ def load_scan_summary(path, activity_path, input_sha256, snapshot, shard):
     return summary
 
 
+def load_supplemental_summary(path, activity_path, input_sha256, snapshot):
+    with open(path, encoding="utf-8") as source:
+        summary = json.load(source)
+    if summary.get("status") != "passed":
+        raise ValueError("supplemental activity did not pass")
+    if summary.get("candidates_sha256") != input_sha256:
+        raise ValueError("supplemental activity used a different candidate CSV")
+    if summary.get("output_sha256") != file_sha256(activity_path):
+        raise ValueError("supplemental activity CSV does not match its summary")
+    for shard in ("0", "1"):
+        expected = snapshot["shards"][shard]
+        recorded = (summary.get("cutoff") or {}).get("shards", {}).get(shard, {})
+        if recorded.get("block") != expected["block"] or str(recorded.get("hash", "")).lower() != expected["hash"]:
+            raise ValueError(f"supplemental activity used the wrong shard {shard} cutoff")
+    if summary.get("activity_found", 0) + summary.get("activity_not_found", 0) != summary.get("candidates"):
+        raise ValueError("supplemental activity coverage does not close")
+    return summary
+
+
 def load_activity(path, shard, snapshot):
+    """Per-candidate activity records; shard None accepts rows from either shard."""
     records = {}
     previous_key = None
     with open(path, newline="") as source:
@@ -168,13 +196,14 @@ def load_activity(path, shard, snapshot):
                     raise ValueError(
                         f"shard {shard} line {line} has partial activity"
                     )
-                if int(row["last_activity_shard"]) != shard:
+                row_shard = int(row["last_activity_shard"])
+                if (shard is not None and row_shard != shard) or row_shard not in (0, 1):
                     raise ValueError(
                         f"shard {shard} line {line} has wrong shard"
                     )
                 if (
                     int(row["last_activity_block"])
-                    > snapshot["shards"][str(shard)]["block"]
+                    > snapshot["shards"][str(row_shard)]["block"]
                 ):
                     raise ValueError(
                         f"shard {shard} line {line} is after cutoff"
@@ -235,7 +264,7 @@ def source_classification(summary):
     raise ValueError("activity source has unknown provenance")
 
 
-def write_enriched(input_path, output_path, by_shard):
+def write_enriched(input_path, output_path, by_shard, supplemental=None):
     parent = os.path.dirname(output_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -279,6 +308,20 @@ def write_enriched(input_path, output_path, by_shard):
                     f"activity address differs at input line {line}"
                 )
             selected = select_activity(shard_records)
+            if supplemental is not None:
+                extra = supplemental[key]
+                if extra["address"] != address:
+                    raise ValueError(
+                        f"supplemental address differs at input line {line}"
+                    )
+                # the supplement adds activity the scans missed; on a tie the scan record stays
+                if extra["last_activity_timestamp_unix"] and (
+                    not selected["last_activity_timestamp_unix"]
+                    or int(extra["last_activity_timestamp_unix"])
+                    > int(selected["last_activity_timestamp_unix"])
+                ):
+                    selected = {field: extra[field] for field in ACTIVITY_FIELDS}
+                    counts["supplemental_selected"] += 1
             row.update(selected)
             writer.writerow(row)
             rows += 1
@@ -325,8 +368,16 @@ def main():
     }
     if set(by_shard["0"]) != set(by_shard["1"]):
         raise ValueError("per-shard activity candidate sets differ")
+    supplemental = supplemental_summary = None
+    if args.supplemental_activity:
+        supplemental_summary = load_supplemental_summary(
+            args.supplemental_summary, args.supplemental_activity, input_sha256, snapshot
+        )
+        supplemental = load_activity(args.supplemental_activity, None, snapshot)
+        if set(supplemental) != set(by_shard["0"]):
+            raise ValueError("supplemental activity candidate set differs")
     rows, counts, timestamps = write_enriched(
-        args.input, args.output, by_shard
+        args.input, args.output, by_shard, supplemental
     )
     if rows != len(by_shard["0"]):
         raise ValueError("candidate CSV and activity row counts differ")
@@ -405,6 +456,16 @@ def main():
             }
             for shard, activity_path, summary_path in sources
         },
+        **({
+            "supplemental": {
+                "activity": args.supplemental_activity,
+                "activity_sha256": file_sha256(args.supplemental_activity),
+                "summary": args.supplemental_summary,
+                "summary_sha256": file_sha256(args.supplemental_summary),
+                "source_kind": supplemental_summary["source_kind"],
+                "rows_where_selected": counts["supplemental_selected"],
+            }
+        } if supplemental is not None else {}),
         "output": args.output,
         "output_sha256": file_sha256(args.output),
     }
