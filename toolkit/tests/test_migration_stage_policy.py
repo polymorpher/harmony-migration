@@ -70,6 +70,24 @@ class MigrationStagePolicyTest(unittest.TestCase):
             datetime(2026, 3, 10, 14, tzinfo=timezone.utc),
         )
 
+    def test_incident_deductions_apply_before_threshold(self):
+        one = 10**18
+        since = datetime(2026, 3, 10, 14, tzinfo=timezone.utc)
+        active = datetime(2026, 8, 20, tzinfo=timezone.utc)
+        stage = self.module.wallet_stage
+        # 1,000,000 ONE credited by an exploit, 5 ONE legitimate: not eligible
+        self.assertEqual(
+            stage(5 * one, 5 * one, active, since, 6),
+            ("deferred", "below 1,000 ONE after incident deductions", False),
+        )
+        # a legitimate remainder at the threshold still qualifies
+        self.assertEqual(stage(1000 * one, 1000 * one, active, since, 6)[:2], ("initial", "wallet activity within 6 months"))
+        self.assertEqual(stage(0, 0, active, since, 6)[0], "")
+        self.assertEqual(
+            stage(2000 * one, 2000 * one, None, since, 6),
+            ("deferred", "no indexed wallet activity", True),
+        )
+
     def test_final_component_split_applies_deduction_wallet_first(self):
         self.assertEqual(
             self.module.split_final_components(100, 900, 950),

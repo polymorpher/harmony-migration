@@ -206,12 +206,20 @@ def main():
                 if row["last_activity_time_utc"]
                 else None
             )
+            # incident and reviewed non-issuance deductions apply before the threshold
+            meets_threshold = (
+                int(row["qualification_total_atto"])
+                - amounts["existing_non_issuance_atto"]
+                - amounts["historical_retained_cap_atto"]
+                >= 1000 * ATTO_PER_ONE
+            )
             if stage == "initial":
                 if (
                     row["account_classification"]
                     not in {"wallet", "validator_wallet"}
                     or activity is None
                     or activity < initial_since
+                    or not meets_threshold
                 ):
                     raise ValueError(f"invalid initial row at line {line}")
                 initial_routing[row["routing_category"]] += 1
@@ -223,6 +231,7 @@ def main():
                 and row["account_classification"] in {"wallet", "validator_wallet"}
                 and activity is not None
                 and activity >= initial_since
+                and meets_threshold
             ):
                 raise ValueError(f"active wallet deferred at line {line}")
             if row["account_classification"] == "genuine_contract":
