@@ -182,7 +182,7 @@ class NonIssuanceRoutesTest(unittest.TestCase):
         command += ["--output", str(root / "routes.csv"), "--summary", str(root / "summary.json")]
         return subprocess.run(command, capture_output=True, text=True)
 
-    def test_rollback_leak_stacks_only_on_retained_caps(self):
+    def test_revert_leak_stacks_only_on_retained_caps(self):
         retained_fields = ("address_hex", "incident", "retained_cap_atto", "migration_treatment")
         leak_fields = ("address_hex", "incident", "unbacked_credit_atto", "retained_cap_atto", "migration_treatment")
         shared = f"0x{5:040x}"
@@ -209,12 +209,12 @@ class NonIssuanceRoutesTest(unittest.TestCase):
                 sorted((row["source_address"], row["reason"], row["amount_atto"]) for row in rows),
                 sorted([
                     (shared, "not_issuing_historical_incident_retained_cap", "3"),
-                    (shared, "not_issuing_rollback_leak_credit_recipient", "4"),
-                    (f"0x{6:040x}", "not_issuing_rollback_leak_credit_recipient", "50"),
+                    (shared, "not_issuing_revert_leak_credit_recipient", "4"),
+                    (f"0x{6:040x}", "not_issuing_revert_leak_credit_recipient", "50"),
                 ]),
             )
             summary = json.loads((root / "summary.json").read_text())
-            self.assertEqual(summary["categories"]["rollback_leak_credit_recipient"]["not_issued_atto"], "54")
+            self.assertEqual(summary["categories"]["revert_leak_credit_recipient"]["not_issued_atto"], "54")
 
             self.write(existing, ("address_hex", "category", "not_issued_atto"), [
                 {"address_hex": f"0x{6:040x}", "category": "burn_or_inaccessible", "not_issued_atto": "1"},

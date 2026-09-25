@@ -28,12 +28,12 @@ ALLOWED_CATEGORIES = {
     "historical_incident_retained_cap",
     "report_linked_theft_recipient",
     "reported_wallet_theft_perpetrator",
-    "rollback_leak_credit_recipient",
+    "revert_leak_credit_recipient",
 }
-# The rollback-leak inventory is computed after the retained-cap deduction, so
+# The revert-leak inventory is computed after the retained-cap deduction, so
 # an address may appear in both; every other combination is an overlap error.
 STACKABLE_CATEGORIES = {
-    frozenset({"historical_incident_retained_cap", "rollback_leak_credit_recipient"}),
+    frozenset({"historical_incident_retained_cap", "revert_leak_credit_recipient"}),
 }
 
 
@@ -45,7 +45,7 @@ def parse_args():
         required=True,
         help=(
             "audited inventory; repeatable. Existing inventories use "
-            "not_issued_atto; retained historical and rollback-leak "
+            "not_issued_atto; retained historical and revert-leak "
             "inventories use retained_cap_atto"
         ),
     )
@@ -93,7 +93,7 @@ def main():
                 fixed_category = None
             elif {"unbacked_credit_atto", "retained_cap_atto", "migration_treatment"} <= fields:
                 amount_field = "retained_cap_atto"
-                fixed_category = "rollback_leak_credit_recipient"
+                fixed_category = "revert_leak_credit_recipient"
             elif {"incident", "retained_cap_atto", "migration_treatment"} <= fields:
                 amount_field = "retained_cap_atto"
                 fixed_category = "historical_incident_retained_cap"
