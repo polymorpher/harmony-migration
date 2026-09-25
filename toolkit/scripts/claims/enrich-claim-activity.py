@@ -43,6 +43,11 @@ def parse_args():
         help="build-directional-activity.py output covering every candidate; the latest record wins",
     )
     parser.add_argument("--supplemental-summary")
+    parser.add_argument(
+        "--rejected-activity",
+        help="CSV of address, shard, tx_hash records proven not to involve the address; "
+        "each must match exactly one per-shard record, which is then treated as not found",
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--replace", action="store_true")
@@ -230,6 +235,26 @@ def load_activity(path, shard, snapshot):
     return records
 
 
+def apply_rejections(path, by_shard):
+    """Blanks every rejected per-shard record; returns the number applied."""
+    by_address = {
+        shard: {record["address"]: key for key, record in records.items()}
+        for shard, records in by_shard.items()
+    }
+    applied = 0
+    with open(path, newline="") as source:
+        for line, row in enumerate(csv.DictReader(source), start=2):
+            shard = row["shard"]
+            address = lib.normalize_address(row["address"])
+            key = by_address.get(shard, {}).get(address)
+            record = by_shard[shard][key] if key else None
+            if not record or record["last_activity_tx_hash"].lower() != row["tx_hash"].lower():
+                raise ValueError(f"rejected activity line {line} matches no shard {shard} record")
+            by_shard[shard][key] = {"address": address, **{field: "" for field in ACTIVITY_FIELDS}}
+            applied += 1
+    return applied
+
+
 def activity_sort_key(record):
     return (
         int(record["last_activity_timestamp_unix"]),
@@ -368,6 +393,7 @@ def main():
     }
     if set(by_shard["0"]) != set(by_shard["1"]):
         raise ValueError("per-shard activity candidate sets differ")
+    rejected = apply_rejections(args.rejected_activity, by_shard) if args.rejected_activity else 0
     supplemental = supplemental_summary = None
     if args.supplemental_activity:
         supplemental_summary = load_supplemental_summary(
@@ -466,6 +492,13 @@ def main():
                 "rows_where_selected": counts["supplemental_selected"],
             }
         } if supplemental is not None else {}),
+        **({
+            "rejected_activity": {
+                "path": args.rejected_activity,
+                "sha256": file_sha256(args.rejected_activity),
+                "records_rejected": rejected,
+            }
+        } if args.rejected_activity else {}),
         "output": args.output,
         "output_sha256": file_sha256(args.output),
     }

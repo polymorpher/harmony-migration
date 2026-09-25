@@ -70,6 +70,36 @@ class ClaimActivityTest(unittest.TestCase):
             empty,
         )
 
+    def test_rejected_activity_blanks_only_its_record(self):
+        empty = {field: "" for field in self.enrich.ACTIVITY_FIELDS}
+        address = "0x" + "ab" * 20
+        record = dict(
+            empty,
+            last_activity_time_utc="2026-04-08T12:35:32Z",
+            last_activity_timestamp_unix="1775651732",
+            last_activity_block="89578060",
+            last_activity_shard="1",
+            last_activity_type="regular",
+            last_activity_tx_hash="0x" + "33" * 32,
+            last_activity_index="0",
+            last_activity_detail="regular_history",
+        )
+        by_shard = {
+            "0": {"k": {"address": address, **empty}},
+            "1": {"k": {"address": address, **record}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rejected.csv"
+            with path.open("w", newline="") as output:
+                writer = csv.writer(output)
+                writer.writerow(("address", "shard", "tx_hash"))
+                writer.writerow((address, "1", "0x" + "33" * 32))
+            self.assertEqual(self.enrich.apply_rejections(path, by_shard), 1)
+            self.assertEqual(by_shard["1"]["k"]["last_activity_tx_hash"], "")
+            self.assertEqual(by_shard["1"]["k"]["address"], address)
+            with self.assertRaisesRegex(ValueError, "matches no shard 1 record"):
+                self.enrich.apply_rejections(path, by_shard)
+
     def test_calendar_months_clamp_month_end(self):
         cutoff = datetime(2024, 3, 31, 14, tzinfo=timezone.utc)
         self.assertEqual(
