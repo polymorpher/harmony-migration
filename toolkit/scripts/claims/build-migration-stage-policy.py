@@ -125,6 +125,24 @@ def split_final_components(wallet, staked, final_allocation):
     return final_wallet, final_staked
 
 
+def wallet_stage(allocation, net_qualification, activity_time, initial_since, months):
+    """Stage, reason and threshold membership of a wallet row.
+
+    Incident and reviewed non-issuance deductions apply before the 1,000 ONE
+    test, so exploit or theft funds cannot qualify a wallet whose legitimate
+    remainder is smaller.
+    """
+    if allocation == 0:
+        return "", "prior reviewed non-issuance consumes allocation", False
+    if net_qualification < MINIMUM_ATTO:
+        return "deferred", "below 1,000 ONE after incident deductions", False
+    if activity_time is not None and activity_time >= initial_since:
+        return "initial", f"wallet activity within {months} months", True
+    if activity_time is not None:
+        return "deferred", "wallet activity predates initial window", True
+    return "deferred", "no indexed wallet activity", True
+
+
 def read_json(path, label):
     with open(path, encoding="utf-8") as source:
         value = json.load(source)
@@ -292,6 +310,10 @@ airdrop.
 
 ## Confirmed stage policy
 
+- Threshold: at least 1,000 ONE of combined wallet, staking and WONE balance
+  after incident deductions (reviewed non-issuance and retained exploit caps),
+  so incident funds never qualify a wallet. The snapshot-qualified population
+  below is the gross review scope.
 - Initial stage: positive eligible wallets with indexed activity on or after
   `{result["initial_window"]["since_time_utc"]}`.
 - Exchange override at route compilation: every positive entitlement in an
@@ -373,7 +395,10 @@ unconditional same-address distribution manifest.
 
 Ordinary deferred value before exchange overrides reconciles as:
 
-- below snapshot threshold: `{one(deferred["below_threshold_atto"])} ONE`;
+- below 1,000 ONE: `{one(deferred["below_threshold_atto"])} ONE`, including
+  `{deferred["below_threshold_after_incident_deductions_addresses"]:,}` snapshot-qualified
+  wallets (`{one(deferred["below_threshold_after_incident_deductions_atto"])} ONE`) that fall
+  below the threshold after incident deductions;
 - qualified, older than six months:
   `{one(deferred["older_than_initial_window_atto"])} ONE`;
 - qualified, no indexed activity:
@@ -487,6 +512,7 @@ def main():
         }
     )
     wallet_rows = []
+    below_after_deductions = {"addresses": 0, "allocation_atto": 0}
     exact_threshold_rows = 0
     previous_key = None
     with open(args.qualified_activity, newline="") as source:
@@ -571,28 +597,25 @@ def main():
                     if row["last_activity_time_utc"]
                     else None
                 )
-                if before_contract_policy == 0:
-                    stage = ""
-                    reason = "prior reviewed non-issuance consumes allocation"
-                elif activity_time is not None and activity_time >= initial_since:
-                    stage = "initial"
-                    reason = (
-                        f"wallet activity within {args.initial_months} months"
-                    )
-                else:
-                    stage = "deferred"
-                    reason = (
-                        "wallet activity predates initial window"
-                        if activity_time is not None
-                        else "no indexed wallet activity"
-                    )
+                stage, reason, meets_threshold = wallet_stage(
+                    before_contract_policy,
+                    qualification - existing_amount - historical_amount,
+                    activity_time,
+                    initial_since,
+                    args.initial_months,
+                )
                 migration_allocation = before_contract_policy
                 routing_category = (
                     "exchange_or_manual"
                     if address in manual_wallets
                     else "automatic_policy"
                 )
-                if migration_allocation > 0:
+                if migration_allocation > 0 and not meets_threshold:
+                    below_after_deductions["addresses"] += 1
+                    below_after_deductions["allocation_atto"] += (
+                        migration_allocation
+                    )
+                if migration_allocation > 0 and meets_threshold:
                     wallet_rows.append(
                         {
                             "address": address,
@@ -837,7 +860,8 @@ def main():
         "schema_version": 1,
         "status": "passed",
         "policy": (
-            "inclusive snapshot threshold; six-month initial wallet stage; "
+            "inclusive 1,000 ONE threshold after incident deductions; "
+            "six-month initial wallet stage; "
             "confirmed exchange inventories override ordinary stages with "
             "manual delivery from the 2050 supply reserve (exchange_manual); "
             "reviewed multisig, LayerZero, and 1wallet allocations next stage; "
@@ -942,6 +966,15 @@ def main():
         "deferred_wallets": {
             "below_threshold_atto": below_threshold,
             "below_threshold_one": one(below_threshold),
+            "below_threshold_after_incident_deductions_addresses": (
+                below_after_deductions["addresses"]
+            ),
+            "below_threshold_after_incident_deductions_atto": (
+                below_after_deductions["allocation_atto"]
+            ),
+            "below_threshold_after_incident_deductions_one": one(
+                below_after_deductions["allocation_atto"]
+            ),
             "older_than_initial_window_atto": older,
             "older_than_initial_window_one": one(older),
             "no_indexed_activity_atto": no_activity,
