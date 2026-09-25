@@ -382,7 +382,28 @@ python3 toolkit/scripts/claims/fetch-account-activity-rpc.py \
   --summary "$OUT/claims/account-activity-shard1-summary.json"
 ```
 
-Merge the per-shard ledgers:
+Build the directional supplement, which adds self-transfers and self-staking
+that the address index stores only as received. Its input is the directional
+per-account scan published in `harmony-airdrop-tracking`
+(`data/activity-20260910.csv`); every selected transaction is re-resolved
+through archival RPC and its block hash checked against the canonical chain:
+
+```sh
+python3 toolkit/scripts/claims/build-directional-activity.py \
+  --input "$OUT/claims/migration-claims-at-least-1000-one-metadata.csv" \
+  --snapshot-manifest manifests/snapshot-2026-09-10.json \
+  --directional ../harmony-airdrop-tracking/data/activity-20260910.csv \
+  --directional-summary ../harmony-airdrop-tracking/data/activity-20260910-summary.json \
+  --rpc-shard0 "$SHARD0_RPC" \
+  --rpc-shard1 "$SHARD1_RPC" \
+  --output "$OUT/claims/account-directional-activity.csv" \
+  --summary "$OUT/claims/account-directional-activity-summary.json"
+```
+
+Merge the per-shard ledgers. `rejected-activity-20260924.csv` lists shard-1
+RPC history records whose transaction does not involve the candidate (the
+recorded sender and recipient are other accounts); each is treated as not
+found:
 
 ```sh
 python3 toolkit/scripts/claims/enrich-claim-activity.py \
@@ -392,6 +413,9 @@ python3 toolkit/scripts/claims/enrich-claim-activity.py \
   --shard0-summary "$OUT/claims/account-activity-shard0-summary.json" \
   --shard1-activity "$OUT/claims/account-activity-shard1.csv" \
   --shard1-summary "$OUT/claims/account-activity-shard1-summary.json" \
+  --supplemental-activity "$OUT/claims/account-directional-activity.csv" \
+  --supplemental-summary "$OUT/claims/account-directional-activity-summary.json" \
+  --rejected-activity "$OUT/claims/rejected-activity-20260924.csv" \
   --output "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity.csv" \
   --summary "$OUT/claims/migration-claims-at-least-1000-one-metadata-activity-summary.json"
 ```

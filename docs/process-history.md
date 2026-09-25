@@ -279,7 +279,12 @@ supplied later activity for some candidates; wallets that signed transactions
 on August 20–21, 2026 now meet the six-month rule and enter the initial
 distribution. The batch 1 draw built from the previous list was marked
 deprecated and drawn again from the regenerated list with a new seed
-commitment.
+commitment. A chain-only recheck of every initial-distribution wallet
+(`airdrop/tools/verify_cutoff_amounts.py`) then found shard-1 RPC history
+records whose transaction belonged to another account. They are rejected
+through `rejected-activity-20260924.csv`; the wallet that had qualified only
+through such a record was deferred and removed from the drawn batch before
+its transactions were rebuilt.
 
 ## 14. Preservation
 
