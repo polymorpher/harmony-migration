@@ -285,6 +285,22 @@ def parse_args(argv=None):
         action="store_true",
         help="replace an existing --output artifact",
     )
+    parser.add_argument(
+        "--ledger-cache",
+        type=Path,
+        default=default_path(
+            "artifacts/cache/verify-wone-allocation-ledger-pass.json"
+        ),
+        help=(
+            "result of the holder and claim-ledger pass, reused only while "
+            "every non-routing input and this verifier's code hash the same"
+        ),
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="ignore --ledger-cache and rescan the holder list and ledgers",
+    )
     args = parser.parse_args(argv)
     if args.output is not None and args.check_output is not None:
         parser.error("--output and --check-output are mutually exclusive")
@@ -2382,30 +2398,54 @@ def discover_inputs(args, summaries):
     return paths
 
 
-def verify(args):
-    summary_paths = {
-        "holder": args.wone_summary,
-        "migration": args.migration_summary,
-        "threshold": args.threshold_summary,
-        "bridge": args.bridge_summary,
-        "routing": args.routing_summary,
-    }
-    summaries = {
-        name: load_json(path, f"{name} summary")
-        for name, path in summary_paths.items()
-    }
-    paths = discover_inputs(args, summaries)
-    if args.output is not None:
-        output = args.output.resolve()
-        if output in set(paths.values()):
-            raise ValueError("--output may not replace an input artifact")
-        partial = Path(str(output) + ".partial")
-        if partial.exists():
-            raise FileExistsError(partial)
-        if output.exists() and not args.replace:
-            raise FileExistsError(output)
-    hashes = {name: file_sha256(path) for name, path in paths.items()}
+ROUTING_INPUTS = {
+    "bridge_routes",
+    "bridge_summary",
+    "bridge_base",
+    "routing_exceptions",
+    "routing_summary",
+    "routing_governor_exceptions",
+    "routing_unresolved",
+}
 
+
+def ledger_cache_key(hashes):
+    code = (Path(__file__).resolve(), Path(lib.__file__).resolve())
+    return {
+        "inputs": {
+            name: hashes[name]
+            for name in sorted(hashes)
+            if name not in ROUTING_INPUTS
+        },
+        "code": {display_path(path): file_sha256(path) for path in code},
+    }
+
+
+def load_ledger_cache(path, key):
+    if not path.is_file():
+        return None
+    with path.open(encoding="utf-8") as source:
+        cached = json.load(source)
+    if cached.get("key") != key:
+        return None
+    ledger = cached["ledger"]
+    ledger["wone_recipients"] = set(ledger["wone_recipients"])
+    return ledger
+
+
+def write_ledger_cache(path, key, ledger):
+    stored = dict(ledger, wone_recipients=sorted(ledger["wone_recipients"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = Path(str(path) + ".partial")
+    with partial.open("w", encoding="utf-8") as handle:
+        json.dump({"key": key, "ledger": stored}, handle, sort_keys=True)
+    os.replace(partial, path)
+    if load_ledger_cache(path, key) != ledger:
+        raise ValueError("ledger cache does not round-trip")
+
+
+def ledger_pass(paths, hashes, summaries):
+    """The holder-list and claim-ledger checks; independent of routing."""
     migration_summary = summaries["migration"]
     exclusions, recorded_details = parse_exclusions(migration_summary)
     aggregate_delivery, aggregate_stats = (
@@ -2459,6 +2499,61 @@ def verify(args):
         summaries["threshold"],
         aggregate_stats,
     )
+    return {
+        "exclusions": sorted(exclusions),
+        "excluded_holder_rows": len(recorded_details),
+        "aggregate_stats": aggregate_stats,
+        "holder_rows": len(holders),
+        "holder_total": holder_total,
+        "reserve": reserve,
+        "excluded_total": excluded_total,
+        "claim_metrics": claim_metrics,
+        "special": special,
+        "wone_recipients": wone_recipients,
+        "retained": retained,
+    }
+
+
+def verify(args):
+    summary_paths = {
+        "holder": args.wone_summary,
+        "migration": args.migration_summary,
+        "threshold": args.threshold_summary,
+        "bridge": args.bridge_summary,
+        "routing": args.routing_summary,
+    }
+    summaries = {
+        name: load_json(path, f"{name} summary")
+        for name, path in summary_paths.items()
+    }
+    paths = discover_inputs(args, summaries)
+    if args.output is not None:
+        output = args.output.resolve()
+        if output in set(paths.values()):
+            raise ValueError("--output may not replace an input artifact")
+        partial = Path(str(output) + ".partial")
+        if partial.exists():
+            raise FileExistsError(partial)
+        if output.exists() and not args.replace:
+            raise FileExistsError(output)
+    hashes = {name: file_sha256(path) for name, path in paths.items()}
+
+    migration_summary = summaries["migration"]
+    key = ledger_cache_key(hashes)
+    ledger = None if args.full else load_ledger_cache(args.ledger_cache, key)
+    if ledger is None:
+        ledger = ledger_pass(paths, hashes, summaries)
+        write_ledger_cache(args.ledger_cache, key, ledger)
+    else:
+        print("ledger pass: inputs unchanged, reusing " + display_path(args.ledger_cache), file=sys.stderr)
+    exclusions = ledger["exclusions"]
+    aggregate_stats = ledger["aggregate_stats"]
+    reserve = ledger["reserve"]
+    excluded_total = ledger["excluded_total"]
+    claim_metrics = ledger["claim_metrics"]
+    special = ledger["special"]
+    wone_recipients = ledger["wone_recipients"]
+    retained = ledger["retained"]
     redistributed = claim_metrics["priority_wone"]
     bridge_rows = verify_bridge_routes(
         paths["bridge_routes"],
@@ -2512,10 +2607,10 @@ def verify(args):
             "aggregate_exchange_wone_delivery": True,
         },
         "holders": {
-            "holder_rows": len(holders),
-            "holder_balance_atto": str(holder_total),
-            "excluded_addresses": sorted(exclusions),
-            "excluded_holder_rows": len(recorded_details),
+            "holder_rows": ledger["holder_rows"],
+            "holder_balance_atto": str(ledger["holder_total"]),
+            "excluded_addresses": exclusions,
+            "excluded_holder_rows": ledger["excluded_holder_rows"],
             "excluded_wone_atto": str(excluded_total),
         },
         "qualification": {

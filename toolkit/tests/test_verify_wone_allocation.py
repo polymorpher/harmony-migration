@@ -805,6 +805,8 @@ class AllocationFixture:
             str(self.paths["routing_exceptions"]),
             "--routing-summary",
             str(self.paths["routing_summary"]),
+            "--ledger-cache",
+            str(self.paths["wone_holders"].parent / "ledger-pass.json"),
         ]
         arguments.extend(extra)
         return arguments
@@ -866,6 +868,29 @@ class VerifyWoneAllocationTest(unittest.TestCase):
                 "--replace",
             )
             self.assertEqual(replaced.returncode, 0, replaced.stderr)
+
+    def test_ledger_pass_is_reused_only_while_inputs_are_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = AllocationFixture(Path(directory))
+            first = self.run_verifier(fixture)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertNotIn("reusing", first.stderr)
+            second = self.run_verifier(fixture)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertIn("reusing", second.stderr)
+            self.assertEqual(json.loads(first.stdout), json.loads(second.stdout))
+            full = self.run_verifier(fixture, "--full")
+            self.assertEqual(full.returncode, 0, full.stderr)
+            self.assertNotIn("reusing", full.stderr)
+
+            write_csv(
+                fixture.paths["wone_only_metadata"],
+                VERIFY.METADATA_FIELDS,
+                (),
+            )
+            changed = self.run_verifier(fixture)
+            self.assertNotEqual(changed.returncode, 0)
+            self.assertNotIn("reusing", changed.stderr)
 
     def test_rejects_truncated_wone_only_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
