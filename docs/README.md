@@ -4,7 +4,8 @@ Start with:
 
 1. [`methodology.md`](methodology.md)
 2. [`reproduce.md`](reproduce.md)
-3. [`verification.md`](verification.md)
+3. [`verification.md`](verification.md) and
+   [`random-sample-verification.md`](random-sample-verification.md)
 4. [`eligibility-policy.md`](eligibility-policy.md)
 5. [`claim-routing.md`](claim-routing.md)
 6. [`contract-account-review.md`](contract-account-review.md)

@@ -298,3 +298,22 @@ immutable native cutoff and historical USD-difference bundle. It remains with
 the private artifacts, but it is not the post-WONE verifier.
 
 Explorer balances are not part of any verification path.
+
+## Random-sample verification
+
+A frozen evidence bundle can also be checked by random sample, from the command
+line or from an offline HTML page, without any Harmony RPC:
+
+```sh
+python3 toolkit/scripts/random-sample-verify.py \
+  --bundle artifacts/released-migration-bundle \
+  --sample-size 25 \
+  --seed 20260925 \
+  --output sample-report.json
+```
+
+It reports three separate verdicts: sampled rows, bundle metadata, and
+historical chain truth. The third is never claimed without independent archived
+evidence. See [`random-sample-verification.md`](random-sample-verification.md)
+for the bundle format, the reproducible sampling algorithm, and what the result
+does and does not prove.

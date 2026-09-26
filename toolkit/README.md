@@ -34,6 +34,14 @@ Additional historical investigation commands are under `cmd/forensics`.
 - `scripts/cutoff/` — interval, difference, receipt, RPC, and reconciliation checks
 - `scripts/forensics/` — historical exploit and supply investigation
 
+- `scripts/build-evidence-bundle.py` — freeze pipeline outputs into a
+  hash-bound evidence bundle
+- `scripts/random-sample-verify.py` — verify a reproducible random sample of a
+  bundle (see `../docs/random-sample-verification.md`)
+- `verifier/` — the shared sample-verification core: `rules.json` (formulas
+  and schemas), `sample_core.py`, `sample_core.js`, and the generated offline
+  `random-sample-verifier.html`
+
 All Python pipeline scripts use the standard library.
 
 ## Build dependency
