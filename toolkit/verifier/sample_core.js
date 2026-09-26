@@ -244,6 +244,46 @@
     return out;
   }
 
+  const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+
+  function bech32Polymod(values) {
+    const generator = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    let chk = 1;
+    for (const value of values) {
+      const top = chk >>> 25;
+      chk = (((chk & 0x1ffffff) << 5) ^ value) >>> 0;
+      for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk = (chk ^ generator[i]) >>> 0;
+    }
+    return chk;
+  }
+
+  /** Mirrors contract_review_lib.hex_to_bech32 (hrp "one"). */
+  function hexToBech32(address, hrp) {
+    const prefix = hrp || 'one';
+    if (typeof address !== 'string' || !/^(0x)?[0-9a-fA-F]{40}$/.test(address)) throw new Error('invalid hex address');
+    const raw = fromHex(address.toLowerCase().replace(/^0x/, ''));
+    let acc = 0;
+    let bits = 0;
+    const values = [];
+    for (const byte of raw) {
+      acc = ((acc << 8) | byte) & 0xffff;
+      bits += 8;
+      while (bits >= 5) { bits -= 5; values.push((acc >>> bits) & 31); }
+    }
+    if (bits) values.push((acc << (5 - bits)) & 31);
+    const expanded = [...prefix].map((c) => c.charCodeAt(0) >> 5).concat([0], [...prefix].map((c) => c.charCodeAt(0) & 31));
+    const polymod = (bech32Polymod(expanded.concat(values, [0, 0, 0, 0, 0, 0])) ^ 1) >>> 0;
+    const checksum = [0, 1, 2, 3, 4, 5].map((i) => (polymod >>> (5 * (5 - i))) & 31);
+    return prefix + '1' + values.concat(checksum).map((v) => BECH32_CHARSET[v]).join('');
+  }
+
+  /** Problem text when the one1 address is not the bech32 form of the hex address. */
+  function bech32Problem(one1, eth, context) {
+    let expected;
+    try { expected = hexToBech32(eth); } catch (error) { return `${context}: invalid hex address ${JSON.stringify(eth)}`; }
+    return one1 === expected ? null : `${context}: ${one1} is not the one1 form of ${eth} (${expected})`;
+  }
+
   /** Mirrors contract_review_lib.require_address_secure_key. */
   function requireAddressSecureKey(address, secureKey, context) {
     if (typeof address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
@@ -477,6 +517,7 @@
   const SYMBOL = { le: '<=', lt: '<', ge: '>=', gt: '>', ne: '!=' };
 
   function kindOf(value) {
+    if (Array.isArray(value)) return 'list';
     if (typeof value === 'bigint') return 'int';
     if (typeof value === 'boolean') return 'bool';
     if (typeof value === 'string') return 'str';
@@ -485,6 +526,12 @@
 
   function compare(op, left, right) {
     if (kindOf(left) !== kindOf(right)) throw new EvalError(`cannot compare ${kindOf(left)} with ${kindOf(right)}`);
+    if (Array.isArray(left)) {
+      const same = left.length === right.length && left.every((item, i) => item === right[i]);
+      if (op === 'eq') return same;
+      if (op === 'ne') return !same;
+      throw new EvalError('cannot order lists');
+    }
     if (op === 'eq') return left === right;
     if (op === 'ne') return left !== right;
     if (typeof left === 'boolean') throw new EvalError('cannot order booleans');
@@ -619,6 +666,38 @@
           const options = Array.isArray(arg[1]) ? arg[1] : ev(arg[1]);
           if (!Array.isArray(options)) throw new EvalError('in() needs a list');
           return options.includes(value);
+        }
+        case 'list': return arg.slice();
+        case 'minus': {
+          const left = ev(arg[0]);
+          const right = ev(arg[1]);
+          if (!Array.isArray(left) || !Array.isArray(right)) throw new EvalError('minus() needs two lists');
+          return left.filter((item) => !right.includes(item));
+        }
+        case 'all_match': {
+          const items = ev(arg[0]);
+          const pattern = ev(arg[1]);
+          if (!Array.isArray(items) || typeof pattern !== 'string') throw new EvalError('all_match() needs a list and a pattern');
+          const regex = new RegExp(pattern);
+          return items.every((item) => typeof item === 'string' && regex.test(item));
+        }
+        case 'or_zero': {
+          const value = ev(arg);
+          if (value === '') return 0n;
+          if (typeof value === 'bigint') return value;
+          if (typeof value === 'string' && this.types.uint.test(value)) return BigInt(value);
+          throw new EvalError(`expected an integer or blank, found ${JSON.stringify(String(value))}`);
+        }
+        case 'split': {
+          const value = ev(arg);
+          if (typeof value !== 'string') throw new EvalError('split() needs text');
+          return value.split(';').filter((part) => part);
+        }
+        case 'round_one': return (Engine.intValue(ev(arg)) + 5n * 10n ** 17n) / 10n ** 18n;
+        case 'ymd': {
+          const value = ev(arg);
+          if (typeof value !== 'string') throw new EvalError('ymd() needs text');
+          return value.slice(0, 10).replace(/-/g, '');
         }
         case 'lower': {
           const value = ev(arg);
@@ -840,6 +919,13 @@
       ['wone_balance_atto', 'wone_balance_atto'],
     ];
   }
+
+  const SNAPSHOT_SUMMARY_FILES = {
+    full_snapshot: 'cutoff_snapshot',
+    snapshot_breakdown: 'snapshot_breakdown',
+    snapshot: 'snapshot_public',
+    snapshot_small: 'snapshot_small',
+  };
 
   const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
   const jsonInt = (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -1305,6 +1391,7 @@
           try {
             if (spec.where !== undefined && !this.engine.eval(spec.where, empty, row, role)) continue;
             if (spec.count) sums[spec.id] += 1n;
+            else if (spec.value !== undefined) sums[spec.id] += Engine.intValue(this.engine.eval(spec.value, empty, row, role));
             else sums[spec.id] += this.engine.typed(role, spec.field, row[spec.field]);
           } catch (error) {
             if (!(error instanceof EvalError)) throw error;
@@ -1318,15 +1405,32 @@
     checkIdentityInline(role, row) {
       const state = this.identityState[role] = this.identityState[role] || { rows: 0, failures: 0, examples: [] };
       state.rows += 1;
-      for (const [addressField, keyField] of this.rules.roles[role].identity || []) {
+      for (const problem of this.identityProblems(role, row)) {
+        state.failures += 1;
+        if (state.examples.length < MAX_EXAMPLES) state.examples.push(problem);
+      }
+    }
+
+    /** keccak256(address) == secure_key and one1 == bech32(hex) for one record. */
+    identityProblems(role, row) {
+      const problems = [];
+      const spec = this.rules.roles[role];
+      for (const [addressField, keyField] of spec.identity || []) {
         const address = row[addressField] || '';
         const key = row[keyField] || '';
         if (!address && !key) continue;
-        try { requireAddressSecureKey(address, key, row._line); } catch (error) {
-          state.failures += 1;
-          if (state.examples.length < MAX_EXAMPLES) state.examples.push(error.message);
-        }
+        try { requireAddressSecureKey(address, key, row._line); } catch (error) { problems.push(error.message); }
       }
+      for (const [one1Field, ethField] of spec.bech32_identity || []) {
+        const problem = bech32Problem(row[one1Field] || '', row[ethField] || '', row._line);
+        if (problem) problems.push(problem);
+      }
+      return problems;
+    }
+
+    hasIdentity(role) {
+      const spec = this.rules.roles[role];
+      return !!((spec.identity && spec.identity.length) || (spec.bech32_identity && spec.bech32_identity.length));
     }
 
     finishIdentities(role) {
@@ -1348,6 +1452,7 @@
       await this.checkFiles();
       await this.checkJsonDocs();
       this.checkWoneSummary();
+      this.checkSnapshotSummaryLinks();
 
       if (this.sampleSize !== null && this.sampleSize < 0) throw new BundleError('sample size must be non-negative');
       const size = this.sampleSize || 0;
@@ -1421,7 +1526,7 @@
         const spec = this.rules.roles[role];
         const matchField = spec.match;
         const [sums, addTotal] = this.makeAccumulator(role);
-        const byAddress = matchField === 'address' || matchField === 'address_hex';
+        const byAddress = spec.join === 'address';
         let nativeJoin = null;
         if (role === 'native_claims' && this.roles.wone_overlay.present) {
           nativeJoin = new SortedKeyCursor(this.fs, this.roles.wone_overlay.files[0].path);
@@ -1434,7 +1539,7 @@
           const keys = byAddress ? (addresses[value] || []) : [value];
           for (const target of keys) if (target in matched) (matched[target][role] = matched[target][role] || []).push(row);
           const key = value;
-          if (this.verifyAllMetadata && !problems.length && spec.identity) this.checkIdentityInline(role, row);
+          if (this.verifyAllMetadata && !problems.length && this.hasIdentity(role)) this.checkIdentityInline(role, row);
           if (nativeJoin && !problems.length) {
             if (!(await nativeJoin.contains(value))) this.nativeMissing.push(row._line);
           }
@@ -1452,7 +1557,7 @@
           }
         });
         Object.assign(this.totals, sums);
-        if (this.verifyAllMetadata && spec.identity) this.finishIdentities(role);
+        if (this.verifyAllMetadata && this.hasIdentity(role)) this.finishIdentities(role);
         if (nativeJoin) {
           this.bundle('global.native_in_overlay', 'native_claims', this.nativeMissing.length ? FAIL : PASS,
             'Every native claim row appears in the current claim ledger', this.nativeMissing.slice(0, MAX_EXAMPLES).join(', '),
@@ -1494,17 +1599,9 @@
         const problems = rows.flatMap((row) => row._problems || []);
         add(`schema.${role}`, problems.length ? FAIL : PASS, `${spec.label} record is well formed`, problems.join('; '),
           problems.length ? 'The record has a malformed, negative, or missing value, so it cannot be trusted.' : '');
-        const identityProblems = [];
-        for (const row of rows) {
-          for (const [addressField, keyField] of spec.identity || []) {
-            const address = row[addressField] || '';
-            const key = row[keyField] || '';
-            if (!address && !key) continue;
-            try { requireAddressSecureKey(address, key, row._line); } catch (error) { identityProblems.push(error.message); }
-          }
-        }
-        if (spec.identity && spec.identity.length) {
-          add(`identity.${role}`, identityProblems.length ? FAIL : PASS, 'Address hashes to its secure key (keccak256(address) == secure_key)',
+        const identityProblems = rows.flatMap((row) => this.identityProblems(role, row));
+        if (this.hasIdentity(role)) {
+          add(`identity.${role}`, identityProblems.length ? FAIL : PASS, 'Address identity is consistent (keccak256(address) == secure_key, one1 == bech32(hex))',
             identityProblems.join('; '), identityProblems.length ? 'The address and secure key belong to different accounts.' : '');
         }
         if (rows.length > 1 && (spec.unique || []).includes(spec.match)) {
@@ -1656,7 +1753,81 @@
       }
     }
 
+    /** Hash links, cutoff, and WONE overrides from the cutoff snapshot summary. */
+    checkSnapshotSummaryLinks() {
+      const docs = this.parsedJson.snapshot_summary || [];
+      if (!docs.length) return;
+      const [entry, summary] = docs[0];
+      const problems = [];
+      const pinned = this.snapshot.cutoff;
+      if (summary.cutoff_time_utc !== pinned.requested_time_utc) problems.push(`cutoff_time_utc is ${repr(summary.cutoff_time_utc)}`);
+      const cutoff = isObject(summary.cutoff) ? summary.cutoff : {};
+      for (const shard of ['shard0', 'shard1']) {
+        const item = isObject(cutoff[shard]) ? cutoff[shard] : {};
+        if (!(jsonInt(item.block) && item.block === pinned[shard].block)) problems.push(`cutoff.${shard}.block does not match the published snapshot`);
+        if (typeof item.hash !== 'string' || item.hash.toLowerCase() !== pinned[shard].hash) problems.push(`cutoff.${shard}.hash does not match the published snapshot`);
+      }
+      for (const [key, role] of Object.entries(SNAPSHOT_SUMMARY_FILES)) {
+        const record = isObject(summary[key]) ? summary[key] : {};
+        for (const bundleEntry of this.roles[role].files) {
+          const recorded = typeof record.sha256 === 'string' ? record.sha256.toLowerCase().replace(/^0x/, '') : record.sha256;
+          if (recorded !== this.fileHashes[bundleEntry.path]) problems.push(`${key}.sha256 does not identify ${bundleEntry.path}`);
+        }
+      }
+      const overrides = summary.ledger_wone_overrides;
+      const addresses = [];
+      if (!Array.isArray(overrides)) problems.push('ledger_wone_overrides must be a list');
+      else {
+        overrides.forEach((item, index) => {
+          const ok = isObject(item) && typeof item.address === 'string' && this.typeOk('address', item.address)
+            && ['ledger_wone_atto', 'census_wone_atto'].every((field) => typeof item[field] === 'string' && this.typeOk('uint', item[field]));
+          if (!ok) problems.push(`ledger_wone_overrides[${index}] needs address, ledger_wone_atto, census_wone_atto`);
+          else addresses.push(item.address.toLowerCase());
+        });
+      }
+      if (problems.length) delete this.parsedJson.snapshot_summary;
+      else this.engine.constants.SNAPSHOT_WONE_OVERRIDES = [...new Set(addresses)].sort();
+      this.snapshotSummaryEntry = [entry, summary, problems];
+    }
+
+    /** Row counts and reconciliation entries of the cutoff snapshot summary. */
+    checkSnapshotSummaryTotals() {
+      if (!this.snapshotSummaryEntry) return;
+      const [entry, summary, earlier] = this.snapshotSummaryEntry;
+      const problems = earlier.slice();
+      for (const [key, role] of Object.entries(SNAPSHOT_SUMMARY_FILES)) {
+        const record = isObject(summary[key]) ? summary[key] : {};
+        for (const bundleEntry of this.roles[role].files) {
+          if (!(jsonInt(record.rows) && record.rows === bundleEntry.rows)) problems.push(`${key}.rows ${repr(record.rows)} != ${bundleEntry.rows}`);
+        }
+      }
+      const reconciliation = isObject(summary.reconciliation) ? summary.reconciliation : {};
+      if (!Object.keys(reconciliation).length) problems.push('reconciliation is missing');
+      const number = (value) => {
+        if (jsonInt(value)) return BigInt(value);
+        if (typeof value === 'string' && this.typeOk('uint', value)) return BigInt(value);
+        return null;
+      };
+      for (const name of Object.keys(reconciliation).sort()) {
+        const item = reconciliation[name];
+        const value = isObject(item) ? number(item.value) : null;
+        const expected = isObject(item) ? number(item.expected) : null;
+        if (value === null || expected === null || value !== expected) problems.push(`reconciliation.${name}: value ${repr(item)} does not equal expected`);
+      }
+      for (const [name, total] of [['ledger_rows', 'wone_overlay.rows'], ['native_total_atto', 'wone_overlay.native_total_claim_atto']]) {
+        const item = isObject(reconciliation[name]) ? reconciliation[name] : {};
+        if (total in this.totals && number(item.value) !== this.totals[total]) {
+          problems.push(`reconciliation.${name} is ${repr(item.value)}; the bundle gives ${this.totals[total]}`);
+        }
+      }
+      this.bundle('summary.snapshot', entry.path, problems.length ? FAIL : PASS,
+        'Cutoff snapshot summary matches the cutoff, the bundled snapshot files, and the claim ledger',
+        problems.slice(0, MAX_EXAMPLES).join('; '),
+        problems.length ? 'The published snapshot summary disagrees with the bundled files or the claim ledger.' : '');
+    }
+
     checkSummaries() {
+      this.checkSnapshotSummaryTotals();
       const docs = this.parsedJson;
       const stageFiles = this.roles.stage_policy.files;
       const stageHash = stageFiles.length ? this.fileHashes[stageFiles[0].path] : undefined;
@@ -2039,6 +2210,6 @@
     PASS, FAIL, NOT_VERIFIED, WARNING, EXIT, MANIFEST_NAME, CHUNK,
     BundleError, Sha256, keccak256, toHex, toChecksum, fixed18, usd, sha256Hex,
     parseJsonStrict, CsvParser, Engine, RowContext, Sampler, drawSample, generateSeed,
-    batchLeaf, treeLevels, Verifier, verifyBundle,
+    batchLeaf, treeLevels, hexToBech32, Verifier, verifyBundle,
   };
 });

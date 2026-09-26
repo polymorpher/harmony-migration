@@ -172,6 +172,22 @@ def hash_and_utf8_error(path):
     return digest.hexdigest(), error
 
 
+def whole_one(value):
+    """Whole ONE rounded half up: (atto + 5*10^17) div 10^18."""
+    return (value + 5 * 10**17) // 10**18
+
+
+def bech32_problem(one1, eth, context):
+    """Problem text when the one1 address is not the bech32 form of the hex address."""
+    try:
+        expected = lib.hex_to_bech32(eth)
+    except (ValueError, TypeError):
+        return f"{context}: invalid hex address {eth!r}"
+    if one1 != expected:
+        return f"{context}: {one1} is not the one1 form of {eth} ({expected})"
+    return None
+
+
 def fixed18(value):
     return WONE.fixed(value)
 
@@ -341,6 +357,41 @@ class Engine:
             if not isinstance(options, list):
                 raise EvalError("in() needs a list")
             return value in options
+        if op == "list":
+            return list(arg)
+        if op == "minus":
+            left = self.eval(arg[0], ctx, row, row_role)
+            right = self.eval(arg[1], ctx, row, row_role)
+            if not isinstance(left, list) or not isinstance(right, list):
+                raise EvalError("minus() needs two lists")
+            return [item for item in left if item not in right]
+        if op == "all_match":
+            items = self.eval(arg[0], ctx, row, row_role)
+            pattern = self.eval(arg[1], ctx, row, row_role)
+            if not isinstance(items, list) or not isinstance(pattern, str):
+                raise EvalError("all_match() needs a list and a pattern")
+            return all(isinstance(item, str) and re.fullmatch(pattern, item) for item in items)
+        if op == "or_zero":
+            value = self.eval(arg, ctx, row, row_role)
+            if value == "":
+                return 0
+            if type(value) is int:
+                return value
+            if isinstance(value, str) and self.types["uint"].fullmatch(value):
+                return int(value)
+            raise EvalError(f"expected an integer or blank, found {value!r}")
+        if op == "split":
+            value = self.eval(arg, ctx, row, row_role)
+            if not isinstance(value, str):
+                raise EvalError("split() needs text")
+            return [part for part in value.split(";") if part]
+        if op == "round_one":
+            return whole_one(self.int_value(self.eval(arg, ctx, row, row_role)))
+        if op == "ymd":
+            value = self.eval(arg, ctx, row, row_role)
+            if not isinstance(value, str):
+                raise EvalError("ymd() needs text")
+            return value[:10].replace("-", "")
         if op == "lower":
             value = self.eval(arg, ctx, row, row_role)
             if not isinstance(value, str):
@@ -437,6 +488,8 @@ def compare(op, left, right):
         return left != right
     if isinstance(left, bool):
         raise EvalError("cannot order booleans")
+    if isinstance(left, list):
+        raise EvalError("cannot order lists")
     if op == "lt":
         return left < right
     if op == "le":
@@ -1051,6 +1104,8 @@ class Verifier:
                         continue
                     if spec.get("count"):
                         sums[spec["id"]] += 1
+                    elif "value" in spec:
+                        sums[spec["id"]] += engine.int_value(engine.eval(spec["value"], empty, row, role))
                     else:
                         sums[spec["id"]] += engine.typed(role, spec["field"], row.get(spec["field"]))
                 except EvalError:
@@ -1068,6 +1123,7 @@ class Verifier:
         self.check_files()
         self.check_json_docs()
         self.check_wone_summary()
+        self.check_snapshot_summary_links()
 
         if self.sample_size is not None and self.sample_size < 0:
             raise BundleError("sample size must be non-negative")
@@ -1154,16 +1210,28 @@ class Verifier:
     def check_identity_inline(self, role, row):
         state = self.identity_state.setdefault(role, {"rows": 0, "failures": 0, "examples": []})
         state["rows"] += 1
-        for address_field, key_field in self.rules["roles"][role].get("identity", []):
+        for problem in self.identity_problems(role, row):
+            state["failures"] += 1
+            if len(state["examples"]) < MAX_EXAMPLES:
+                state["examples"].append(problem)
+
+    def identity_problems(self, role, row):
+        """keccak256(address) == secure_key and one1 == bech32(hex) for one record."""
+        problems = []
+        spec = self.rules["roles"][role]
+        for address_field, key_field in spec.get("identity", []):
             address, key = row.get(address_field, ""), row.get(key_field, "")
             if not address and not key:
                 continue
             try:
                 lib.require_address_secure_key(address, key, row["_line"])
             except ValueError as error:
-                state["failures"] += 1
-                if len(state["examples"]) < MAX_EXAMPLES:
-                    state["examples"].append(str(error))
+                problems.append(str(error))
+        for one1_field, eth_field in spec.get("bech32_identity", []):
+            problem = bech32_problem(row.get(one1_field, ""), row.get(eth_field, ""), row["_line"])
+            if problem:
+                problems.append(problem)
+        return problems
 
     def finish_identities(self, role):
         state = self.identity_state.get(role, {"rows": 0, "failures": 0, "examples": []})
@@ -1185,7 +1253,7 @@ class Verifier:
             spec = self.rules["roles"][role]
             match_field = spec["match"]
             sums, add_total = self.make_accumulator(role)
-            by_address = match_field in ("address", "address_hex")
+            by_address = spec.get("join") == "address"
             native_join = None
             if role == "native_claims" and self.roles["wone_overlay"].present:
                 native_join = SortedKeyCursor(self.roles["wone_overlay"].files[0]["abs"])
@@ -1200,7 +1268,7 @@ class Verifier:
                     if key in matched:
                         matched[key].setdefault(role, []).append(row)
                 key = value
-                if self.verify_all_metadata and not problems and self.rules["roles"][role].get("identity"):
+                if self.verify_all_metadata and not problems and self.has_identity(role):
                     self.check_identity_inline(role, row)
                 if native_join is not None and not problems:
                     if not native_join.contains(value):
@@ -1224,7 +1292,7 @@ class Verifier:
 
             self.iter_role_rows(role, collect)
             self.totals.update(sums)
-            if self.verify_all_metadata and spec.get("identity"):
+            if self.verify_all_metadata and self.has_identity(role):
                 self.finish_identities(role)
             if native_join is not None:
                 native_join.close()
@@ -1273,19 +1341,10 @@ class Verifier:
                 f"{self.rules['roles'][role]['label']} record is well formed",
                 "; ".join(problems),
                 "The record has a malformed, negative, or missing value, so it cannot be trusted." if problems else "")
-            identity_problems = []
-            for row in rows:
-                for address_field, key_field in self.rules["roles"][role].get("identity", []):
-                    address, key = row.get(address_field, ""), row.get(key_field, "")
-                    if not address and not key:
-                        continue
-                    try:
-                        lib.require_address_secure_key(address, key, row["_line"])
-                    except ValueError as error:
-                        identity_problems.append(str(error))
-            if self.rules["roles"][role].get("identity"):
+            identity_problems = [problem for row in rows for problem in self.identity_problems(role, row)]
+            if self.has_identity(role):
                 add(f"identity.{role}", FAIL if identity_problems else PASS,
-                    "Address hashes to its secure key (keccak256(address) == secure_key)",
+                    "Address identity is consistent (keccak256(address) == secure_key, one1 == bech32(hex))",
                     "; ".join(identity_problems),
                     "The address and secure key belong to different accounts." if identity_problems else "")
             spec = self.rules["roles"][role]
@@ -1463,6 +1522,10 @@ class Verifier:
             self.bundle(rule["id"], "totals", PASS if ok else FAIL, rule["title"], message,
                         "" if ok else "Bundle-level totals do not close, so at least one file disagrees with another.")
 
+    def has_identity(self, role):
+        spec = self.rules["roles"][role]
+        return bool(spec.get("identity") or spec.get("bech32_identity"))
+
     def role_present(self, role):
         if role in self.roles:
             return self.roles[role].present
@@ -1502,6 +1565,102 @@ class Verifier:
                     "; ".join(problems) if problems else f"{len(addresses)} excluded address(es)",
                     "The WONE exclusion set cannot be trusted, so WONE census checks are not run." if problems else "")
 
+    SNAPSHOT_SUMMARY_FILES = {
+        "full_snapshot": "cutoff_snapshot",
+        "snapshot_breakdown": "snapshot_breakdown",
+        "snapshot": "snapshot_public",
+        "snapshot_small": "snapshot_small",
+    }
+
+    def check_snapshot_summary_links(self):
+        """Hash links, cutoff, and WONE overrides from the cutoff snapshot summary."""
+        docs = self.parsed_json.get("snapshot_summary", [])
+        if not docs:
+            return
+        entry, summary = docs[0]
+        problems = []
+        pinned = self.snapshot["cutoff"]
+        if summary.get("cutoff_time_utc") != pinned["requested_time_utc"]:
+            problems.append(f"cutoff_time_utc is {summary.get('cutoff_time_utc')!r}")
+        cutoff = summary.get("cutoff") if isinstance(summary.get("cutoff"), dict) else {}
+        for shard in ("shard0", "shard1"):
+            item = cutoff.get(shard) if isinstance(cutoff.get(shard), dict) else {}
+            if not (json_int(item.get("block")) and item["block"] == pinned[shard]["block"]):
+                problems.append(f"cutoff.{shard}.block does not match the published snapshot")
+            if not isinstance(item.get("hash"), str) or item["hash"].lower() != pinned[shard]["hash"]:
+                problems.append(f"cutoff.{shard}.hash does not match the published snapshot")
+        for key, role in self.SNAPSHOT_SUMMARY_FILES.items():
+            record = summary.get(key) if isinstance(summary.get(key), dict) else {}
+            for bundle_entry in self.roles[role].files:
+                recorded = record.get("sha256")
+                recorded = recorded.lower().removeprefix("0x") if isinstance(recorded, str) else recorded
+                if recorded != self.file_hashes.get(bundle_entry["path"]):
+                    problems.append(f"{key}.sha256 does not identify {bundle_entry['path']}")
+        overrides = summary.get("ledger_wone_overrides")
+        addresses = []
+        if not isinstance(overrides, list):
+            problems.append("ledger_wone_overrides must be a list")
+        else:
+            for index, item in enumerate(overrides):
+                if not (
+                    isinstance(item, dict)
+                    and isinstance(item.get("address"), str)
+                    and self.type_ok("address", item["address"])
+                    and all(
+                        isinstance(item.get(field), str) and self.type_ok("uint", item[field])
+                        for field in ("ledger_wone_atto", "census_wone_atto")
+                    )
+                ):
+                    problems.append(f"ledger_wone_overrides[{index}] needs address, ledger_wone_atto, census_wone_atto")
+                    continue
+                addresses.append(item["address"].lower())
+        if problems:
+            del self.parsed_json["snapshot_summary"]
+        else:
+            self.engine.constants["SNAPSHOT_WONE_OVERRIDES"] = sorted(set(addresses))
+        self.snapshot_summary_entry = (entry, summary, problems)
+
+    def check_snapshot_summary_totals(self):
+        """Row counts and reconciliation entries of the cutoff snapshot summary."""
+        state = getattr(self, "snapshot_summary_entry", None)
+        if state is None:
+            return
+        entry, summary, problems = state
+        problems = list(problems)
+        for key, role in self.SNAPSHOT_SUMMARY_FILES.items():
+            record = summary.get(key) if isinstance(summary.get(key), dict) else {}
+            for bundle_entry in self.roles[role].files:
+                if not (json_int(record.get("rows")) and record["rows"] == bundle_entry.get("rows")):
+                    problems.append(f"{key}.rows {record.get('rows')!r} != {bundle_entry.get('rows')}")
+        reconciliation = summary.get("reconciliation") if isinstance(summary.get("reconciliation"), dict) else {}
+        if not reconciliation:
+            problems.append("reconciliation is missing")
+
+        def number(value):
+            if json_int(value):
+                return value
+            if isinstance(value, str) and self.type_ok("uint", value):
+                return int(value)
+            return None
+
+        for name, item in sorted(reconciliation.items()):
+            value = number(item.get("value")) if isinstance(item, dict) else None
+            expected = number(item.get("expected")) if isinstance(item, dict) else None
+            if value is None or expected is None or value != expected:
+                problems.append(f"reconciliation.{name}: value {item!r} does not equal expected")
+        checks = (
+            ("ledger_rows", "wone_overlay.rows"),
+            ("native_total_atto", "wone_overlay.native_total_claim_atto"),
+        )
+        for name, total in checks:
+            item = reconciliation.get(name) if isinstance(reconciliation.get(name), dict) else {}
+            if total in self.totals and number(item.get("value")) != self.totals[total]:
+                problems.append(f"reconciliation.{name} is {item.get('value')!r}; the bundle gives {self.totals[total]}")
+        self.bundle("summary.snapshot", entry["path"], FAIL if problems else PASS,
+                    "Cutoff snapshot summary matches the cutoff, the bundled snapshot files, and the claim ledger",
+                    "; ".join(problems[:MAX_EXAMPLES]),
+                    "The published snapshot summary disagrees with the bundled files or the claim ledger." if problems else "")
+
     def check_json_docs(self):
         self.parsed_json = {}
         for role, entries in self.json_docs.items():
@@ -1521,6 +1680,7 @@ class Verifier:
                 self.parsed_json.setdefault(role, []).append((entry, value))
 
     def check_summaries(self):
+        self.check_snapshot_summary_totals()
         docs = self.parsed_json
         stage_files = self.roles["stage_policy"].files
         stage_hash = self.file_hashes.get(stage_files[0]["path"]) if stage_files else None

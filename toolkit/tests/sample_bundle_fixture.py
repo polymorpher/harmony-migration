@@ -104,6 +104,7 @@ def default_accounts():
         account("holder-small", l0=1, wone=3),
         account("undelegating", l0=950, undelegating=40, cross=20, activity=OLD),
         account("excluded-holder", "excluded", l0=2, wone=7),
+        account("half-one", l0_atto=ATTO + ATTO // 2),
     ]
     for index in range(12):
         if index % 2 == 0:
@@ -322,7 +323,165 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def pipeline_outputs(directory, accounts=None, *, airdrop=True):
+CENSUS_ONLY = (
+    ("census-holder", 50 * ATTO),
+    ("census-dust", 5),
+)
+SNAPSHOT_FIELDS = tuple(core.load_rules()["roles"]["cutoff_snapshot"]["fields"])
+PUBLIC_FIELDS = tuple(core.load_rules()["roles"]["snapshot_public"]["fields"])
+BREAKDOWN_FIELDS = tuple(core.load_rules()["roles"]["snapshot_breakdown"]["fields"])
+INCIDENT_SLUG = "20250101-wallet-theft-case001"
+
+
+def whole(value):
+    return str((value + 5 * 10**17) // 10**18)
+
+
+def ymd(value):
+    return value[:10].replace("-", "")
+
+
+def snapshot_rows(accounts, derived, stages):
+    """Full-snapshot rows for the ledger accounts plus census-only WONE holders (dust excluded)."""
+    rows = []
+    for acct in accounts:
+        d = derived[acct["key"]]
+        stage = stages.get(acct["key"])
+        exchange = acct["kind"] == "exchange"
+        excluded = acct["kind"] in ("excluded", "wone_contract")
+        existing = acct["existing"]
+        reviewed = int(stage["reviewed_contract_non_issuance_atto"]) if stage else 0
+        reserve = int(stage["wone_source_offset_atto"]) if stage else 0
+        not_delivered = 0 if (d["qualifies"] or exchange or excluded) else acct["wone"]
+        labels = [INCIDENT_SLUG] if existing else []
+        if reserve:
+            labels.append("wone-reserve")
+        if reviewed:
+            labels.append("excluded-smartvault" if acct["kind"] == "smartvault" else "excluded-contract")
+        if not_delivered:
+            labels.append("wone-below-threshold")
+        native_total = d["native_total"]
+        total = native_total + acct["wone"]
+        if exchange:
+            stage_name, treatment = "exchange_manual", "manual_from_reserve"
+        elif stage:
+            stage_name, treatment = stage["migration_stage"], stage["issuance_treatment"]
+        else:
+            stage_name, treatment = "", ""
+        validator = acct["kind"] == "validator"
+        rows.append({
+            "one1_address": lib.hex_to_bech32(acct["address"]), "eth_address": acct["address"].lower(),
+            "row_source": "native_ledger" if acct["native"] else "wone_only_ledger",
+            "is_contract": "true" if acct["kind"] in ("smartvault", "wone_contract") else "false",
+            "is_validator": "true" if validator else "false",
+            "contract_category": {"smartvault": "smartvault-wallet", "wone_contract": "known-app"}.get(acct["kind"], ""),
+            "nonce_shard0": "1" if acct["native"] else "0", "nonce_shard1": "",
+            "liquid_shard0_atto": str(acct["l0"]), "liquid_shard1_atto": str(acct["l1"]),
+            "self_stake_atto": str(acct["active"] if validator else 0),
+            "delegated_atto": str(0 if validator else acct["active"]),
+            "pending_undelegation_atto": str(acct["undelegating"]), "unclaimed_reward_atto": str(acct["reward"]),
+            "pending_cross_shard_atto": str(acct["cross"]), "native_total_atto": str(native_total),
+            "wone_balance_atto": str(acct["wone"]), "total_balance_atto": str(total),
+            "qualified_1000_one": "true" if d["qualifies"] else "false",
+            "exchange": "gate" if exchange else "",
+            "migration_stage": stage_name, "issuance_treatment": treatment,
+            "wone_airdrop_atto": str(d["wone_airdrop"]),
+            "migration_allocation_atto": stage["migration_allocation_atto"] if stage else "",
+            "special_label": ";".join(labels),
+            "related_incident": INCIDENT_SLUG if existing else "",
+            "incident_role": "reported_perpetrator" if existing else "",
+            "incident_deduction_atto": str(existing),
+            "incident_deduction_scope": "none" if not existing else ("full" if existing >= native_total else "partial"),
+            "exploit_distribution_retained_atto": "0", "revert_leak_credit_atto": "0", "extra_payout_atto": "0",
+            "wallet_theft_atto": str(existing), "burn_or_inaccessible_atto": "0",
+            "reviewed_contract_non_issuance_atto": str(reviewed), "wone_not_delivered_atto": str(not_delivered),
+            "wone_reserve_atto": str(reserve),
+            "non_issuing_atto": str(existing + reviewed + not_delivered + reserve),
+            "activity_coverage": "collected" if total >= ATTO else "not_collected_below_1_one",
+            "signed_check": "verified" if acct["activity"] else "", "last_signed_time_utc": acct["activity"],
+            "last_signed_shard": "0" if acct["activity"] else "", "last_signed_type": "regular" if acct["activity"] else "",
+            "last_signed_tx_hash": ("0x" + "ab" * 32) if acct["activity"] else "", "last_inbound_time_utc": "", "last_inbound_shard": "", "last_inbound_from": "",
+            "last_inbound_value_atto": "", "last_inbound_tx_hash": "",
+        })
+    for label, wone in CENSUS_ONLY:
+        if wone < 10:
+            continue
+        address = address_for(label)
+        rows.append({field: "" for field in SNAPSHOT_FIELDS} | {
+            "one1_address": lib.hex_to_bech32(address), "eth_address": address.lower(), "row_source": "wone_census",
+            "is_contract": "false", "is_validator": "false",
+            **{field: "0" for field in ("liquid_shard0_atto", "liquid_shard1_atto", "self_stake_atto", "delegated_atto",
+                                          "pending_undelegation_atto", "unclaimed_reward_atto", "pending_cross_shard_atto",
+                                          "native_total_atto", "incident_deduction_atto", "burn_or_inaccessible_atto",
+                                          "reviewed_contract_non_issuance_atto", "wone_reserve_atto")},
+            "wone_balance_atto": str(wone), "total_balance_atto": str(wone), "qualified_1000_one": "false",
+            "incident_deduction_scope": "none", "wone_not_delivered_atto": str(wone), "non_issuing_atto": str(wone),
+            "special_label": "wone-below-threshold",
+            "activity_coverage": "collected" if wone >= ATTO else "not_collected_below_1_one",
+        })
+    return sorted(rows, key=lambda row: row["one1_address"])
+
+
+def public_row(row, breakdown):
+    base = {
+        "one1_address": row["one1_address"], "eth_address": row["eth_address"],
+        "total_balance": whole(int(row["total_balance_atto"])),
+        "last_signed_tx_date": ymd(row["last_signed_time_utc"]), "last_inbound_tx_date": ymd(row["last_inbound_time_utc"]),
+        "special_label": row["special_label"], "non_issuing_amount": whole(int(row["non_issuing_atto"] or 0)),
+    }
+    if breakdown:
+        return base | {
+            "is_contract": row["is_contract"], "is_validator": row["is_validator"],
+            "shard0_liquid_balance": whole(int(row["liquid_shard0_atto"])),
+            "shard1_liquid_balance": whole(int(row["liquid_shard1_atto"])),
+            "staked_balance": whole(int(row["self_stake_atto"])), "delegated_balance": whole(int(row["delegated_atto"])),
+            "pending_undelegation": whole(int(row["pending_undelegation_atto"])),
+            "unclaimed_reward": whole(int(row["unclaimed_reward_atto"])), "wone_balance": whole(int(row["wone_balance_atto"])),
+        }
+    account_type = "c" if row["is_contract"] == "true" else ("v" if row["is_validator"] == "true" else "")
+    return base | {"account_type": account_type}
+
+
+def snapshot_outputs(directory, accounts, derived, stages, overlay_rows):
+    rows = snapshot_rows(accounts, derived, stages)
+    files = {
+        "full_snapshot": ("full-snapshot.csv", SNAPSHOT_FIELDS, rows),
+        "snapshot_breakdown": ("snapshot-breakdown.csv", BREAKDOWN_FIELDS,
+                               [public_row(r, True) for r in rows if int(r["total_balance_atto"]) >= ATTO]),
+        "snapshot": ("snapshot.csv", PUBLIC_FIELDS,
+                     [public_row(r, False) for r in rows if int(r["total_balance_atto"]) >= ATTO]),
+        "snapshot_small": ("snapshot-small.csv", PUBLIC_FIELDS,
+                           [public_row(r, False) for r in rows if int(r["total_balance_atto"]) >= 10 * ATTO]),
+    }
+    summary = {"cutoff_time_utc": SNAPSHOT["cutoff"]["requested_time_utc"],
+               "cutoff": {shard: {"block": SNAPSHOT["cutoff"][shard]["block"], "hash": SNAPSHOT["cutoff"][shard]["hash"]}
+                          for shard in ("shard0", "shard1")}}
+    for key, (name, fields, file_rows) in files.items():
+        write_csv(directory / name, fields, [{field: row[field] for field in fields} for row in file_rows])
+        summary[key] = {"path": f"data/{name}", "rows": len(file_rows), "sha256": core.file_sha256(directory / name)}
+    by_address = {row["eth_address"]: row for row in rows}
+    summary["ledger_wone_overrides"] = [
+        {"address": row["address"].lower(), "ledger_wone_atto": row["wone_balance_atto"],
+         "census_wone_atto": by_address[row["address"].lower()]["wone_balance_atto"]}
+        for row in overlay_rows
+        if row["wone_balance_atto"] != by_address[row["address"].lower()]["wone_balance_atto"]
+    ]
+    native_total = sum(int(row["native_total_claim_atto"]) for row in overlay_rows)
+    summary["reconciliation"] = {
+        "ledger_rows": {"value": len(overlay_rows), "expected": len(overlay_rows)},
+        "native_total_atto": {"value": str(native_total), "expected": str(native_total)},
+    }
+    write_json(directory / "snapshot-summary.json", summary)
+    return [
+        "--cutoff-snapshot", str(directory / "full-snapshot.csv"),
+        "--snapshot-breakdown", str(directory / "snapshot-breakdown.csv"),
+        "--snapshot-public", str(directory / "snapshot.csv"),
+        "--snapshot-small", str(directory / "snapshot-small.csv"),
+        "--snapshot-summary", str(directory / "snapshot-summary.json"),
+    ]
+
+
+def pipeline_outputs(directory, accounts=None, *, airdrop=True, snapshot=True):
     """Write every pipeline output for the accounts; return builder arguments."""
     directory = Path(directory)
     accounts = sorted(default_accounts() if accounts is None else accounts, key=lambda item: item["key"])
@@ -438,6 +597,8 @@ def pipeline_outputs(directory, accounts=None, *, airdrop=True):
     write_csv(directory / "delegations.csv",
               ("validator_address", "validator_secure_key", "delegator_address", "delegator_secure_key",
                "staked_to_vault_atto"), delegations)
+    for label, wone in CENSUS_ONLY:
+        holders.append({"address": address_for(label), "wone_balance_atto": str(wone), "wone_balance": fixed(wone)})
     write_csv(directory / "holders.csv", WONE_VERIFY.HOLDER_FIELDS, holders)
     write_csv(directory / "exchanges.csv", ("address_hex",), exchanges)
 
@@ -491,6 +652,8 @@ def pipeline_outputs(directory, accounts=None, *, airdrop=True):
     ]
     for item in eligibility_args:
         args += ["--eligibility", item]
+    if snapshot:
+        args += snapshot_outputs(directory, accounts, derived, stages, overlay)
     if airdrop:
         ready = {}
         for row in wallets:

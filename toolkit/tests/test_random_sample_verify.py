@@ -863,6 +863,169 @@ class AuditRegressionTest(BundleCase):
         self.assertEqual(report["exit_code"], core.EXIT_PASS)
 
 
+class SnapshotTest(BundleCase):
+    """Cross-checks between the claim ledger and the published cutoff snapshot files."""
+
+    def snapshot_path(self, name="full-snapshot.csv"):
+        return self.bundle / "snapshot" / name
+
+    def edit_snapshot(self, label, changes, name="full-snapshot.csv"):
+        address = by_label(self.accounts, label)["address"].lower()
+        fx.edit_csv(self.snapshot_path(name), "eth_address", address, changes)
+        fx.refreeze(self.bundle)
+        return self.verify()
+
+    def test_snapshot_checks_pass_on_a_consistent_bundle(self):
+        self.build()
+        report = self.verify()
+        self.assertEqual(report["exit_code"], core.EXIT_PASS)
+        for check_id in ("snapshot.presence", "snapshot.balances", "snapshot.arithmetic", "snapshot.policy",
+                         "snapshot.allocation", "snapshot.labels", "snapshot.wone_ledger", "snapshot_public.values"):
+            self.assertIn(core.PASS, statuses(report, check_id), check_id)
+        self.assertEqual(statuses(report, "summary.snapshot"), [core.PASS])
+        self.assertEqual(statuses(report, "totals.snapshot_closure"), [core.PASS])
+
+    def test_snapshot_is_optional(self):
+        args, self.accounts = fx.pipeline_outputs(self.tmp / "plain", snapshot=False)
+        self.bundle = self.tmp / "plain-bundle"
+        fx.BUILDER.build(fx.BUILDER.parse_args(["--output", str(self.bundle), *args]))
+        report = self.verify()
+        self.assertEqual(report["exit_code"], core.EXIT_PASS)
+        self.assertIn(core.NOT_VERIFIED, statuses(report, "snapshot.presence"))
+        self.assertFalse(any(c["required"] for c in report["checks"] if c["id"].startswith("snapshot")))
+
+    def test_balance_mismatch(self):
+        self.build()
+        acct = by_label(self.accounts, "initial")
+        report = self.edit_snapshot("initial", {"liquid_shard1_atto": str(acct["l1"] + 1),
+                                                "native_total_atto": str(fx.derive(acct)["native_total"] + 1),
+                                                "total_balance_atto": str(fx.derive(acct)["native_total"] + 1)})
+        self.assertRowFails(report, "snapshot.balances", "initial")
+
+    def test_stake_split_between_self_and_delegated_is_accepted(self):
+        self.build()
+        acct = by_label(self.accounts, "initial")
+        report = self.edit_snapshot("initial", {"self_stake_atto": "1", "delegated_atto": str(acct["active"] - 1)})
+        self.assertEqual(statuses(report, "snapshot.balances", acct["key"]), [core.PASS])
+
+    def test_snapshot_totals_must_add_up(self):
+        self.build()
+        report = self.edit_snapshot("incident", {"exploit_distribution_retained_atto": "1"})
+        self.assertRowFails(report, "snapshot.arithmetic", "incident")
+
+    def test_wone_override_must_be_listed(self):
+        self.build()
+        self.assertEqual(statuses(self.verify(), "snapshot.wone_ledger", self.key("excluded-holder")), [core.PASS])
+        path = self.bundle / "summaries" / "snapshot-summary.json"
+        summary = json.loads(path.read_text())
+        summary["ledger_wone_overrides"] = []
+        fx.write_json(path, summary)
+        fx.refreeze(self.bundle)
+        self.assertRowFails(self.verify(), "snapshot.wone_ledger", "excluded-holder")
+
+    def test_exchange_stage_must_be_manual(self):
+        self.build()
+        report = self.edit_snapshot("exchange", {"migration_stage": "initial", "issuance_treatment": "issue"})
+        self.assertRowFails(report, "snapshot.policy", "exchange")
+
+    def test_qualification_flag(self):
+        self.build()
+        self.assertRowFails(self.edit_snapshot("exact", {"qualified_1000_one": "false"}), "snapshot.policy", "exact")
+
+    def test_missing_label(self):
+        self.build()
+        self.assertRowFails(self.edit_snapshot("wone-contract", {"special_label": ""}), "snapshot.labels", "wone-contract")
+
+    def test_unknown_label_fails(self):
+        self.build()
+        self.assertRowFails(self.edit_snapshot("just-below", {"special_label": "made-up"}), "snapshot.label_values", "just-below")
+
+    def test_public_labels_follow_the_full_snapshot(self):
+        self.build()
+        report = self.edit_snapshot("wone-contract", {"special_label": ""}, "snapshot.csv")
+        self.assertRowFails(report, "snapshot_public.labels", "wone-contract")
+
+    def test_victim_only_slug_is_left_out_of_public_files(self):
+        self.build()
+        slug = "20250202-wallet-theft-case002"
+        report = self.edit_snapshot("initial", {"special_label": slug, "related_incident": slug, "incident_role": "reported_victim"})
+        self.assertEqual(statuses(report, "snapshot.label_values", self.key("initial")), [core.PASS])
+        self.assertEqual(statuses(report, "snapshot_public.labels", self.key("initial")), [core.PASS])
+        address = by_label(self.accounts, "initial")["address"].lower()
+        fx.edit_csv(self.snapshot_path("snapshot.csv"), "eth_address", address, {"special_label": "not-a-slug"})
+        fx.refreeze(self.bundle)
+        self.assertRowFails(self.verify(), "snapshot_public.labels", "initial")
+
+    def test_activity_details_must_be_complete(self):
+        self.build()
+        self.assertRowFails(self.edit_snapshot("initial", {"last_signed_tx_hash": ""}), "snapshot.activity_fields", "initial")
+
+    def test_bech32_mismatch(self):
+        self.build()
+        other = by_label(self.accounts, "below")["address"]
+        report = self.edit_snapshot("initial", {"one1_address": fx.lib.hex_to_bech32(other)})
+        self.assertIn(core.FAIL, statuses(report, "identity.cutoff_snapshot", self.key("initial")))
+
+    def test_public_amounts_round_half_up(self):
+        self.build()
+        report = self.verify()
+        key = self.key("half-one")
+        self.assertEqual(statuses(report, "snapshot_public.values", key), [core.PASS])
+        rows = fx.read_csv(self.snapshot_path("snapshot.csv"))
+        address = by_label(self.accounts, "half-one")["address"].lower()
+        self.assertEqual(next(r for r in rows if r["eth_address"] == address)["total_balance"], "2")
+        self.assertRowFails(self.edit_snapshot("half-one", {"total_balance": "1"}, "snapshot.csv"),
+                            "snapshot_public.values", "half-one")
+
+    def test_round_one_boundaries(self):
+        engine = core.Engine(core.load_rules(), core.load_snapshot())
+        ctx = core.RowContext({})
+        cases = {0: 0, fx.ATTO // 2 - 1: 0, fx.ATTO // 2: 1, fx.ATTO + fx.ATTO // 2 - 1: 1, fx.ATTO + fx.ATTO // 2: 2}
+        for atto, whole in cases.items():
+            self.assertEqual(engine.eval({"round_one": {"int": str(atto)}}, ctx), whole)
+
+    def test_public_inclusion_and_row_counts(self):
+        self.build()
+        address = by_label(self.accounts, "initial")["address"].lower()
+        path = self.snapshot_path("snapshot-small.csv")
+        rows = [row for row in fx.read_csv(path) if row["eth_address"] != address]
+        fx.write_csv(path, fx.PUBLIC_FIELDS, rows)
+        fx.refreeze(self.bundle)
+        report = self.verify()
+        self.assertRowFails(report, "snapshot_small.inclusion", "initial")
+        self.assertEqual(statuses(report, "totals.snapshot_small_rows"), [core.FAIL])
+        self.assertEqual(statuses(report, "summary.snapshot"), [core.FAIL])
+
+    def test_census_dust_must_be_excluded(self):
+        self.build()
+        dust = fx.address_for("census-dust").lower()
+        fx.append_csv_row(self.snapshot_path(), {field: "" for field in fx.SNAPSHOT_FIELDS} | {
+            "one1_address": fx.lib.hex_to_bech32(dust), "eth_address": dust, "row_source": "wone_census",
+            "is_contract": "false", "is_validator": "false", "incident_deduction_scope": "none",
+            "activity_coverage": "not_collected_below_1_one", "wone_balance_atto": "5", "total_balance_atto": "5",
+            "wone_not_delivered_atto": "5", "non_issuing_atto": "5", "qualified_1000_one": "false",
+            **{field: "0" for field in ("liquid_shard0_atto", "liquid_shard1_atto", "self_stake_atto", "delegated_atto",
+                                          "pending_undelegation_atto", "unclaimed_reward_atto", "pending_cross_shard_atto",
+                                          "native_total_atto")},
+        })
+        rows = sorted(fx.read_csv(self.snapshot_path()), key=lambda row: row["one1_address"])
+        fx.write_csv(self.snapshot_path(), fx.SNAPSHOT_FIELDS, rows)
+        fx.refreeze(self.bundle)
+        report = self.verify()
+        self.assertEqual(statuses(report, "totals.snapshot_closure"), [core.FAIL])
+
+    def test_summary_reconciliation(self):
+        self.build()
+        path = self.bundle / "summaries" / "snapshot-summary.json"
+        summary = json.loads(path.read_text())
+        summary["reconciliation"]["ledger_rows"] = {"value": 1, "expected": 1}
+        fx.write_json(path, summary)
+        fx.refreeze(self.bundle)
+        report = self.verify()
+        self.assertEqual(statuses(report, "summary.snapshot"), [core.FAIL])
+        self.assertEqual(report["exit_code"], core.EXIT_FAIL)
+
+
 @unittest.skipIf(NODE is None, "node is not installed; the HTML engine conformance test needs it")
 class EngineConformanceTest(BundleCase):
     """The HTML's JavaScript engine must reach exactly the CLI's verdicts."""
@@ -935,6 +1098,17 @@ class EngineConformanceTest(BundleCase):
         (self.bundle / "claims" / core.MANIFEST_NAME).write_text("{}\n")
         self.compare(sample_by="address")
         self.compare(sample_size=5)
+
+    def test_snapshot_edge_cases(self):
+        self.build()
+        address = by_label(self.accounts, "exchange")["address"].lower()
+        fx.edit_csv(self.bundle / "snapshot" / "full-snapshot.csv", "eth_address", address,
+                    {"migration_stage": "initial", "one1_address": fx.lib.hex_to_bech32(fx.address_for("x"))})
+        half = by_label(self.accounts, "half-one")["address"].lower()
+        fx.edit_csv(self.bundle / "snapshot" / "snapshot.csv", "eth_address", half, {"total_balance": "1"})
+        fx.refreeze(self.bundle)
+        self.compare()
+        self.compare(sample_size=4, verify_all_metadata=True)
 
     def test_invalid_utf8_midway(self):
         self.build()

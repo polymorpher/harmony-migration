@@ -89,6 +89,9 @@ the published cutoff, but it has not been checked against the chain.
   cutoff blocks.
 - When an airdrop list is included, it matches its Merkle root and pays only
   ready wallet destinations, each its exact amount.
+- When the published cutoff snapshot is included, it shows every sampled row
+  with the same balances, stage, and non-issuing amounts as the delivered claim,
+  and its public files round those amounts correctly.
 - When independent archived chain data is included, the cutoff blocks and the
   sampled balances match it.
 
@@ -98,7 +101,14 @@ the published cutoff, but it has not been checked against the chain.
   format checks. A passing sample makes widespread errors unlikely, but it
   cannot rule out a single wrong row. Use the full-bundle verifiers for that.
 - **Chain state** is not checked unless independent archived chain data is in
-  the bundle.
+  the bundle. The cutoff snapshot does not count as chain data, because it is
+  built from the same pipeline outputs.
+- **Snapshot incident and burn amounts** are checked for internal consistency,
+  but not yet against the stage policy's deduction columns, and the snapshot's
+  last-signed and last-inbound dates are not compared with the stage policy's
+  activity time. Both mappings are waiting for confirmation from the team that
+  builds the snapshot. The snapshot's activity values (which transaction,
+  which shard) are checked for format only.
 - **Archived chain data** is compared as recorded. The tool does not decode
   block headers, check validator signatures, or verify state proofs.
 - **Policy decisions** such as contract classifications, non-issuance lists,
@@ -191,12 +201,20 @@ python3 toolkit/scripts/build-evidence-bundle.py \
   --vault-delegations artifacts/cutoff-20260910/state/staked-to-vault-by-delegation.csv \
   --wone-holders artifacts/wone-holder-accounting-20260917/wone-holders-cutoff-excluding-layerzero.csv \
   --airdrop-run airdrop/runs/mainnet-initial --airdrop-scope complete \
+  --cutoff-snapshot data/full-snapshot-20260911.csv \
+  --snapshot-breakdown data/snapshot-breakdown-20260911.csv \
+  --snapshot-public data/snapshot-20260911.csv \
+  --snapshot-small data/snapshot-20260911-small.csv \
+  --snapshot-summary data/snapshot-20260911-summary.json \
   --historical-evidence artifacts/evidence/cutoff-headers-archive-db.json
 ```
 
 - Change the paths to match your run.
 - `--sources` is a JSON list of source descriptions (see the manifest format
   below). `--source-for ROLE=SOURCE_ID` sets the source of a single file type.
+- The `--cutoff-snapshot`, `--snapshot-*`, and `--snapshot-summary` files are
+  the published cutoff snapshot (see "Published cutoff snapshot" below). They
+  are optional.
 - Include `--wone-overlay-summary`. It lists the addresses whose WONE is
   intentionally excluded. Without it, the WONE holder comparison is
   `NOT VERIFIED`.
@@ -244,7 +262,11 @@ released-migration-bundle/
   ledgers/wone-holders.csv              wone_holders (optional)
   ledgers/exchange-wallets.csv          exchange_wallets (optional)
   summaries/wone-overlay-summary.json   wone_overlay_summary (optional)
-  summaries/*.json                      eligibility, stage, and routing summaries (optional)
+  summaries/*.json                      eligibility, stage, routing, and snapshot summaries (optional)
+  snapshot/full-snapshot.csv            cutoff_snapshot (optional)
+  snapshot/snapshot-breakdown.csv       snapshot_breakdown (optional)
+  snapshot/snapshot.csv                 snapshot_public (optional)
+  snapshot/snapshot-small.csv           snapshot_small (optional)
   airdrop/manifest.json                 airdrop_manifest (optional)
   airdrop/distribution.csv              airdrop_distribution (optional)
   airdrop/batches/batch-NNNNN.json      airdrop_batch (optional)
@@ -266,6 +288,10 @@ The CSV files are pipeline outputs, copied unchanged:
 | `wone_holders` | `wone-holders-cutoff.csv` | `address` |
 | `exchange_wallets` | the normalized exchange inventory | `address_hex` |
 | `airdrop_distribution` | the airdrop run's `distribution.csv` | `address` |
+| `cutoff_snapshot` | `full-snapshot-20260911.csv` | `eth_address` |
+| `snapshot_breakdown` | `snapshot-breakdown-20260911.csv` | `eth_address` |
+| `snapshot_public` | `snapshot-20260911.csv` | `eth_address` |
+| `snapshot_small` | `snapshot-20260911-small.csv` | `eth_address` |
 
 - The first seven file types are required. A missing required file fails the
   bundle.
@@ -404,6 +430,41 @@ never used in calculations.
   paid at their own address without an explicit route, and every ready
   allocation names a destination.
 - The airdrop pays each destination exactly its ready wallet allocation.
+
+**Published cutoff snapshot** (when its files are bundled)
+
+The cutoff snapshot is the per-address file set published for independent
+reproduction. For each sampled row the verifier checks that:
+
+- the row appears once in the full snapshot, as `native_ledger` or
+  `wone_only_ledger`, and its `one1_address` is the bech32 form of its
+  `eth_address`;
+- liquid balances, stake (`self_stake_atto + delegated_atto`), pending
+  undelegation, reward, cross-shard, and native total equal the claim;
+- the snapshot's own totals add up: native total, total balance (native plus
+  WONE), non-issuing amount, and incident deduction by kind;
+- its WONE balance equals the holder list, and differs from the claim only for
+  excluded holders listed in the summary's `ledger_wone_overrides`;
+- qualification, exchange flag, WONE airdrop, stage, treatment, migration
+  allocation, reviewed-contract non-issuance, and WONE reserve match the
+  migration (exchange wallets are `exchange_manual` / `manual_from_reserve`);
+- WONE not delivered, the `wone-reserve`, `wone-below-threshold`, and
+  `excluded-*` labels, the contract and validator flags, and the activity
+  coverage are consistent;
+- every label is a documented label or a dated incident slug, and the public
+  files carry the same labels except incident slugs that come only from a
+  reported victim;
+- activity details (shard, type, transaction hash, sender, signed check) use
+  the documented values and are present exactly when their date is;
+- the public files contain the row exactly when its exact total is at least
+  1 ONE (10 ONE for the small file), with every amount rounded half up to whole
+  ONE and dates written as `YYYYMMDD`.
+
+For the whole bundle, it checks that the snapshot has the same ledger rows and
+native total as the claim ledger, that its totals add up, that no census row is
+WONE dust (below 10 atto), that the public files have the right number of rows,
+and that the snapshot summary matches the cutoff, the bundled files' hashes and
+row counts, and its own reconciliation values.
 
 **Whole bundle**
 

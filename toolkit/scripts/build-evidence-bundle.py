@@ -34,6 +34,11 @@ LAYOUT = {
     "exchange_wallets": "ledgers/exchange-wallets.csv",
     "wone_overlay_summary": "summaries/wone-overlay-summary.json",
     "eligibility_summary": "summaries/eligibility-summary.json",
+    "cutoff_snapshot": "snapshot/full-snapshot.csv",
+    "snapshot_breakdown": "snapshot/snapshot-breakdown.csv",
+    "snapshot_public": "snapshot/snapshot.csv",
+    "snapshot_small": "snapshot/snapshot-small.csv",
+    "snapshot_summary": "summaries/snapshot-summary.json",
     "stage_summary": "summaries/migration-stage-summary.json",
     "routing_summary": "summaries/routing-summary.json",
 }
