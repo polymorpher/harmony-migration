@@ -1,4 +1,4 @@
-.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage exchange-native-report manifest private-manifest check-public
+.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage exchange-native-report manifest private-manifest check-public sample-verifier-html
 
 SUPPLY_AUDIT_REPO ?= ../harmony-supply-audit
 
@@ -24,7 +24,10 @@ test-python: check-python
 		toolkit/scripts/exchanges/*.py \
 		toolkit/scripts/routing/*.py \
 		toolkit/scripts/forensics/*.py \
+		toolkit/scripts/*.py \
+		toolkit/verifier/*.py \
 		scripts/*.py
+	python3 scripts/build-sample-verifier-html.py --check
 
 verify: check-python
 	python3 scripts/verify-source-manifest.py
@@ -105,6 +108,9 @@ exchange-native-report: check-python
 
 manifest: check-python
 	python3 scripts/update-source-manifest.py
+
+sample-verifier-html: check-python
+	python3 scripts/build-sample-verifier-html.py
 
 private-manifest: check-python
 	python3 scripts/prepare-private-embargo.py --replace
