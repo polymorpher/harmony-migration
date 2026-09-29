@@ -152,9 +152,49 @@ instead of a MultiSendCallOnly batch; the sheet already shows the matching value
 ## Step 5. The other signers confirm and sign
 
 Each signer opens the queued transaction and compares its nonce and Safe transaction hash with the
-signing sheet, and the hashes on the hardware wallet screen before approving. A signer who wants
-to check the content without trusting the prepared files can copy the transaction's raw data from
-the Safe web app into a file and run:
+signing sheet, and the hashes on the hardware wallet screen before approving.
+
+To review every wallet and amount without trusting the prepared files, list what is actually in
+the Safe's queue:
+
+```bash
+./airdrop.py safe-batch show --safe 0xReserveSafe --token 0xToken \
+    --snapshot snapshot-20260911-compact.csv --out queued.csv
+```
+
+Proposed Safe transactions are not on-chain until executed; the Safe web app stores them in Safe's
+Transaction Service, and `show` reads them from there. It does not rely on the service's decoding:
+it decodes the raw call data itself and recomputes each Safe transaction hash from it, so the list
+is exactly what that hash (and the owners' signatures) covers. It fails if any call is not a plain
+transfer of `--token`, if a transfer is not delegated through an official MultiSendCallOnly, if the
+transaction pays a gas refund, or if an address is paid twice.
+
+It writes two files:
+
+- `queued.csv` has exactly the reviewers' five columns,
+  `one1_address,eth_address,total_drop_balance,last_signed,last_inbound`, one row per transfer in
+  payment order. `total_drop_balance` is the exact amount the transaction pays (all decimals). It is
+  deliberately not called `total_balance`, which everywhere in these repositories means the whole
+  entitlement, including self-stake and delegations that become validator-vault principal. The two
+  dates come from `--snapshot`.
+- `queued-details.csv` (or `--details PATH`) adds the nonce, the position in the transaction, the
+  amount in the smallest unit, the snapshot's `total_drop_balance` and a `check` column: `ok`, or
+  why not (`differs from snapshot`, `not in snapshot`, `differs from list`, `not in list`).
+
+`--snapshot` is `harmony-airdrop-tracking/snapshot-20260911-compact.csv`, the initial-distribution
+wallets in the same five columns. Every transfer must equal the wallet's `total_drop_balance` there,
+so a row of `queued.csv` is identical to that wallet's row in the snapshot. Snapshot files without a
+`total_drop_balance` column work for the dates only; their `total_balance` is never compared with a
+payment. `--compare` checks the amounts against any other list with address and amount columns as
+well, such as a batch's `payment-list.csv`.
+
+By default `show` lists every transaction still queued; `--nonce 22-29` or `--safe-tx-hash` picks
+some, and nonces of executed transactions work too, for checking afterwards. Without `--out` the
+five columns go to standard output (`--format json` for JSON); the checks and hashes always go to
+standard error. Compare the printed Safe transaction hashes with the Safe web app, and the domain
+and message hashes with the hardware wallet screen.
+
+A signer can also copy a transaction's raw data from the Safe web app into a file and run:
 
 ```bash
 ./airdrop.py safe-batch hash --safe 0xReserveSafe --chain-id 1 --nonce <nonce> \
