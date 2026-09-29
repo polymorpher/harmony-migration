@@ -17,6 +17,11 @@ MultiSendCallOnly contract), and the Safe's signers approve every batch.
     # hashes (and a decoded summary) of any Safe transaction, for example one already in the queue
     python3 tools/safe_batch.py hash --safe 0xSafe --chain-id 1 --nonce 42 --to 0x... --data-file data.hex --operation 1
 
+    # every wallet and amount of the transactions waiting in the Safe's queue: queued.csv has the
+    # reviewers' five columns, queued-details.csv the nonces, atto amounts and checks
+    python3 tools/safe_batch.py show --safe 0xSafe --token 0xToken [--nonce 22-29] \
+        --snapshot snapshot-20260911-compact.csv --out queued.csv [--compare payment-list.csv]
+
 For every Safe transaction `build` writes a file to import into the Safe web app's Transaction
 Builder, the recipients of that transaction, and the exact transaction the Safe will be asked to
 sign (target, call data, operation, nonce) with the three hashes a signer checks: the domain hash
@@ -29,10 +34,15 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as _dt
+import io
 import json
 import shutil
 import sys
+import urllib.error
+import urllib.request
+from collections import defaultdict
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -795,6 +805,400 @@ def cmd_hash(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# show: every transfer of the transactions waiting in the Safe's queue
+# ---------------------------------------------------------------------------------------------
+
+# Proposed Safe transactions are not on-chain until executed; the Safe web app keeps them in Safe's
+# Transaction Service. `show` reads them there but trusts none of its interpretation: it decodes the
+# raw call data itself and recomputes the Safe transaction hash, which is what the owners sign.
+SAFE_TX_SERVICE = {
+    1: "https://api.safe.global/tx-service/eth",
+    11155111: "https://api.safe.global/tx-service/sep",
+}
+OFFICIAL_MULTISEND_CALL_ONLY = {a.lower() for addresses in MULTISEND_CALL_ONLY.values() for a in addresses}
+# The reviewers' format (harmony-airdrop-tracking/snapshot-20260911-compact.csv). total_drop_balance is
+# the exact ONE the airdrop pays the wallet; total_balance, in the other snapshot files, is the whole
+# entitlement including vault principal, and is never compared with a payment.
+PAYMENT_COLUMNS = ["one1_address", "eth_address", "total_drop_balance", "last_signed", "last_inbound"]
+SNAPSHOT_COLUMNS = {
+    "one1_address": ("one1_address",),
+    "eth_address": ("eth_address", "address"),
+    "last_signed": ("last_signed", "last_signed_tx_date"),
+    "last_inbound": ("last_inbound", "last_inbound_tx_date"),
+}
+
+
+def service_json(url: str, api_key: str | None):
+    headers = {"Accept": "application/json", "User-Agent": "harmony-airdrop-tools/1"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        hint = " (the service may want an API key: --api-key or SAFE_API_KEY)" if exc.code in (401, 403, 429) else ""
+        raise common.InputError(f"Safe Transaction Service answered HTTP {exc.code} for {url}{hint}") from None
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise common.InputError(f"cannot reach the Safe Transaction Service at {url}: {exc}") from None
+
+
+def service_pages(url: str, api_key: str | None) -> list[dict]:
+    results = []
+    while url:
+        page = service_json(url, api_key)
+        results += page.get("results", [])
+        url = page.get("next")
+    return results
+
+
+def parse_nonces(values: list[str] | None) -> list[int]:
+    nonces: set[int] = set()
+    for value in values or []:
+        for part in value.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            low, _, high = part.partition("-")
+            try:
+                first, last = int(low), int(high or low)
+            except ValueError:
+                raise common.InputError(f"--nonce: not a nonce or a range like 22-29: {part!r}") from None
+            if first < 0 or last < first:
+                raise common.InputError(f"--nonce: bad range {part!r}")
+            nonces.update(range(first, last + 1))
+    return sorted(nonces)
+
+
+def one_per_nonce(records: list[dict]) -> tuple[list[dict], list[str]]:
+    """The executed transaction of each nonce, else its only proposal; competing proposals are an error."""
+    by_nonce: dict[int, list[dict]] = defaultdict(list)
+    for record in records:
+        by_nonce[int(record["nonce"])].append(record)
+    picked, notes = [], []
+    for nonce in sorted(by_nonce):
+        group = by_nonce[nonce]
+        executed = [r for r in group if r.get("isExecuted")]
+        if executed:
+            picked.append(executed[0])
+            if len(group) > 1:
+                notes.append(f"nonce {nonce}: ignoring {len(group) - 1} proposal(s) that were never executed")
+        elif len(group) > 1:
+            raise common.InputError(
+                f"nonce {nonce} has {len(group)} competing proposals: {', '.join(r['safeTxHash'] for r in group)}; "
+                "pick one with --safe-tx-hash"
+            )
+        else:
+            picked.append(group[0])
+    return picked, notes
+
+
+def fetch_transactions(args: argparse.Namespace, safe: str, nonces: list[int], api_key: str | None):
+    """(transactions, Safe info or None, where they came from, notes)."""
+    if args.tx_json:
+        payload = json.loads(args.tx_json.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and "results" in payload:
+            payload = payload["results"]
+        records = payload if isinstance(payload, list) else [payload]
+        if nonces:
+            records = [r for r in records if int(r["nonce"]) in nonces]
+        return records, None, str(args.tx_json), []
+    base = (args.service_url or SAFE_TX_SERVICE.get(args.chain_id, "")).rstrip("/")
+    if not base:
+        raise common.InputError(f"no known Safe Transaction Service for chain {args.chain_id}; pass --service-url")
+    info = service_json(f"{base}/api/v1/safes/{safe}/", api_key)
+    if args.safe_tx_hash:
+        records = [service_json(f"{base}/api/v1/multisig-transactions/{h.strip()}/", api_key) for h in args.safe_tx_hash]
+        return records, info, base, []
+    if nonces:
+        url = (f"{base}/api/v1/safes/{safe}/multisig-transactions/?nonce__gte={nonces[0]}&nonce__lte={nonces[-1]}"
+               "&ordering=nonce&limit=100")
+        records = [r for r in service_pages(url, api_key) if int(r["nonce"]) in nonces]
+    else:
+        url = (f"{base}/api/v1/safes/{safe}/multisig-transactions/?executed=false&nonce__gte={int(info['nonce'])}"
+               "&ordering=nonce&limit=100")
+        records = service_pages(url, api_key)
+        if not records:
+            raise common.InputError(f"nothing is waiting in the queue of {safe} (next nonce {info['nonce']})")
+    records, notes = one_per_nonce(records)
+    if nonces:
+        missing = sorted(set(nonces) - {int(r["nonce"]) for r in records})
+        if missing:
+            notes.append(f"no transaction proposed at nonce(s) {', '.join(map(str, missing))}")
+    return records, info, base, notes
+
+
+def service_safe_tx(record: dict) -> SafeTx:
+    def plain_address(value: str | None) -> str:
+        text = value or ZERO_ADDRESS
+        return ZERO_ADDRESS if int(text, 16) == 0 else common.normalize_address(text, "gas token / refund receiver")
+
+    return SafeTx(
+        common.normalize_address(record["to"], "to"), int(record["value"]), common.unhex(record.get("data") or "0x"),
+        int(record["operation"]), int(record["nonce"]), int(record["safeTxGas"]), int(record["baseGas"]),
+        int(record["gasPrice"]), plain_address(record.get("gasToken")), plain_address(record.get("refundReceiver")),
+    )
+
+
+def token_transfers(tx: SafeTx, token: str) -> tuple[list[tuple[str, int]], list[str]]:
+    """(recipient, amount) of every transfer, plus every reason the transaction is not just that."""
+    problems = []
+    if tx.value:
+        problems.append(f"sends {tx.value} wei of ETH")
+    if tx.gas_price or int(tx.gas_token, 16) or int(tx.refund_receiver, 16):
+        problems.append("pays a gas refund (gasPrice, gasToken or refundReceiver is set)")
+    if tx.operation == CALL:
+        single = decode_transfer(tx.data)
+        if tx.to.lower() != token.lower() or not single:
+            problems.append(f"is a call to {tx.to}, not a transfer of the token")
+            return [], problems
+        return [single], problems
+    if tx.to.lower() not in OFFICIAL_MULTISEND_CALL_ONLY:
+        problems.append(f"is a delegate call to {tx.to}, which is not an official MultiSendCallOnly contract")
+    try:
+        calls = decode_multisend(tx.data)
+    except common.InputError as exc:
+        problems.append(str(exc))
+        return [], problems
+    if calls is None:
+        problems.append("is a delegate call whose data is not multiSend(bytes)")
+        return [], problems
+    transfers = []
+    for i, (operation, target, value, body) in enumerate(calls, start=1):
+        decoded = decode_transfer(body)
+        if operation != CALL or value or target.lower() != token.lower() or not decoded:
+            problems.append(f"call {i} is not a plain transfer of the token "
+                            f"(operation {operation}, to {target}, value {value}, {len(body)} bytes of data)")
+            continue
+        transfers.append(decoded)
+    return transfers, problems
+
+
+def one_to_atto(text: str, where: str) -> int:
+    try:
+        value = Decimal(text.strip() or "0") * common.ATTO_PER_ONE
+    except InvalidOperation:
+        raise common.InputError(f"{where}: not a number: {text!r}") from None
+    if value != value.to_integral_value() or value < 0:
+        raise common.InputError(f"{where}: not a non-negative amount with at most 18 decimals: {text!r}")
+    return int(value)
+
+
+def read_snapshot(path: Path, wanted: set[str]) -> tuple[dict[str, dict], bool]:
+    """Snapshot columns of the wanted (lower-case) addresses, and whether it has total_drop_balance."""
+    if not path.is_file():
+        raise common.InputError(f"snapshot not found: {path}")
+    found = {}
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.reader(handle)
+        header = [h.strip().lower() for h in next(reader, [])]
+        payment_amounts = "total_drop_balance" in header
+        index = {"total_drop_balance": header.index("total_drop_balance")} if payment_amounts else {}
+        for name, candidates in SNAPSHOT_COLUMNS.items():
+            hit = next((header.index(c) for c in candidates if c in header), None)
+            if hit is None:
+                raise common.InputError(f"{path}: no {' or '.join(candidates)} column; columns are {header}")
+            index[name] = hit
+        column = index["eth_address"]
+        for record in reader:
+            if len(record) > column and record[column].strip().lower() in wanted:
+                found[record[column].strip().lower()] = {name: record[i].strip() for name, i in index.items()}
+    return found, payment_amounts
+
+
+def write_table(path: Path | None, fmt: str, fields: list[str], rows: list[dict], meta: dict | None = None) -> None:
+    table = [{k: row.get(k, "") for k in fields} for row in rows]
+    if fmt == "json":
+        text = json.dumps({**meta, "transfers": table} if meta else table, indent=1) + "\n"
+    else:
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(table)
+        text = buffer.getvalue()
+    if path:
+        path.write_text(text, encoding="utf-8")
+    else:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+
+def cmd_show(args: argparse.Namespace) -> None:
+    note = lambda *parts: print(*parts, file=sys.stderr)  # noqa: E731 - the listing itself goes to stdout
+    try:
+        env = common.load_env(args.env)
+        safe_text = args.safe or env.get("RESERVE_ADDRESS", "")
+        token_text = args.token or env.get("TOKEN_ADDRESS", "")
+        if not safe_text or not token_text:
+            raise common.InputError("need --safe and --token (or RESERVE_ADDRESS and TOKEN_ADDRESS in .env)")
+        safe = common.normalize_address(safe_text, "--safe")
+        token = common.normalize_address(token_text, "--token")
+        nonces = parse_nonces(args.nonce)
+        if nonces and args.safe_tx_hash:
+            raise common.InputError("pass --nonce or --safe-tx-hash, not both")
+        expected = None
+        if args.compare:
+            rows, _ = common.read_rows(args.compare, None, None, args.amount_unit)
+            expected = {r.address.lower(): r.amount for r in common.consolidate(rows, "input", False)}
+        records, info, source, notes = fetch_transactions(args, safe, nonces, args.api_key or env.get("SAFE_API_KEY"))
+        if not records:
+            raise common.InputError("no matching transaction")
+    except (common.InputError, KeyError, ValueError) as exc:
+        common.die(str(exc))
+        return
+
+    failures, warnings = [], list(notes)
+    domain = common.hex0x(domain_hash(args.chain_id, safe))
+    listing, transactions, paid_in = [], [], {}
+    for record in sorted(records, key=lambda r: int(r["nonce"])):
+        nonce = int(record["nonce"])
+        label = f"nonce {nonce}"
+        if str(record.get("safe", "")).lower() != safe.lower():
+            failures.append(f"{label}: belongs to Safe {record.get('safe')}, not {safe}")
+            continue
+        try:
+            tx = service_safe_tx(record)
+        except (KeyError, ValueError, common.InputError) as exc:
+            failures.append(f"{label}: cannot read the transaction: {exc}")
+            continue
+        computed = tx_record(args.chain_id, safe, tx)
+        if computed["safeTxHash"].lower() != str(record.get("safeTxHash", "")).lower():
+            failures.append(f"{label}: listed as {record.get('safeTxHash')}, but its content hashes to "
+                            f"{computed['safeTxHash']}; do not sign")
+        transfers, problems = token_transfers(tx, token)
+        failures += [f"{label}: {p}" for p in problems]
+        if tx.safe_tx_gas or tx.base_gas:
+            warnings.append(f"{label}: safeTxGas {tx.safe_tx_gas}, baseGas {tx.base_gas} (the Safe web app normally uses 0)")
+        for position, (recipient, amount) in enumerate(transfers, start=1):
+            key = recipient.lower()
+            if key in paid_in:
+                failures.append(f"{label}: {key} is also paid at nonce {paid_in[key]}")
+            paid_in.setdefault(key, nonce)
+            if amount == 0:
+                warnings.append(f"{label}: transfer {position} to {key} is for 0 tokens")
+            listing.append({"nonce": nonce, "position": position, "one1_address": common.to_one1(recipient),
+                            "eth_address": key, "total_drop_balance": common.format_one(amount).replace(",", ""),
+                            "last_signed": "", "last_inbound": "", "amount_atto": str(amount), "_amount": amount})
+        confirmations = [c.get("owner") for c in record.get("confirmations") or []]
+        transactions.append({
+            "nonce": nonce,
+            "safe_tx_hash": computed["safeTxHash"],
+            "message_hash": computed["messageHash"],
+            "to": tx.to,
+            "operation": tx.operation,
+            "executed": bool(record.get("isExecuted")),
+            "execution_tx_hash": record.get("transactionHash"),
+            "confirmations": confirmations,
+            "confirmations_required": record.get("confirmationsRequired"),
+            "transfers": len(transfers),
+            "total_atto": str(sum(a for _, a in transfers)),
+        })
+
+    snapshot_missing, payment_snapshot = 0, False
+    if args.snapshot:
+        try:
+            found, payment_snapshot = read_snapshot(args.snapshot, set(paid_in))
+            for row in listing:
+                match = found.get(row["eth_address"])
+                if match is None:
+                    snapshot_missing += 1
+                    continue
+                if match["one1_address"] and match["one1_address"].lower() != row["one1_address"]:
+                    failures.append(f"snapshot gives {match['one1_address']} for {row['eth_address']}, "
+                                    f"expected {row['one1_address']}")
+                row["last_signed"], row["last_inbound"] = match["last_signed"], match["last_inbound"]
+                if payment_snapshot:
+                    row["snapshot_total_drop_balance"] = match["total_drop_balance"]
+                    row["_snapshot_atto"] = one_to_atto(match["total_drop_balance"],
+                                                        f"{args.snapshot.name} {row['eth_address']}")
+        except common.InputError as exc:
+            common.die(str(exc))
+            return
+    for row in listing:
+        reasons = []
+        if payment_snapshot:
+            if "_snapshot_atto" not in row:
+                reasons.append("not in snapshot")
+            elif row["_snapshot_atto"] != row["_amount"]:
+                reasons.append("differs from snapshot")
+        if expected is not None:
+            want = expected.get(row["eth_address"])
+            row["list_amount_atto"] = "" if want is None else str(want)
+            if want is None:
+                reasons.append("not in list")
+            elif want != row["_amount"]:
+                reasons.append("differs from list")
+        row["check"] = "; ".join(reasons) or "ok"
+
+    details_fields = ["nonce", "position", *PAYMENT_COLUMNS, "amount_atto"]
+    if payment_snapshot:
+        details_fields.append("snapshot_total_drop_balance")
+    if expected is not None:
+        details_fields.append("list_amount_atto")
+    checked = payment_snapshot or expected is not None
+    if checked:
+        details_fields.append("check")
+    fmt = args.format or ("json" if args.out and args.out.suffix.lower() == ".json" else "csv")
+    details = args.details
+    if details is None and args.out:
+        details = args.out.with_name(f"{args.out.stem}-details{args.out.suffix}")
+    write_table(args.out, fmt, PAYMENT_COLUMNS, listing)
+    if details:
+        meta = {"safe": safe, "chain_id": args.chain_id, "token": token, "domain_hash": domain, "source": source,
+                "transactions": transactions}
+        write_table(details, fmt, details_fields, listing, meta if fmt == "json" else None)
+
+    total = sum(r["_amount"] for r in listing)
+    if info:
+        note(f"safe             : {safe} on chain {args.chain_id}, version {info.get('version')}, "
+             f"{info.get('threshold')} of {len(info.get('owners') or [])} owners, next nonce {info.get('nonce')}")
+    else:
+        note(f"safe             : {safe} on chain {args.chain_id}")
+    note(f"read from        : {source}")
+    note(f"token            : {token}")
+    note(f"domain hash      : {domain}")
+    for t in transactions:
+        status = "executed" if t["executed"] else "queued"
+        signed = f"signed by {len(t['confirmations'])} of {t['confirmations_required']}"
+        note(f"nonce {t['nonce']:<10} : {t['transfers']} transfers, {common.format_one(int(t['total_atto']))} tokens, "
+             f"{status}, {signed}")
+        note(f"  safeTxHash     : {t['safe_tx_hash']}")
+        note(f"  message hash   : {t['message_hash']}")
+    note(f"transfers        : {len(listing)} to {len(paid_in)} addresses, total {common.format_one(total)} tokens")
+    if args.snapshot:
+        found_count = len(listing) - snapshot_missing
+        if payment_snapshot:
+            same = sum(1 for r in listing if r.get("_snapshot_atto") == r["_amount"])
+            note(f"--snapshot       : {same} of {len(listing)} amounts equal total_drop_balance in {args.snapshot.name} "
+                 f"exactly; {found_count - same} differ, {snapshot_missing} not in it")
+        else:
+            note(f"--snapshot       : {found_count} of {len(listing)} addresses found in {args.snapshot.name}; it has no "
+                 "total_drop_balance column, so amounts were not compared")
+    if expected is not None:
+        same = sum(1 for r in listing if expected.get(r["eth_address"]) == r["_amount"])
+        unpaid = [a for a in expected if a not in paid_in]
+        note(f"--compare        : {same} of {len(listing)} amounts equal {args.compare.name} exactly; "
+             f"{len(unpaid)} of its {len(expected)} rows ({common.format_one(sum(expected[a] for a in unpaid))} tokens) "
+             "are not paid by these transactions")
+    bad = sum(1 for r in listing if r["check"] != "ok")
+    if checked and bad:
+        failures.append(f"{bad} transfer(s) do not match (see the check column of the details file)")
+    if args.out:
+        note(f"written to       : {args.out}")
+    if details:
+        note(f"details          : {details}")
+    elif checked and bad:
+        note("details          : pass --out or --details to write the per-transfer checks")
+    for message in warnings:
+        note(f"warning: {message}")
+    for message in failures:
+        note(f"FAIL: {message}")
+    if failures:
+        common.die(f"{len(failures)} check(s) failed; do not sign until they are explained")
+    note("OK: each Safe transaction hash above was recomputed from the call data listed; every call is a plain "
+         "transfer of the token. Before signing, compare the hashes with the Safe web app and your wallet screen.")
+
+
+# ---------------------------------------------------------------------------------------------
 # argument parsing
 # ---------------------------------------------------------------------------------------------
 
@@ -856,6 +1260,31 @@ def main(argv: list[str] | None = None) -> None:
     h.add_argument("--refund-receiver", default=ZERO_ADDRESS)
     h.add_argument("--list-out", help="write the decoded ERC-20 transfers to this CSV")
     h.set_defaults(func=cmd_hash)
+
+    s = sub.add_parser("show", help="every wallet and amount of the Safe transactions waiting in the queue (CSV or JSON)")
+    s.add_argument("--safe", help="the Safe (default: RESERVE_ADDRESS from .env)")
+    s.add_argument("--token", help="the only token the transactions may transfer (default: TOKEN_ADDRESS from .env)")
+    s.add_argument("--chain-id", type=int, default=1, help="1 for Ethereum mainnet (default), 11155111 for Sepolia")
+    s.add_argument("--nonce", action="append",
+                   help="only these nonces, e.g. 22 or 22-29 (repeatable); default: every transaction still queued")
+    s.add_argument("--safe-tx-hash", action="append", help="only this Safe transaction (repeatable)")
+    s.add_argument("--compare", type=Path,
+                   help="list the transfers must match exactly, e.g. payment-list.csv (address and amount columns)")
+    s.add_argument("--amount-unit", choices=["atto", "one"], help="unit of the --compare amount column, if its name does not say")
+    s.add_argument("--snapshot", type=Path,
+                   help="snapshot-20260911-compact.csv: adds last_signed and last_inbound, and every amount must equal its "
+                        "total_drop_balance (snapshot files without that column add the dates only)")
+    s.add_argument("--out", type=Path,
+                   help="write the five-column list (one1_address,eth_address,total_drop_balance,last_signed,last_inbound) "
+                        "here instead of printing it, and the details next to it as <name>-details.csv (.json writes JSON)")
+    s.add_argument("--details", type=Path, help="where to write the details file (nonce, position, atto amounts, checks)")
+    s.add_argument("--format", choices=["csv", "json"], help="default: csv, or json when --out ends in .json")
+    s.add_argument("--service-url", help="Safe Transaction Service base URL (default: Safe's hosted service for --chain-id)")
+    s.add_argument("--api-key", help="Safe API key, if the service asks for one (default: SAFE_API_KEY from the environment)")
+    s.add_argument("--tx-json", type=Path,
+                   help="read the transaction(s) from a JSON file saved from the service's API instead of fetching them")
+    s.add_argument("--env", type=Path, default=common.default_env_path())
+    s.set_defaults(func=cmd_show)
 
     args = parser.parse_args(argv)
     args.func(args)
