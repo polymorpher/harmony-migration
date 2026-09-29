@@ -359,7 +359,7 @@ PASSTHROUGH = {
     "reconcile": (cmd_reconcile, "options for tools/reconcile.py, e.g. --block N"),
     "test": (cmd_test, "forge test flags"),
     "select-batch": (cmd_select_batch, "options for tools/select_batch.py: --input FILE --out-dir DIR [--budget N] ..."),
-    "safe-batch": (cmd_safe_batch, "tools/safe_batch.py build|verify|hash ..."),
+    "safe-batch": (cmd_safe_batch, "tools/safe_batch.py build|verify|hash|show ..."),
 }
 FORGE_EXTRA_HELP = "Extra forge flags may follow a `--` separator."
 
@@ -407,7 +407,7 @@ def build_parser() -> argparse.ArgumentParser:
     add("test", "Run the Solidity test suite. " + PASSTHROUGH["test"][1], cmd_test)
     add("select-batch", "Choose the recipients of the next batch (budget, required and held addresses). "
         + PASSTHROUGH["select-batch"][1], cmd_select_batch)
-    add("safe-batch", "Without a contract: prepare, verify, or hash Safe transactions that pay a list directly. "
+    add("safe-batch", "Without a contract: prepare, verify, hash, or show queued Safe transactions that pay a list directly. "
         + PASSTHROUGH["safe-batch"][1], cmd_safe_batch)
     add("help", "Show this help.", None)
     return parser
