@@ -21,7 +21,10 @@ and checks
                 the address, and is at or after the six-month window start and before the cutoff
 
 Only deductions and pending cross-shard amounts come from --evidence (the not-issued
-inventories); everything else is read from the chain. With --head the script also reads the
+inventories); everything else is read from the chain. They are trusted, and the summary lists
+them under trusted_inputs. With --receipts-report the pending cross-shard amounts are instead
+checked per address against a cross-shard-supply report that records complete history and
+receipt coverage for both shards. With --head the script also reads the
 same values at the current head and reports whether they are unchanged. The chain stopped
 shortly after the cutoff, so a wallet whose liquid ONE and WONE are unchanged shows its cutoff
 balances in any explorer (staking rewards kept accruing for the last blocks, so the explorer's
@@ -32,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import sys
 import time
@@ -176,6 +180,60 @@ def check_activity(rpcs: dict, rows: list[dict]) -> list[str]:
     return reasons
 
 
+def file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(4 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def receipt_report_pending(path: str) -> tuple[dict[str, int], list[str]]:
+    """Pending atto per recipient from a cross-shard-supply report, and why the
+    report cannot be relied on (empty when it records complete coverage)."""
+    with open(path) as source:
+        report = json.load(source)
+    problems = []
+    if report.get("coverage_complete") is not True:
+        problems.append("report does not record complete history and receipt coverage")
+    if report.get("incomplete_history_allowed"):
+        problems.append("report was produced with -allow-incomplete-history")
+    if sorted(d.get("source_shard") for d in report.get("directions", [])) != [0, 1]:
+        problems.append("report does not scan both source shards")
+    for shard, (number, _) in CUTOFF.items():
+        if int(report.get(f"shard{shard}_cutoff") or 0) != number:
+            problems.append(f"report shard-{shard} cutoff is not {number}")
+    pending: dict[str, int] = {}
+    for direction in report.get("directions", []):
+        for group in direction.get("pending_groups") or []:
+            for receipt in group.get("receipts") or []:
+                to = receipt["to"].lower()
+                pending[to] = pending.get(to, 0) + int(receipt["amount_atto"])
+    return pending, problems
+
+
+def trusted_inputs(path: str, rows: list[dict], receipts_path: str | None, receipt_problems: list[str],
+                   pending_mismatches: list[str]) -> dict:
+    deductions = [int(r.get("deduction_atto") or 0) for r in rows]
+    pending = [int(r.get("pending_cross_shard_atto") or 0) for r in rows]
+    return {
+        "evidence": {"path": path, "sha256": file_sha256(path)},
+        "deduction_atto": {
+            "source": "--evidence (not-issued inventories)", "verified_on_chain": False,
+            "rows": sum(1 for d in deductions if d), "total_atto": str(sum(deductions)),
+        },
+        "pending_cross_shard_atto": {
+            "source": "--evidence", "rows": sum(1 for c in pending if c), "total_atto": str(sum(pending)),
+            "checked_against_report": receipts_path,
+            "report_sha256": file_sha256(receipts_path) if receipts_path else None,
+            "report_problems": receipt_problems, "mismatched_addresses": pending_mismatches[:20],
+            "mismatched_address_count": len(pending_mismatches),
+            "verified": bool(receipts_path) and not receipt_problems and not pending_mismatches,
+        },
+        "activity_tx_hash": {"source": "--evidence", "verified_on_chain": True},
+    }
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--list", required=True, help="CSV with the addresses and amounts to check")
@@ -186,6 +244,7 @@ def main() -> int:
     p.add_argument("--rpc0", default="https://a.api.s0.t.hmny.io")
     p.add_argument("--rpc1", default="https://a.api.s1.t.hmny.io")
     p.add_argument("--head", action="store_true", help="also compare with the current head (explorer view)")
+    p.add_argument("--receipts-report", help="cross-shard-supply JSON; check each pending_cross_shard_atto against it")
     p.add_argument("--batch", type=int, default=60, help="JSON-RPC requests per HTTP call")
     p.add_argument("--workers", type=int, default=6)
     args = p.parse_args()
@@ -201,6 +260,13 @@ def main() -> int:
     missing = [a for a, _ in listed if a not in evidence]
     if missing:
         sys.exit(f"{len(missing)} listed addresses have no evidence row, first {missing[0]}")
+    receipt_problems: list[str] = []
+    pending_mismatches: list[str] = []
+    if args.receipts_report:
+        report_pending, receipt_problems = receipt_report_pending(args.receipts_report)
+        for address, _ in listed:
+            if int(evidence[address].get("pending_cross_shard_atto") or 0) != report_pending.get(address, 0):
+                pending_mismatches.append(address)
 
     chunks = [listed[i:i + 40] for i in range(0, len(listed), 40)]
 
@@ -256,8 +322,17 @@ def main() -> int:
     for key in ("list_atto", "computed_atto", "wone_atto"):
         atto = totals.pop(key)
         totals[key.replace("_atto", "_one")] = f"{atto // ATTO:,}.{atto % ATTO:018d}"
+    trusted = trusted_inputs(args.evidence, [evidence[a] for a, _ in listed], args.receipts_report,
+                             receipt_problems, pending_mismatches)
+    totals["trusted_inputs"] = trusted
     print(json.dumps(totals, indent=1))
     ok = totals["amount_ok"] == totals["threshold_ok"] == totals["activity_ok"] == totals["rows"]
+    if args.receipts_report and not trusted["pending_cross_shard_atto"]["verified"]:
+        ok = False
+        print("FAIL: pending cross-shard amounts do not match a coverage-complete receipts report")
+    elif not args.receipts_report:
+        print("NOTE: deductions and pending cross-shard amounts are trusted from --evidence, not verified "
+              "(pass --receipts-report to check pending cross-shard amounts)")
     print("PASS" if ok else "FAIL: see the report for rows with a false check")
     return 0 if ok else 1
 

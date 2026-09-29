@@ -4,7 +4,13 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import receipt_provenance  # noqa: E402
+
+
+CUTOFF_BLOCKS = {0: 93623067, 1: 95882100}
 
 COMPONENT_TO_VERIFY_FIELD = {
     "liquid_shard0": "liquid_shard0_atto",
@@ -22,6 +28,18 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cutoff-root", required=True)
     parser.add_argument("--old-root", required=True)
+    parser.add_argument(
+        "--outgoing",
+        action="append",
+        default=[],
+        help="outgoing-cx-scan CSV from an archive database; repeat per shard",
+    )
+    parser.add_argument(
+        "--independent-report",
+        action="append",
+        default=[],
+        help="cross-shard-supply report produced independently from other archive databases",
+    )
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -126,6 +144,19 @@ def main():
         data["cross_shard"]["pending_active_atto"],
         ledger["pending_cross_shard_atto"],
         "pending receipt report equals component ledger",
+        checks,
+    )
+    independent_reports = [load(path) for path in args.independent_report]
+    receipt_problems, _, _ = receipt_provenance.evaluate(
+        data["cross_shard"],
+        receipt_provenance.read_outgoing(args.outgoing),
+        independent_reports,
+        CUTOFF_BLOCKS,
+    )
+    equal(
+        receipt_problems,
+        [],
+        "pending receipt report has complete, independently confirmed receipt coverage",
         checks,
     )
 
@@ -242,8 +273,12 @@ def main():
         "status": "passed",
         "checks": checks,
         "check_count": len(checks),
-        "input_sha256": {name: sha256(path) for name, path in paths.items()},
-        "cutoff_blocks": {"shard0": 93623067, "shard1": 95882100},
+        "input_sha256": {
+            **{name: sha256(path) for name, path in paths.items()},
+            **{f"outgoing:{path}": sha256(path) for path in args.outgoing},
+            **{f"independent_report:{path}": sha256(path) for path in args.independent_report},
+        },
+        "cutoff_blocks": {"shard0": CUTOFF_BLOCKS[0], "shard1": CUTOFF_BLOCKS[1]},
         "cutoff_roots": {
             "shard0": data["shard0_snapshot"]["state_root"],
             "shard1": data["shard1_snapshot"]["state_root"],
