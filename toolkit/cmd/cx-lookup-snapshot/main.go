@@ -12,6 +12,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/rlp"
+
+	"github.com/polymorpher/harmony-migration/toolkit/internal/historyguard"
 )
 
 var cxLookupPrefix = []byte("cx")
@@ -23,15 +25,17 @@ type txLookupEntry struct {
 }
 
 type summary struct {
-	SourceDB            string `json:"source_db"`
-	OutputDB            string `json:"output_db"`
-	CutoffBlock         uint64 `json:"cutoff_block"`
-	KeysScanned         uint64 `json:"keys_scanned"`
-	LookupEntries       uint64 `json:"lookup_entries"`
-	AfterCutoff         uint64 `json:"after_cutoff"`
-	NonCanonical        uint64 `json:"noncanonical"`
-	ExportedLookups     uint64 `json:"exported_lookups"`
-	ExportedBlockHashes uint64 `json:"exported_block_hashes"`
+	SourceDB                 string              `json:"source_db"`
+	OutputDB                 string              `json:"output_db"`
+	CutoffBlock              uint64              `json:"cutoff_block"`
+	SourceHistory            historyguard.Report `json:"source_history"`
+	IncompleteHistoryAllowed bool                `json:"incomplete_history_allowed"`
+	KeysScanned              uint64              `json:"keys_scanned"`
+	LookupEntries            uint64              `json:"lookup_entries"`
+	AfterCutoff              uint64              `json:"after_cutoff"`
+	NonCanonical             uint64              `json:"noncanonical"`
+	ExportedLookups          uint64              `json:"exported_lookups"`
+	ExportedBlockHashes      uint64              `json:"exported_block_hashes"`
 }
 
 func fatalf(format string, args ...interface{}) {
@@ -49,11 +53,13 @@ func canonicalHashKey(number uint64) []byte {
 
 func main() {
 	var (
-		sourcePath = flag.String("source-db", "", "source Harmony LevelDB")
-		outputPath = flag.String("output-db", "", "new minimal CX lookup LevelDB")
-		cutoff     = flag.Uint64("cutoff", 0, "maximum destination block")
-		cacheMB    = flag.Int("cache-mb", 128, "source LevelDB cache in MiB")
-		handles    = flag.Int("handles", 128, "source LevelDB handles")
+		sourcePath      = flag.String("source-db", "", "source Harmony LevelDB")
+		outputPath      = flag.String("output-db", "", "new minimal CX lookup LevelDB")
+		cutoff          = flag.Uint64("cutoff", 0, "maximum destination block")
+		cacheMB         = flag.Int("cache-mb", 128, "source LevelDB cache in MiB")
+		handles         = flag.Int("handles", 128, "source LevelDB handles")
+		probes          = flag.Int("history-probes", historyguard.DefaultProbes, "evenly spaced blocks checked for canonical history in the source database")
+		allowIncomplete = flag.Bool("allow-incomplete-history", false, "export from a source without full block history; the snapshot records it and cross-shard-supply rejects it by default")
 	)
 	flag.Parse()
 	if *sourcePath == "" || *outputPath == "" || *cutoff == 0 {
@@ -70,15 +76,36 @@ func main() {
 	}
 	source := rawdb.NewDatabase(sourceDisk)
 	defer source.Close()
+	// a lookup exists only for receipts the database itself applied, so a source
+	// without full history silently yields false pending receipts downstream
+	history, err := historyguard.Probe(source, *sourcePath, 0, *cutoff, *probes)
+	if err != nil {
+		fatalf("probe source history: %v", err)
+	}
+	if !history.Complete && !*allowIncomplete {
+		fatalf("source database lacks block history over 0-%d: snapdb marker %t, %d of %d probed blocks missing (first %v)",
+			*cutoff, history.SnapDBMarker, history.MissingProbes, history.Probes, history.MissingBlocks)
+	}
 	output, err := leveldb.New(*outputPath, 16, 64, "", false)
 	if err != nil {
 		fatalf("create output database: %v", err)
 	}
+	if err := historyguard.WriteLookupSnapshotInfo(output, historyguard.LookupSnapshotInfo{
+		SourceDB:          *sourcePath,
+		Cutoff:            *cutoff,
+		SourceHistory:     history,
+		IncompleteAllowed: *allowIncomplete,
+	}); err != nil {
+		output.Close()
+		fatalf("write snapshot provenance: %v", err)
+	}
 
 	result := summary{
-		SourceDB:    *sourcePath,
-		OutputDB:    *outputPath,
-		CutoffBlock: *cutoff,
+		SourceDB:                 *sourcePath,
+		OutputDB:                 *outputPath,
+		CutoffBlock:              *cutoff,
+		SourceHistory:            history,
+		IncompleteHistoryAllowed: *allowIncomplete,
 	}
 	exportedBlocks := make(map[uint64]common.Hash)
 	batch := output.NewBatch()

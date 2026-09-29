@@ -37,6 +37,7 @@ for command in \
   migration-claims-verify; do
   go build -trimpath -o "$OUTPUT/$command" "./cmd/$command"
 done
+go build -trimpath -o "$OUTPUT/outgoing-cx-scan" "./cmd/forensics/outgoing-cx-scan"
 
 if [[ -d "$ROOT/toolkit/cmd/cutoff-final-verifier" ]]; then
   go build -trimpath -o "$OUTPUT/cutoff-final-verifier" \

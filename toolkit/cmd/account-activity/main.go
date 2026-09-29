@@ -31,6 +31,8 @@ import (
 	nativeleveldb "github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
+
+	"github.com/polymorpher/harmony-migration/toolkit/internal/historyguard"
 )
 
 const attoPerONE = "1000000000000000000"
@@ -75,23 +77,25 @@ type counters struct {
 }
 
 type summary struct {
-	Status               string   `json:"status"`
-	SourceKind           string   `json:"source_kind"`
-	DBPath               string   `json:"db_path"`
-	ExplorerDBPath       string   `json:"explorer_db_path,omitempty"`
-	CandidatesPath       string   `json:"candidates_path"`
-	CandidatesSHA256     string   `json:"candidates_sha256"`
-	Candidates           uint64   `json:"candidates"`
-	Shard                uint32   `json:"shard"`
-	CutoffBlock          uint64   `json:"cutoff_block"`
-	CutoffHash           string   `json:"cutoff_hash"`
-	TransactionIndexTail *uint64  `json:"transaction_index_tail"`
-	ActivityFound        uint64   `json:"activity_found"`
-	ActivityNotFound     uint64   `json:"activity_not_found"`
-	Counters             counters `json:"counters"`
-	OutputPath           string   `json:"output_path"`
-	OutputSHA256         string   `json:"output_sha256"`
-	ElapsedMilliseconds  int64    `json:"elapsed_milliseconds"`
+	Status                   string              `json:"status"`
+	SourceKind               string              `json:"source_kind"`
+	DBPath                   string              `json:"db_path"`
+	ExplorerDBPath           string              `json:"explorer_db_path,omitempty"`
+	CandidatesPath           string              `json:"candidates_path"`
+	CandidatesSHA256         string              `json:"candidates_sha256"`
+	Candidates               uint64              `json:"candidates"`
+	Shard                    uint32              `json:"shard"`
+	CutoffBlock              uint64              `json:"cutoff_block"`
+	CutoffHash               string              `json:"cutoff_hash"`
+	History                  historyguard.Report `json:"history"`
+	IncompleteHistoryAllowed bool                `json:"incomplete_history_allowed"`
+	TransactionIndexTail     *uint64             `json:"transaction_index_tail"`
+	ActivityFound            uint64              `json:"activity_found"`
+	ActivityNotFound         uint64              `json:"activity_not_found"`
+	Counters                 counters            `json:"counters"`
+	OutputPath               string              `json:"output_path"`
+	OutputSHA256             string              `json:"output_sha256"`
+	ElapsedMilliseconds      int64               `json:"elapsed_milliseconds"`
 }
 
 func fatalf(format string, args ...interface{}) {
@@ -845,11 +849,13 @@ func main() {
 			"",
 			"expected canonical cutoff hash",
 		)
-		outputPath  = flag.String("output", "", "activity CSV")
-		summaryPath = flag.String("summary", "", "summary JSON")
-		cacheMB     = flag.Int("cache-mb", 1024, "LevelDB cache MiB")
-		handles     = flag.Int("handles", 2048, "LevelDB handles")
-		replace     = flag.Bool("replace", false, "replace outputs")
+		outputPath      = flag.String("output", "", "activity CSV")
+		summaryPath     = flag.String("summary", "", "summary JSON")
+		cacheMB         = flag.Int("cache-mb", 1024, "LevelDB cache MiB")
+		handles         = flag.Int("handles", 2048, "LevelDB handles")
+		replace         = flag.Bool("replace", false, "replace outputs")
+		probes          = flag.Int("history-probes", historyguard.DefaultProbes, "evenly spaced blocks checked for canonical history")
+		allowIncomplete = flag.Bool("allow-incomplete-history", false, "run on a database without full block history; the summary marks it")
 	)
 	flag.Parse()
 	if *dbPath == "" ||
@@ -893,6 +899,16 @@ func main() {
 	db := rawdb.NewDatabase(disk)
 	if readCanonicalHash(db, *cutoffBlock) != cutoffHashValue {
 		fatalf("cutoff hash does not match database")
+	}
+	// index entries whose blocks the database lacks are skipped as stale, so a
+	// database without full history silently reports older activity as absent
+	history, err := historyguard.Probe(db, *dbPath, 0, *cutoffBlock, *probes)
+	if err != nil {
+		fatalf("probe history: %v", err)
+	}
+	if !history.Complete && !*allowIncomplete {
+		fatalf("database lacks block history over 0-%d: snapdb marker %t, %d of %d probed blocks missing (first %v)",
+			*cutoffBlock, history.SnapDBMarker, history.MissingProbes, history.Probes, history.MissingBlocks)
 	}
 	var (
 		records    []activity
@@ -993,23 +1009,25 @@ func main() {
 
 	writeCSV(*outputPath, candidates, records)
 	result := summary{
-		Status:               "passed",
-		SourceKind:           sourceKind,
-		DBPath:               *dbPath,
-		ExplorerDBPath:       *explorerDBPath,
-		CandidatesPath:       *candidatesPath,
-		CandidatesSHA256:     fileSHA256(*candidatesPath),
-		Candidates:           uint64(len(candidates)),
-		Shard:                uint32(*shard),
-		CutoffBlock:          *cutoffBlock,
-		CutoffHash:           cutoffHashValue.Hex(),
-		TransactionIndexTail: indexTail,
-		ActivityFound:        uint64(len(candidates) - len(unresolved)),
-		ActivityNotFound:     uint64(len(unresolved)),
-		Counters:             counts,
-		OutputPath:           *outputPath,
-		OutputSHA256:         fileSHA256(*outputPath),
-		ElapsedMilliseconds:  time.Since(started).Milliseconds(),
+		Status:                   "passed",
+		SourceKind:               sourceKind,
+		DBPath:                   *dbPath,
+		ExplorerDBPath:           *explorerDBPath,
+		CandidatesPath:           *candidatesPath,
+		CandidatesSHA256:         fileSHA256(*candidatesPath),
+		Candidates:               uint64(len(candidates)),
+		Shard:                    uint32(*shard),
+		CutoffBlock:              *cutoffBlock,
+		CutoffHash:               cutoffHashValue.Hex(),
+		History:                  history,
+		IncompleteHistoryAllowed: *allowIncomplete,
+		TransactionIndexTail:     indexTail,
+		ActivityFound:            uint64(len(candidates) - len(unresolved)),
+		ActivityNotFound:         uint64(len(unresolved)),
+		Counters:                 counts,
+		OutputPath:               *outputPath,
+		OutputSHA256:             fileSHA256(*outputPath),
+		ElapsedMilliseconds:      time.Since(started).Milliseconds(),
 	}
 	writeJSON(*summaryPath, result)
 	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {

@@ -25,6 +25,8 @@ import (
 	"github.com/harmony-one/harmony/core/rawdb"
 	hmytypes "github.com/harmony-one/harmony/core/types"
 	staking "github.com/harmony-one/harmony/staking/types"
+
+	"github.com/polymorpher/harmony-migration/toolkit/internal/historyguard"
 )
 
 const (
@@ -66,19 +68,21 @@ type counters struct {
 }
 
 type summary struct {
-	DBPath              string   `json:"db_path"`
-	TargetsPath         string   `json:"targets_path"`
-	MatchesPath         string   `json:"matches_path"`
-	MatchesSHA256       string   `json:"matches_sha256"`
-	StartBlock          uint64   `json:"start_block"`
-	EndBlock            uint64   `json:"end_block"`
-	InitiallyMissing    uint64   `json:"initially_missing"`
-	PreviouslyMatched   uint64   `json:"previously_matched"`
-	TotalMatched        uint64   `json:"total_matched"`
-	Unresolved          uint64   `json:"unresolved"`
-	UnresolvedKeySHA256 string   `json:"unresolved_key_sha256"`
-	Counters            counters `json:"counters"`
-	ElapsedMilliseconds int64    `json:"elapsed_milliseconds"`
+	DBPath                   string              `json:"db_path"`
+	TargetsPath              string              `json:"targets_path"`
+	MatchesPath              string              `json:"matches_path"`
+	MatchesSHA256            string              `json:"matches_sha256"`
+	StartBlock               uint64              `json:"start_block"`
+	EndBlock                 uint64              `json:"end_block"`
+	InitiallyMissing         uint64              `json:"initially_missing"`
+	PreviouslyMatched        uint64              `json:"previously_matched"`
+	TotalMatched             uint64              `json:"total_matched"`
+	Unresolved               uint64              `json:"unresolved"`
+	UnresolvedKeySHA256      string              `json:"unresolved_key_sha256"`
+	History                  historyguard.Report `json:"history"`
+	IncompleteHistoryAllowed bool                `json:"incomplete_history_allowed"`
+	Counters                 counters            `json:"counters"`
+	ElapsedMilliseconds      int64               `json:"elapsed_milliseconds"`
 }
 
 type matcher struct {
@@ -530,19 +534,21 @@ func (iterator *canonicalHashIterator) advance() {
 
 func main() {
 	var (
-		dbPath         = flag.String("db", "", "canonical archive LevelDB")
-		targetsPath    = flag.String("targets", "", "claim CSV containing unresolved secure keys")
-		matchesPath    = flag.String("matches", "", "append-only verified match CSV")
-		checkpointPath = flag.String("checkpoint", "", "restart checkpoint JSON")
-		summaryPath    = flag.String("summary", "", "final scan summary JSON")
-		startBlock     = flag.Uint64("start-block", 0, "first block number to scan")
-		endBlock       = flag.Uint64("end-block", ^uint64(0), "last block number to scan")
-		cacheMB        = flag.Int("cache-mb", 1024, "LevelDB cache in MiB")
-		handles        = flag.Int("handles", 2048, "LevelDB open-file handles")
-		scanCoinbase   = flag.Bool("scan-block-coinbase", false, "read every canonical header and match its coinbase")
-		scanSenders    = flag.Bool("scan-senders", false, "recover and match every transaction sender and top-level contract creation")
-		scanPayloads   = flag.Bool("scan-payloads", false, "match ABI words and PUSH20 values in transaction payloads")
-		scanReceipts   = flag.Bool("scan-receipts", false, "read and match contract addresses and logs from receipts")
+		dbPath          = flag.String("db", "", "canonical archive LevelDB")
+		targetsPath     = flag.String("targets", "", "claim CSV containing unresolved secure keys")
+		matchesPath     = flag.String("matches", "", "append-only verified match CSV")
+		checkpointPath  = flag.String("checkpoint", "", "restart checkpoint JSON")
+		summaryPath     = flag.String("summary", "", "final scan summary JSON")
+		startBlock      = flag.Uint64("start-block", 0, "first block number to scan")
+		endBlock        = flag.Uint64("end-block", ^uint64(0), "last block number to scan")
+		cacheMB         = flag.Int("cache-mb", 1024, "LevelDB cache in MiB")
+		handles         = flag.Int("handles", 2048, "LevelDB open-file handles")
+		scanCoinbase    = flag.Bool("scan-block-coinbase", false, "read every canonical header and match its coinbase")
+		scanSenders     = flag.Bool("scan-senders", false, "recover and match every transaction sender and top-level contract creation")
+		scanPayloads    = flag.Bool("scan-payloads", false, "match ABI words and PUSH20 values in transaction payloads")
+		scanReceipts    = flag.Bool("scan-receipts", false, "read and match contract addresses and logs from receipts")
+		probes          = flag.Int("history-probes", historyguard.DefaultProbes, "evenly spaced blocks checked for canonical history over the scanned range")
+		allowIncomplete = flag.Bool("allow-incomplete-history", false, "scan a database without full block history over the range; the summary marks it")
 	)
 	flag.Parse()
 	if *dbPath == "" || *targetsPath == "" || *matchesPath == "" || *checkpointPath == "" || *summaryPath == "" {
@@ -578,6 +584,21 @@ func main() {
 		fatalf("open archive database read-only: %v", err)
 	}
 	db := rawdb.NewDatabase(disk)
+	probeEnd := *endBlock
+	if head := rawdb.ReadHeaderNumber(db, rawdb.ReadHeadBlockHash(db)); head != nil && *head < probeEnd {
+		probeEnd = *head
+	}
+	// the body scan simply finds fewer blocks in a database without history
+	history, err := historyguard.Probe(db, *dbPath, *startBlock, probeEnd, *probes)
+	if err != nil {
+		matchFile.Close()
+		fatalf("probe history: %v", err)
+	}
+	if !history.Complete && !*allowIncomplete {
+		matchFile.Close()
+		fatalf("database lacks block history over %d-%d: snapdb marker %t, %d of %d probed blocks missing (first %v)",
+			*startBlock, probeEnd, history.SnapDBMarker, history.MissingProbes, history.Probes, history.MissingBlocks)
+	}
 	startKey := encodeBlockNumber(effectiveStart)
 	iterator := db.NewIterator(bodyPrefix, startKey[1:])
 	canonical := newCanonicalHashIterator(db, effectiveStart)
@@ -699,19 +720,21 @@ func main() {
 
 	totalMatched := previouslyMatched + counts.NewMatches
 	result := summary{
-		DBPath:              *dbPath,
-		TargetsPath:         *targetsPath,
-		MatchesPath:         *matchesPath,
-		MatchesSHA256:       fileSHA256(*matchesPath),
-		StartBlock:          effectiveStart,
-		EndBlock:            lastBlock,
-		InitiallyMissing:    initiallyMissing,
-		PreviouslyMatched:   previouslyMatched,
-		TotalMatched:        totalMatched,
-		Unresolved:          uint64(len(targets)),
-		UnresolvedKeySHA256: unresolvedSHA256(targets),
-		Counters:            counts,
-		ElapsedMilliseconds: time.Since(started).Milliseconds(),
+		DBPath:                   *dbPath,
+		TargetsPath:              *targetsPath,
+		MatchesPath:              *matchesPath,
+		MatchesSHA256:            fileSHA256(*matchesPath),
+		StartBlock:               effectiveStart,
+		EndBlock:                 lastBlock,
+		InitiallyMissing:         initiallyMissing,
+		PreviouslyMatched:        previouslyMatched,
+		TotalMatched:             totalMatched,
+		Unresolved:               uint64(len(targets)),
+		UnresolvedKeySHA256:      unresolvedSHA256(targets),
+		History:                  history,
+		IncompleteHistoryAllowed: *allowIncomplete,
+		Counters:                 counts,
+		ElapsedMilliseconds:      time.Since(started).Milliseconds(),
 	}
 	writeJSONAtomic(*summaryPath, result)
 	writeJSONAtomic(*checkpointPath, checkpoint{

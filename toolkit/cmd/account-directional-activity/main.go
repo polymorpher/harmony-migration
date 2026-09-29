@@ -40,6 +40,8 @@ import (
 	nativeleveldb "github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
+
+	"github.com/polymorpher/harmony-migration/toolkit/internal/historyguard"
 )
 
 var outputHeader = []string{
@@ -108,21 +110,23 @@ type counters struct {
 }
 
 type summary struct {
-	Status              string   `json:"status"`
-	SourceKind          string   `json:"source_kind"`
-	DBPath              string   `json:"db_path"`
-	ExplorerDBPath      string   `json:"explorer_db_path"`
-	CandidatesPath      string   `json:"candidates_path"`
-	CandidatesSHA256    string   `json:"candidates_sha256"`
-	Shard               uint32   `json:"shard"`
-	CutoffBlock         uint64   `json:"cutoff_block"`
-	CutoffHash          string   `json:"cutoff_hash"`
-	MaxEntries          uint64   `json:"max_entries_per_index"`
-	Workers             int      `json:"workers"`
-	Counters            counters `json:"counters"`
-	OutputPath          string   `json:"output_path"`
-	OutputSHA256        string   `json:"output_sha256"`
-	ElapsedMilliseconds int64    `json:"elapsed_milliseconds"`
+	Status                   string              `json:"status"`
+	SourceKind               string              `json:"source_kind"`
+	DBPath                   string              `json:"db_path"`
+	ExplorerDBPath           string              `json:"explorer_db_path"`
+	CandidatesPath           string              `json:"candidates_path"`
+	CandidatesSHA256         string              `json:"candidates_sha256"`
+	Shard                    uint32              `json:"shard"`
+	CutoffBlock              uint64              `json:"cutoff_block"`
+	CutoffHash               string              `json:"cutoff_hash"`
+	History                  historyguard.Report `json:"history"`
+	IncompleteHistoryAllowed bool                `json:"incomplete_history_allowed"`
+	MaxEntries               uint64              `json:"max_entries_per_index"`
+	Workers                  int                 `json:"workers"`
+	Counters                 counters            `json:"counters"`
+	OutputPath               string              `json:"output_path"`
+	OutputSHA256             string              `json:"output_sha256"`
+	ElapsedMilliseconds      int64               `json:"elapsed_milliseconds"`
 }
 
 func fatalf(format string, args ...interface{}) {
@@ -604,19 +608,21 @@ func writeJSON(path string, value interface{}) {
 
 func main() {
 	var (
-		dbPath         = flag.String("db", "", "canonical Harmony LevelDB for the shard")
-		explorerDBPath = flag.String("explorer-db", "", "explorer-node LevelDB for the shard")
-		candidatesPath = flag.String("candidates", "", "CSV with address, nonce_shard0, nonce_shard1, is_contract (-1 = unknown)")
-		shard          = flag.Uint("shard", 0, "shard (0 or 1)")
-		cutoffBlock    = flag.Uint64("cutoff-block", 0, "last included canonical block")
-		cutoffHash     = flag.String("cutoff-hash", "", "expected canonical cutoff hash")
-		outputPath     = flag.String("output", "", "output CSV")
-		summaryPath    = flag.String("summary", "", "summary JSON")
-		workers        = flag.Int("workers", 16, "parallel readers")
-		maxEntries     = flag.Uint64("max-entries", 5_000_000, "index entries examined per address and index before giving up")
-		cacheMB        = flag.Int("cache-mb", 2048, "LevelDB cache MiB")
-		handles        = flag.Int("handles", 4096, "LevelDB handles")
-		replace        = flag.Bool("replace", false, "replace outputs")
+		dbPath          = flag.String("db", "", "canonical Harmony LevelDB for the shard")
+		explorerDBPath  = flag.String("explorer-db", "", "explorer-node LevelDB for the shard")
+		candidatesPath  = flag.String("candidates", "", "CSV with address, nonce_shard0, nonce_shard1, is_contract (-1 = unknown)")
+		shard           = flag.Uint("shard", 0, "shard (0 or 1)")
+		cutoffBlock     = flag.Uint64("cutoff-block", 0, "last included canonical block")
+		cutoffHash      = flag.String("cutoff-hash", "", "expected canonical cutoff hash")
+		outputPath      = flag.String("output", "", "output CSV")
+		summaryPath     = flag.String("summary", "", "summary JSON")
+		workers         = flag.Int("workers", 16, "parallel readers")
+		maxEntries      = flag.Uint64("max-entries", 5_000_000, "index entries examined per address and index before giving up")
+		cacheMB         = flag.Int("cache-mb", 2048, "LevelDB cache MiB")
+		handles         = flag.Int("handles", 4096, "LevelDB handles")
+		replace         = flag.Bool("replace", false, "replace outputs")
+		probes          = flag.Int("history-probes", historyguard.DefaultProbes, "evenly spaced blocks checked for canonical history")
+		allowIncomplete = flag.Bool("allow-incomplete-history", false, "run on a database without full block history; the summary marks it")
 	)
 	flag.Parse()
 	if *dbPath == "" || *explorerDBPath == "" || *candidatesPath == "" || *cutoffBlock == 0 ||
@@ -647,6 +653,16 @@ func main() {
 	chain := rawdb.NewDatabase(disk)
 	if readCanonicalHash(chain, *cutoffBlock) != cutoffHashValue {
 		fatalf("cutoff hash does not match database")
+	}
+	// index entries whose blocks the database lacks are skipped as stale, so a
+	// database without full history silently reports older activity as absent
+	history, err := historyguard.Probe(chain, *dbPath, 0, *cutoffBlock, *probes)
+	if err != nil {
+		fatalf("probe history: %v", err)
+	}
+	if !history.Complete && !*allowIncomplete {
+		fatalf("database lacks block history over 0-%d: snapdb marker %t, %d of %d probed blocks missing (first %v)",
+			*cutoffBlock, history.SnapDBMarker, history.MissingProbes, history.Probes, history.MissingBlocks)
 	}
 	explorer, err := nativeleveldb.OpenFile(*explorerDBPath, &opt.Options{ReadOnly: true})
 	if err != nil {
@@ -705,21 +721,23 @@ func main() {
 	}
 	writeCSV(*outputPath, uint32(*shard), candidates, results)
 	report := summary{
-		Status:              "passed",
-		SourceKind:          "explorer-node per-address index; every examined entry classified from the canonical block body",
-		DBPath:              *dbPath,
-		ExplorerDBPath:      *explorerDBPath,
-		CandidatesPath:      *candidatesPath,
-		CandidatesSHA256:    fileSHA256(*candidatesPath),
-		Shard:               uint32(*shard),
-		CutoffBlock:         *cutoffBlock,
-		CutoffHash:          cutoffHashValue.Hex(),
-		MaxEntries:          *maxEntries,
-		Workers:             *workers,
-		Counters:            total,
-		OutputPath:          *outputPath,
-		OutputSHA256:        fileSHA256(*outputPath),
-		ElapsedMilliseconds: time.Since(started).Milliseconds(),
+		Status:                   "passed",
+		SourceKind:               "explorer-node per-address index; every examined entry classified from the canonical block body",
+		DBPath:                   *dbPath,
+		ExplorerDBPath:           *explorerDBPath,
+		CandidatesPath:           *candidatesPath,
+		CandidatesSHA256:         fileSHA256(*candidatesPath),
+		Shard:                    uint32(*shard),
+		CutoffBlock:              *cutoffBlock,
+		CutoffHash:               cutoffHashValue.Hex(),
+		History:                  history,
+		IncompleteHistoryAllowed: *allowIncomplete,
+		MaxEntries:               *maxEntries,
+		Workers:                  *workers,
+		Counters:                 total,
+		OutputPath:               *outputPath,
+		OutputSHA256:             fileSHA256(*outputPath),
+		ElapsedMilliseconds:      time.Since(started).Milliseconds(),
 	}
 	writeJSON(*summaryPath, report)
 	if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {

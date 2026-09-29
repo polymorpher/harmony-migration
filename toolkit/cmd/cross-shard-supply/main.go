@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -16,6 +18,8 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/rlp"
+
+	"github.com/polymorpher/harmony-migration/toolkit/internal/historyguard"
 )
 
 var (
@@ -39,23 +43,24 @@ type cxReceipt struct {
 }
 
 type directionTotals struct {
-	SourceShard                uint32         `json:"source_shard"`
-	EmptyReceiptGroups         uint64         `json:"empty_receipt_groups"`
-	CanonicalReceiptGroups     uint64         `json:"canonical_receipt_groups"`
-	NonCanonicalReceiptGroups  uint64         `json:"noncanonical_receipt_groups"`
-	MissingCanonicalHashGroups uint64         `json:"missing_canonical_hash_groups"`
-	AfterCutoffGroups          uint64         `json:"after_cutoff_groups"`
-	SpentReceiptGroups         uint64         `json:"spent_receipt_groups"`
-	SpentReceiptCount          uint64         `json:"spent_receipt_count"`
-	SpentAmountAtto            string         `json:"spent_amount_atto"`
-	PendingReceiptGroups       uint64         `json:"pending_receipt_groups"`
-	PendingReceiptCount        uint64         `json:"pending_receipt_count"`
-	PendingAmountAtto          string         `json:"pending_amount_atto"`
-	UnsupportedReceiptGroups   uint64         `json:"unsupported_receipt_groups"`
-	UnsupportedReceiptCount    uint64         `json:"unsupported_receipt_count"`
-	UnsupportedAmountAtto      string         `json:"unsupported_amount_atto"`
-	PendingGroups              []receiptGroup `json:"pending_groups"`
-	UnsupportedGroups          []receiptGroup `json:"unsupported_groups"`
+	SourceShard                uint32                `json:"source_shard"`
+	EmptyReceiptGroups         uint64                `json:"empty_receipt_groups"`
+	CanonicalReceiptGroups     uint64                `json:"canonical_receipt_groups"`
+	NonCanonicalReceiptGroups  uint64                `json:"noncanonical_receipt_groups"`
+	MissingCanonicalHashGroups uint64                `json:"missing_canonical_hash_groups"`
+	AfterCutoffGroups          uint64                `json:"after_cutoff_groups"`
+	SpentReceiptGroups         uint64                `json:"spent_receipt_groups"`
+	SpentReceiptCount          uint64                `json:"spent_receipt_count"`
+	SpentAmountAtto            string                `json:"spent_amount_atto"`
+	PendingReceiptGroups       uint64                `json:"pending_receipt_groups"`
+	PendingReceiptCount        uint64                `json:"pending_receipt_count"`
+	PendingAmountAtto          string                `json:"pending_amount_atto"`
+	UnsupportedReceiptGroups   uint64                `json:"unsupported_receipt_groups"`
+	UnsupportedReceiptCount    uint64                `json:"unsupported_receipt_count"`
+	UnsupportedAmountAtto      string                `json:"unsupported_amount_atto"`
+	SourceCoverage             historyguard.Coverage `json:"source_coverage"`
+	PendingGroups              []receiptGroup        `json:"pending_groups"`
+	UnsupportedGroups          []receiptGroup        `json:"unsupported_groups"`
 }
 
 type receiptGroup struct {
@@ -82,14 +87,26 @@ type mutableDirectionTotals struct {
 	unsupportedAmount *big.Int
 }
 
+type databaseHistory struct {
+	Kind         string              `json:"kind"`
+	Report       historyguard.Report `json:"history"`
+	LookupCutoff uint64              `json:"lookup_snapshot_cutoff,omitempty"`
+}
+
 type summary struct {
-	Shard0DB               string            `json:"shard0_db"`
-	Shard1DB               string            `json:"shard1_db"`
-	Shard0Cutoff           uint64            `json:"shard0_cutoff"`
-	Shard1Cutoff           uint64            `json:"shard1_cutoff"`
-	Directions             []directionTotals `json:"directions"`
-	PendingActiveAtto      string            `json:"pending_active_atto"`
-	UnsupportedPendingAtto string            `json:"unsupported_pending_atto"`
+	Shard0DB                 string                     `json:"shard0_db"`
+	Shard1DB                 string                     `json:"shard1_db"`
+	Shard0Cutoff             uint64                     `json:"shard0_cutoff"`
+	Shard1Cutoff             uint64                     `json:"shard1_cutoff"`
+	SourceShards             []uint32                   `json:"source_shards"`
+	CoverageFrom             uint64                     `json:"coverage_from_block"`
+	Databases                map[string]databaseHistory `json:"databases"`
+	CoverageComplete         bool                       `json:"coverage_complete"`
+	IncompleteHistoryAllowed bool                       `json:"incomplete_history_allowed"`
+	CoverageProblems         []string                   `json:"coverage_problems"`
+	Directions               []directionTotals          `json:"directions"`
+	PendingActiveAtto        string                     `json:"pending_active_atto"`
+	UnsupportedPendingAtto   string                     `json:"unsupported_pending_atto"`
 }
 
 func fatalf(format string, args ...interface{}) {
@@ -192,6 +209,7 @@ func sumReceipts(
 	destinations map[uint32]ethdb.Database,
 	sourceCutoff uint64,
 	destinationCutoffs map[uint32]uint64,
+	coverageFrom uint64,
 ) directionTotals {
 	result := &mutableDirectionTotals{
 		directionTotals:   directionTotals{SourceShard: sourceShard},
@@ -199,6 +217,9 @@ func sumReceipts(
 		pendingAmount:     new(big.Int),
 		unsupportedAmount: new(big.Int),
 	}
+	// shards 0 and 1 exist in every era, so every source block from coverageFrom
+	// on has a (possibly empty) group toward the other one
+	coverage := historyguard.NewCoverageTracker(1-sourceShard, coverageFrom, sourceCutoff)
 	iterator := source.NewIterator(receiptPrefix, nil)
 	defer iterator.Release()
 	started := time.Now()
@@ -223,6 +244,9 @@ func sumReceipts(
 		destination, blockNumber, blockHash, ok := receiptKeyParts(iterator.Key())
 		if !ok {
 			continue
+		}
+		if err := coverage.Observe(destination, blockNumber); err != nil {
+			fatalf("source shard %d receipt coverage: %v", sourceShard, err)
 		}
 		if bytes.Equal(iterator.Value(), []byte{0xc0}) {
 			result.EmptyReceiptGroups++
@@ -362,6 +386,7 @@ func sumReceipts(
 	if err := iterator.Error(); err != nil {
 		fatalf("iterate source shard %d receipts: %v", sourceShard, err)
 	}
+	result.SourceCoverage = coverage.Finish()
 	result.SpentAmountAtto = result.spentAmount.String()
 	result.PendingAmountAtto = result.pendingAmount.String()
 	result.UnsupportedAmountAtto = result.unsupportedAmount.String()
@@ -397,20 +422,105 @@ func makeReceiptGroup(
 	}
 }
 
+func parseSourceShards(value string) ([]uint32, error) {
+	var shards []uint32
+	seen := make(map[uint32]bool)
+	for _, part := range strings.Split(value, ",") {
+		shard, err := strconv.ParseUint(strings.TrimSpace(part), 10, 32)
+		if err != nil || shard > 1 {
+			return nil, fmt.Errorf("source shard %q is not 0 or 1", part)
+		}
+		if !seen[uint32(shard)] {
+			seen[uint32(shard)] = true
+			shards = append(shards, uint32(shard))
+		}
+	}
+	return shards, nil
+}
+
+func inspectDatabase(name string, db ethdb.Database, cutoff uint64, probes int) (databaseHistory, error) {
+	info, err := historyguard.ReadLookupSnapshotInfo(db)
+	if err != nil {
+		return databaseHistory{}, err
+	}
+	if info != nil {
+		return databaseHistory{Kind: "cx-lookup-snapshot", Report: info.SourceHistory, LookupCutoff: info.Cutoff}, nil
+	}
+	report, err := historyguard.Probe(db, name, 0, cutoff, probes)
+	return databaseHistory{Kind: "chain", Report: report}, err
+}
+
+// coverageProblems lists every reason the run may not have seen all receipts.
+// An empty list is the only state in which pending totals may be published.
+func coverageProblems(
+	databases map[uint32]databaseHistory,
+	cutoffs map[uint32]uint64,
+	sources []uint32,
+	directions []directionTotals,
+	coverageFrom uint64,
+) []string {
+	problems := []string{}
+	if coverageFrom > historyguard.MainnetCrossTxFirstBlock {
+		problems = append(problems, fmt.Sprintf(
+			"receipt coverage starts at block %d, after the first cross-shard block %d",
+			coverageFrom, historyguard.MainnetCrossTxFirstBlock))
+	}
+	isSource := make(map[uint32]bool)
+	for _, shard := range sources {
+		isSource[shard] = true
+	}
+	for shard := uint32(0); shard <= 1; shard++ {
+		db := databases[shard]
+		if isSource[shard] && db.Kind != "chain" {
+			problems = append(problems, fmt.Sprintf(
+				"shard %d database is a CX lookup snapshot and cannot supply outgoing receipts", shard))
+		}
+		if !db.Report.Complete {
+			problems = append(problems, fmt.Sprintf(
+				"shard %d %s lacks block history over %d-%d: snapdb marker %t, %d of %d probed blocks missing (first %v)",
+				shard, db.Kind, db.Report.From, db.Report.To, db.Report.SnapDBMarker,
+				db.Report.MissingProbes, db.Report.Probes, db.Report.MissingBlocks))
+		}
+		if db.Kind == "cx-lookup-snapshot" && db.LookupCutoff < cutoffs[shard] {
+			problems = append(problems, fmt.Sprintf(
+				"shard %d lookup snapshot stops at block %d, before the destination cutoff %d",
+				shard, db.LookupCutoff, cutoffs[shard]))
+		}
+	}
+	for _, direction := range directions {
+		coverage := direction.SourceCoverage
+		if !coverage.Complete {
+			problems = append(problems, fmt.Sprintf(
+				"shard %d has no outgoing receipt group toward shard %d for %d of %d blocks in %d-%d (gaps %v)",
+				direction.SourceShard, coverage.Destination, coverage.BlocksMissing,
+				coverage.BlocksExpected, coverage.From, coverage.To, coverage.MissingRanges))
+		}
+	}
+	return problems
+}
+
 func main() {
 	var (
-		shard0Path   = flag.String("shard0-db", "", "path to shard-0 LevelDB")
-		shard1Path   = flag.String("shard1-db", "", "path to shard-1 LevelDB")
-		shard0Cutoff = flag.Uint64("shard0-cutoff", 0, "last included canonical shard-0 block")
-		shard1Cutoff = flag.Uint64("shard1-cutoff", 0, "last included canonical shard-1 block")
-		output       = flag.String("output", "", "JSON output path")
-		cacheMB      = flag.Int("cache-mb", 128, "cache per LevelDB in MiB")
-		handles      = flag.Int("handles", 128, "open-file handles per LevelDB")
+		shard0Path      = flag.String("shard0-db", "", "path to shard-0 LevelDB")
+		shard1Path      = flag.String("shard1-db", "", "path to shard-1 LevelDB")
+		shard0Cutoff    = flag.Uint64("shard0-cutoff", 0, "last included canonical shard-0 block")
+		shard1Cutoff    = flag.Uint64("shard1-cutoff", 0, "last included canonical shard-1 block")
+		output          = flag.String("output", "", "JSON output path")
+		cacheMB         = flag.Int("cache-mb", 128, "cache per LevelDB in MiB")
+		handles         = flag.Int("handles", 128, "open-file handles per LevelDB")
+		sourceShards    = flag.String("source-shards", "0,1", "source shards to scan; a shard given as a cx-lookup-snapshot can only be a destination")
+		coverageFrom    = flag.Uint64("coverage-from", historyguard.MainnetCrossTxFirstBlock, "first source block that must have outgoing receipt groups")
+		probes          = flag.Int("history-probes", historyguard.DefaultProbes, "evenly spaced blocks checked for canonical history in each database")
+		allowIncomplete = flag.Bool("allow-incomplete-history", false, "write the output even when history or receipt coverage is incomplete; it is marked coverage_complete=false")
 	)
 	flag.Parse()
 	if *shard0Path == "" || *shard1Path == "" || *shard0Cutoff == 0 || *shard1Cutoff == 0 || *output == "" {
 		flag.Usage()
 		os.Exit(2)
+	}
+	sources, err := parseSourceShards(*sourceShards)
+	if err != nil {
+		fatalf("%v", err)
 	}
 
 	shard0 := openDatabase(*shard0Path, *cacheMB, *handles)
@@ -419,23 +529,40 @@ func main() {
 	defer shard1.Close()
 
 	cutoffs := map[uint32]uint64{0: *shard0Cutoff, 1: *shard1Cutoff}
-	direction0 := sumReceipts(
-		0,
-		shard0,
-		map[uint32]ethdb.Database{1: shard1},
-		*shard0Cutoff,
-		cutoffs,
-	)
-	direction1 := sumReceipts(
-		1,
-		shard1,
-		map[uint32]ethdb.Database{0: shard0},
-		*shard1Cutoff,
-		cutoffs,
-	)
+	dbs := map[uint32]ethdb.Database{0: shard0, 1: shard1}
+	paths := map[uint32]string{0: *shard0Path, 1: *shard1Path}
+	histories := make(map[uint32]databaseHistory)
+	for shard, db := range dbs {
+		history, err := inspectDatabase(paths[shard], db, cutoffs[shard], *probes)
+		if err != nil {
+			fatalf("inspect shard %d database history: %v", shard, err)
+		}
+		histories[shard] = history
+	}
+
+	var directions []directionTotals
+	for _, shard := range sources {
+		destination := 1 - shard
+		directions = append(directions, sumReceipts(
+			shard,
+			dbs[shard],
+			map[uint32]ethdb.Database{destination: dbs[destination]},
+			cutoffs[shard],
+			cutoffs,
+			*coverageFrom,
+		))
+	}
+	problems := coverageProblems(histories, cutoffs, sources, directions, *coverageFrom)
+	if len(problems) > 0 && !*allowIncomplete {
+		for _, problem := range problems {
+			fmt.Fprintf(os.Stderr, "incomplete: %s\n", problem)
+		}
+		fatalf("history or receipt coverage is incomplete; no totals written (use an archive database, or -allow-incomplete-history for a marked diagnostic run)")
+	}
+
 	pending := new(big.Int)
 	unsupported := new(big.Int)
-	for _, direction := range []directionTotals{direction0, direction1} {
+	for _, direction := range directions {
 		value, ok := new(big.Int).SetString(direction.PendingAmountAtto, 10)
 		if !ok {
 			fatalf("invalid pending amount")
@@ -448,13 +575,19 @@ func main() {
 		unsupported.Add(unsupported, value)
 	}
 	result := summary{
-		Shard0DB:               *shard0Path,
-		Shard1DB:               *shard1Path,
-		Shard0Cutoff:           *shard0Cutoff,
-		Shard1Cutoff:           *shard1Cutoff,
-		Directions:             []directionTotals{direction0, direction1},
-		PendingActiveAtto:      pending.String(),
-		UnsupportedPendingAtto: unsupported.String(),
+		Shard0DB:                 *shard0Path,
+		Shard1DB:                 *shard1Path,
+		Shard0Cutoff:             *shard0Cutoff,
+		Shard1Cutoff:             *shard1Cutoff,
+		SourceShards:             sources,
+		CoverageFrom:             *coverageFrom,
+		Databases:                map[string]databaseHistory{"shard0": histories[0], "shard1": histories[1]},
+		CoverageComplete:         len(problems) == 0,
+		IncompleteHistoryAllowed: *allowIncomplete,
+		CoverageProblems:         problems,
+		Directions:               directions,
+		PendingActiveAtto:        pending.String(),
+		UnsupportedPendingAtto:   unsupported.String(),
 	}
 
 	partial := *output + ".partial"

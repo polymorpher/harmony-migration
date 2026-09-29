@@ -19,6 +19,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/rlp"
+
+	"github.com/polymorpher/harmony-migration/toolkit/internal/historyguard"
 )
 
 var receiptPrefix = []byte("cxReceipt")
@@ -40,16 +42,21 @@ type destinationSummary struct {
 }
 
 type summary struct {
-	DBPath                    string               `json:"db_path"`
-	SourceShard               uint32               `json:"source_shard"`
-	CanonicalGroups           uint64               `json:"canonical_groups"`
-	NoncanonicalGroups        uint64               `json:"noncanonical_groups"`
-	MissingCanonicalHashGroup uint64               `json:"missing_canonical_hash_groups"`
-	EmptyGroups               uint64               `json:"empty_groups"`
-	Destinations              []destinationSummary `json:"destinations"`
-	OutputPath                string               `json:"output_path"`
-	OutputSHA256              string               `json:"output_sha256"`
-	ElapsedMilliseconds       int64                `json:"elapsed_milliseconds"`
+	DBPath                    string                `json:"db_path"`
+	SourceShard               uint32                `json:"source_shard"`
+	CoverageTo                uint64                `json:"coverage_to_block"`
+	History                   historyguard.Report   `json:"history"`
+	Coverage                  historyguard.Coverage `json:"coverage"`
+	CoverageComplete          bool                  `json:"coverage_complete"`
+	IncompleteHistoryAllowed  bool                  `json:"incomplete_history_allowed"`
+	CanonicalGroups           uint64                `json:"canonical_groups"`
+	NoncanonicalGroups        uint64                `json:"noncanonical_groups"`
+	MissingCanonicalHashGroup uint64                `json:"missing_canonical_hash_groups"`
+	EmptyGroups               uint64                `json:"empty_groups"`
+	Destinations              []destinationSummary  `json:"destinations"`
+	OutputPath                string                `json:"output_path"`
+	OutputSHA256              string                `json:"output_sha256"`
+	ElapsedMilliseconds       int64                 `json:"elapsed_milliseconds"`
 }
 
 type mutableDestination struct {
@@ -77,11 +84,15 @@ func receiptKeyParts(key []byte) (uint32, uint64, common.Hash, bool) {
 
 func main() {
 	var (
-		dbPath      = flag.String("db", "", "path to source-shard LevelDB")
-		sourceShard = flag.Uint("source-shard", 0, "source shard ID")
-		output      = flag.String("output", "", "CSV output path")
-		cacheMB     = flag.Int("cache-mb", 1024, "LevelDB cache in MiB")
-		handles     = flag.Int("handles", 1024, "LevelDB open-file handles")
+		dbPath          = flag.String("db", "", "path to source-shard LevelDB")
+		sourceShard     = flag.Uint("source-shard", 0, "source shard ID")
+		output          = flag.String("output", "", "CSV output path")
+		cacheMB         = flag.Int("cache-mb", 1024, "LevelDB cache in MiB")
+		handles         = flag.Int("handles", 1024, "LevelDB open-file handles")
+		cutoff          = flag.Uint64("cutoff", 0, "last source block that must have receipt groups (default: database head)")
+		coverageFrom    = flag.Uint64("coverage-from", historyguard.MainnetCrossTxFirstBlock, "first source block that must have receipt groups")
+		probes          = flag.Int("history-probes", historyguard.DefaultProbes, "evenly spaced blocks checked for canonical history")
+		allowIncomplete = flag.Bool("allow-incomplete-history", false, "publish the CSV even when history or receipt coverage is incomplete; the summary marks it")
 	)
 	flag.Parse()
 	if *dbPath == "" || *output == "" || *sourceShard > ^uint(0)>>32 {
@@ -95,6 +106,26 @@ func main() {
 	}
 	db := rawdb.NewDatabase(disk)
 	defer db.Close()
+
+	coverageTo := *cutoff
+	if coverageTo == 0 {
+		head := rawdb.ReadHeadBlockHash(db)
+		number := rawdb.ReadHeaderNumber(db, head)
+		if number == nil {
+			fatalf("database has no head block; pass -cutoff")
+		}
+		coverageTo = *number
+	}
+	history, err := historyguard.Probe(db, *dbPath, 0, coverageTo, *probes)
+	if err != nil {
+		fatalf("probe history: %v", err)
+	}
+	// shards 0 and 1 exist in every era, so every block has a group toward one of them
+	partner := uint32(1)
+	if *sourceShard != 0 {
+		partner = 0
+	}
+	coverage := historyguard.NewCoverageTracker(partner, *coverageFrom, coverageTo)
 
 	partial := *output + ".partial"
 	outputFile, err := os.OpenFile(partial, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -135,6 +166,9 @@ func main() {
 		destination, number, hash, ok := receiptKeyParts(iterator.Key())
 		if !ok {
 			continue
+		}
+		if err := coverage.Observe(destination, number); err != nil {
+			fatalf("receipt coverage: %v", err)
 		}
 		canonicalHash := rawdb.ReadCanonicalHash(db, number)
 		if canonicalHash == (common.Hash{}) {
@@ -198,6 +232,16 @@ func main() {
 	if err := iterator.Error(); err != nil {
 		fatalf("iterate outgoing receipts: %v", err)
 	}
+	coverageResult := coverage.Finish()
+	complete := history.Complete && coverageResult.Complete && *coverageFrom <= historyguard.MainnetCrossTxFirstBlock
+	if !complete && !*allowIncomplete {
+		outputFile.Close()
+		os.Remove(partial)
+		fatalf("incomplete history: snapdb marker %t, %d of %d probed blocks missing; no group toward shard %d for %d of %d blocks in %d-%d (gaps %v); CSV not published",
+			history.SnapDBMarker, history.MissingProbes, history.Probes, partner,
+			coverageResult.BlocksMissing, coverageResult.BlocksExpected, coverageResult.From, coverageResult.To,
+			coverageResult.MissingRanges)
+	}
 
 	writer.Flush()
 	if err := writer.Error(); err != nil {
@@ -220,6 +264,11 @@ func main() {
 	result := summary{
 		DBPath:                    *dbPath,
 		SourceShard:               uint32(*sourceShard),
+		CoverageTo:                coverageTo,
+		History:                   history,
+		Coverage:                  coverageResult,
+		CoverageComplete:          complete,
+		IncompleteHistoryAllowed:  *allowIncomplete,
 		CanonicalGroups:           canonicalGroups,
 		NoncanonicalGroups:        noncanonicalGroups,
 		MissingCanonicalHashGroup: missingHashGroups,
