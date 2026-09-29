@@ -148,6 +148,37 @@ def normalize_address(value: str, where: str) -> str:
     return checksummed
 
 
+_BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def _bech32_polymod(values: list[int]) -> int:
+    generator = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
+    chk = 1
+    for value in values:
+        top = chk >> 25
+        chk = ((chk & 0x1FFFFFF) << 5) ^ value
+        for i in range(5):
+            if (top >> i) & 1:
+                chk ^= generator[i]
+    return chk
+
+
+def to_one1(address: str, hrp: str = "one") -> str:
+    """Harmony's bech32 form (one1...) of a 0x address."""
+    data, acc, bits = [], 0, 0
+    for byte in unhex(address):
+        acc, bits = (acc << 8) | byte, bits + 8
+        while bits >= 5:
+            bits -= 5
+            data.append((acc >> bits) & 31)
+    if bits:
+        data.append((acc << (5 - bits)) & 31)
+    expanded = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+    polymod = _bech32_polymod(expanded + data + [0] * 6) ^ 1
+    checksum = [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
+    return hrp + "1" + "".join(_BECH32_CHARSET[d] for d in data + checksum)
+
+
 def parse_amount(value: str, unit: str, where: str) -> int:
     """Return the amount in atto (smallest unit). `unit` is 'atto' or 'one'."""
     text = value.strip().replace(",", "").replace("_", "")
