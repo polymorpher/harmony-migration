@@ -20,7 +20,15 @@
 - `cutoff-final-verifier` — ignored until result publication because it embeds
   exact expected artifact identities
 
-Additional historical investigation commands are under `cmd/forensics`.
+Additional historical investigation commands are under `cmd/forensics`;
+`outgoing-cx-scan` lists every canonical outgoing receipt for the receipt
+provenance check.
+
+Commands that read history (`cross-shard-supply`, `cx-lookup-snapshot`,
+`outgoing-cx-scan`, `account-activity`, `account-directional-activity`,
+`canonical-address-resolve`) use `internal/historyguard` to refuse databases
+without canonical block history over the range they read, such as a compact
+SnapDB. `-allow-incomplete-history` produces a marked diagnostic result.
 
 ## Python scripts
 

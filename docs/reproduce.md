@@ -82,6 +82,15 @@ You need:
 - canonical block bodies and cross-shard lookup records through the cutoff if
   you want to independently reproduce pending-receipt classification.
 
+State exports (steps 5 and 6) only need the cutoff state root, so a compact
+SnapDB works for them. Every step that reads history (pending receipts,
+activity, address recovery from blocks) needs an archive or full database with
+blocks from genesis. A SnapDB built by Harmony's `dumpdb` keeps balances but not
+historical blocks, outgoing receipts, or CX lookups, so a scan of it silently
+finds only what its node processed after the snapshot. These commands probe the
+database first and refuse to publish results when history is missing; the
+probe and coverage results are recorded in each summary.
+
 The roots correspond to the blocks in
 `manifests/snapshot-2026-09-10.json`.
 
@@ -181,6 +190,42 @@ bin/cross-shard-supply \
 
 The tool restricts source receipt groups and destination lookups to canonical
 blocks at or before their respective cutoffs.
+
+It also refuses to write totals unless both databases hold canonical block
+history through their cutoffs and every source block from 786,432 (the first
+mainnet block with cross-shard fields) to the cutoff has an outgoing receipt
+group toward the other active shard. Harmony writes such a group, often empty,
+for every block, so a gap means the database never stored those receipts. The
+report records the probes, the per-direction coverage, and
+`coverage_complete`. `-allow-incomplete-history` writes a report marked
+`coverage_complete=false` for diagnosis only; the verifiers reject it.
+
+When the two shards' databases are on different hosts, export the destination
+lookups with `bin/cx-lookup-snapshot` (it also refuses a source without
+history and records its provenance in the snapshot), then run one direction per
+host with `-source-shards 0` or `-source-shards 1`.
+
+Independently list every canonical outgoing receipt on each shard:
+
+```sh
+bin/outgoing-cx-scan -db "$SHARD0_DB" -source-shard 0 -cutoff 93623067 \
+  -output "$OUT/shard0-outgoing-receipts.csv" > "$OUT/shard0-outgoing-receipts-summary.json"
+bin/outgoing-cx-scan -db "$SHARD1_DB" -source-shard 1 -cutoff 95882100 \
+  -output "$OUT/shard1-outgoing-receipts.csv" > "$OUT/shard1-outgoing-receipts-summary.json"
+```
+
+Then check that the report accounts for exactly those receipts: spent plus
+pending equals the list for the active destination, retired-shard receipts
+equal the list for shards 2 and 3, and every individually listed pending or
+retired receipt matches:
+
+```sh
+python3 toolkit/scripts/cutoff/verify-receipt-provenance.py \
+  --receipts "$OUT/cross-shard-supply-cutoff.json" \
+  --outgoing "$OUT/shard0-outgoing-receipts.csv" \
+  --outgoing "$OUT/shard1-outgoing-receipts.csv" \
+  --output "$OUT/receipt-provenance.verify.json"
+```
 
 ## 9. Merge all claim components
 
@@ -860,7 +905,9 @@ The scripts in `toolkit/scripts/cutoff/` provide additional independent checks:
 - trie-difference versus historical RPC balances and nonces;
 - execution-trace evidence for newly created accounts;
 - signed difference arithmetic;
-- component and aggregate reconciliation.
+- component and aggregate reconciliation, including the receipt provenance
+  and independent outgoing-receipt comparison from step 8
+  (`verify-cutoff-reconciliation.py` takes the two `--outgoing` lists).
 
 When the exact released native artifact bundle is downloaded under
 `artifacts/`, run its historical cutoff verifier:

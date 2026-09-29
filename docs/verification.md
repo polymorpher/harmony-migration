@@ -126,6 +126,16 @@ Cross-shard receipt lookup distinguishes an absent destination key from a
 database read failure. Absence may represent a pending receipt; any `Has`,
 `Get`, decode, or iterator error aborts before totals are published.
 
+Absence is only meaningful in a database that stored the history. The receipt
+scanner, the lookup exporter, the activity scanners, and the block-based
+address recovery probe their database for canonical blocks across the range
+they read and refuse a compact SnapDB. The receipt scanner additionally
+requires an outgoing receipt group for every source block from the first
+cross-shard block to the cutoff. `verify-receipt-provenance.py` (and
+`verify-cutoff-reconciliation.py`) reject a receipt report that does not
+record that coverage, and compare its spent, pending, and retired-shard
+receipts with independent `outgoing-cx-scan` lists for both shards.
+
 The prioritized activity enrichment additionally checks:
 
 - every `>= 1,000 ONE` candidate has exactly one activity record;

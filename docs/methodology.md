@@ -136,6 +136,13 @@ the source cutoff. A receipt is treated as spent only when its destination
 lookup points to a canonical destination block at or before the destination
 cutoff.
 
+Both rules read auxiliary records that only an archive or full database keeps.
+The scanner therefore probes each database for canonical block history and
+requires an outgoing receipt group toward the other active shard for every
+source block from the first cross-shard block to the cutoff; otherwise it
+publishes nothing. The verifier also compares the report with an independent
+list of every canonical outgoing receipt (`forensics/outgoing-cx-scan`).
+
 Supported pending-receipt and audited-interval counts are withheld during
 independent reproduction.
 
@@ -241,8 +248,8 @@ independent reproduction.
 
 ## Explicit exclusion
 
-Historical shard-1 receipts to retired shards 2 and 3 have destination spent
-status that cannot be proven from the active shard databases. They are listed
+Historical shard-0 and shard-1 receipts to retired shards 2 and 3 have
+destination spent status that cannot be proven from the active shard databases. They are listed
 separately and excluded from the primary total to avoid double-counting
 balances potentially migrated under HIP-30. Their count and amount are withheld
 during independent reproduction.
