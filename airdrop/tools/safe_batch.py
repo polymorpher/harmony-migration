@@ -816,10 +816,11 @@ SAFE_TX_SERVICE = {
     11155111: "https://api.safe.global/tx-service/sep",
 }
 OFFICIAL_MULTISEND_CALL_ONLY = {a.lower() for addresses in MULTISEND_CALL_ONLY.values() for a in addresses}
-# The reviewers' format (harmony-airdrop-tracking/snapshot-20260911-compact.csv). total_drop_balance is
-# the exact ONE the airdrop pays the wallet; total_balance, in the other snapshot files, is the whole
-# entitlement including vault principal, and is never compared with a payment.
-PAYMENT_COLUMNS = ["one1_address", "eth_address", "total_drop_balance", "last_signed", "last_inbound"]
+# The reviewers' format (harmony-airdrop-tracking/snapshot-20260911-compact.csv). migration_balance is
+# the wallet part of the entitlement, what an airdrop pays the wallet, truncated to whole ONE;
+# total_balance, in the other snapshot files, also counts vault principal and is never compared with
+# a payment.
+PAYMENT_COLUMNS = ["one1_address", "eth_address", "migration_balance", "last_signed", "last_inbound"]
 SNAPSHOT_COLUMNS = {
     "one1_address": ("one1_address",),
     "eth_address": ("eth_address", "address"),
@@ -973,26 +974,27 @@ def token_transfers(tx: SafeTx, token: str) -> tuple[list[tuple[str, int]], list
     return transfers, problems
 
 
-def one_to_atto(text: str, where: str) -> int:
+def whole_one(text: str, where: str) -> int:
+    """Whole ONE of a decimal amount, truncated."""
     try:
-        value = Decimal(text.strip() or "0") * common.ATTO_PER_ONE
+        value = Decimal(text.strip() or "0")
     except InvalidOperation:
         raise common.InputError(f"{where}: not a number: {text!r}") from None
-    if value != value.to_integral_value() or value < 0:
-        raise common.InputError(f"{where}: not a non-negative amount with at most 18 decimals: {text!r}")
+    if not value.is_finite() or value < 0:
+        raise common.InputError(f"{where}: not a non-negative amount: {text!r}")
     return int(value)
 
 
 def read_snapshot(path: Path, wanted: set[str]) -> tuple[dict[str, dict], bool]:
-    """Snapshot columns of the wanted (lower-case) addresses, and whether it has total_drop_balance."""
+    """Snapshot columns of the wanted (lower-case) addresses, and whether it has migration_balance."""
     if not path.is_file():
         raise common.InputError(f"snapshot not found: {path}")
     found = {}
     with path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.reader(handle)
         header = [h.strip().lower() for h in next(reader, [])]
-        payment_amounts = "total_drop_balance" in header
-        index = {"total_drop_balance": header.index("total_drop_balance")} if payment_amounts else {}
+        payment_amounts = "migration_balance" in header
+        index = {"migration_balance": header.index("migration_balance")} if payment_amounts else {}
         for name, candidates in SNAPSHOT_COLUMNS.items():
             hit = next((header.index(c) for c in candidates if c in header), None)
             if hit is None:
@@ -1076,8 +1078,9 @@ def cmd_show(args: argparse.Namespace) -> None:
             if amount == 0:
                 warnings.append(f"{label}: transfer {position} to {key} is for 0 tokens")
             listing.append({"nonce": nonce, "position": position, "one1_address": common.to_one1(recipient),
-                            "eth_address": key, "total_drop_balance": common.format_one(amount).replace(",", ""),
-                            "last_signed": "", "last_inbound": "", "amount_atto": str(amount), "_amount": amount})
+                            "eth_address": key, "migration_balance": str(amount // common.ATTO_PER_ONE),
+                            "last_signed": "", "last_inbound": "", "amount": common.format_one(amount).replace(",", ""),
+                            "amount_atto": str(amount), "_amount": amount})
         confirmations = [c.get("owner") for c in record.get("confirmations") or []]
         transactions.append({
             "nonce": nonce,
@@ -1107,18 +1110,18 @@ def cmd_show(args: argparse.Namespace) -> None:
                                     f"expected {row['one1_address']}")
                 row["last_signed"], row["last_inbound"] = match["last_signed"], match["last_inbound"]
                 if payment_snapshot:
-                    row["snapshot_total_drop_balance"] = match["total_drop_balance"]
-                    row["_snapshot_atto"] = one_to_atto(match["total_drop_balance"],
-                                                        f"{args.snapshot.name} {row['eth_address']}")
+                    row["snapshot_migration_balance"] = match["migration_balance"]
+                    row["_snapshot_whole"] = whole_one(match["migration_balance"],
+                                                       f"{args.snapshot.name} {row['eth_address']}")
         except common.InputError as exc:
             common.die(str(exc))
             return
     for row in listing:
         reasons = []
         if payment_snapshot:
-            if "_snapshot_atto" not in row:
+            if "_snapshot_whole" not in row:
                 reasons.append("not in snapshot")
-            elif row["_snapshot_atto"] != row["_amount"]:
+            elif row["_snapshot_whole"] != row["_amount"] // common.ATTO_PER_ONE:
                 reasons.append("differs from snapshot")
         if expected is not None:
             want = expected.get(row["eth_address"])
@@ -1129,9 +1132,9 @@ def cmd_show(args: argparse.Namespace) -> None:
                 reasons.append("differs from list")
         row["check"] = "; ".join(reasons) or "ok"
 
-    details_fields = ["nonce", "position", *PAYMENT_COLUMNS, "amount_atto"]
+    details_fields = ["nonce", "position", *PAYMENT_COLUMNS, "amount", "amount_atto"]
     if payment_snapshot:
-        details_fields.append("snapshot_total_drop_balance")
+        details_fields.append("snapshot_migration_balance")
     if expected is not None:
         details_fields.append("list_amount_atto")
     checked = payment_snapshot or expected is not None
@@ -1167,12 +1170,15 @@ def cmd_show(args: argparse.Namespace) -> None:
     if args.snapshot:
         found_count = len(listing) - snapshot_missing
         if payment_snapshot:
-            same = sum(1 for r in listing if r.get("_snapshot_atto") == r["_amount"])
-            note(f"--snapshot       : {same} of {len(listing)} amounts equal total_drop_balance in {args.snapshot.name} "
-                 f"exactly; {found_count - same} differ, {snapshot_missing} not in it")
+            same = sum(1 for r in listing if r.get("_snapshot_whole") == r["_amount"] // common.ATTO_PER_ONE)
+            note(f"--snapshot       : {same} of {len(listing)} amounts equal migration_balance in {args.snapshot.name} "
+                 f"to the whole ONE; {found_count - same} differ, {snapshot_missing} not in it")
+            if expected is None:
+                note("                   the snapshot is truncated to whole ONE; add --compare with the batch's "
+                     "payment list to check every amount exactly")
         else:
             note(f"--snapshot       : {found_count} of {len(listing)} addresses found in {args.snapshot.name}; it has no "
-                 "total_drop_balance column, so amounts were not compared")
+                 "migration_balance column, so amounts were not compared")
     if expected is not None:
         same = sum(1 for r in listing if expected.get(r["eth_address"]) == r["_amount"])
         unpaid = [a for a in expected if a not in paid_in]
@@ -1273,10 +1279,11 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--amount-unit", choices=["atto", "one"], help="unit of the --compare amount column, if its name does not say")
     s.add_argument("--snapshot", type=Path,
                    help="snapshot-20260911-compact.csv: adds last_signed and last_inbound, and every amount must equal its "
-                        "total_drop_balance (snapshot files without that column add the dates only)")
+                        "migration_balance to the whole ONE (snapshot files without that column add the dates only)")
     s.add_argument("--out", type=Path,
-                   help="write the five-column list (one1_address,eth_address,total_drop_balance,last_signed,last_inbound) "
-                        "here instead of printing it, and the details next to it as <name>-details.csv (.json writes JSON)")
+                   help="write the five-column list (one1_address,eth_address,migration_balance,last_signed,last_inbound; "
+                        "whole ONE, truncated) here instead of printing it, and the details, with exact amounts, next to "
+                        "it as <name>-details.csv (.json writes JSON)")
     s.add_argument("--details", type=Path, help="where to write the details file (nonce, position, atto amounts, checks)")
     s.add_argument("--format", choices=["csv", "json"], help="default: csv, or json when --out ends in .json")
     s.add_argument("--service-url", help="Safe Transaction Service base URL (default: Safe's hosted service for --chain-id)")
