@@ -20,7 +20,7 @@ MultiSendCallOnly contract), and the Safe's signers approve every batch.
     # every wallet and amount of the transactions waiting in the Safe's queue: queued.csv has the
     # reviewers' five columns, queued-details.csv the nonces, atto amounts and checks
     python3 tools/safe_batch.py show --safe 0xSafe --token 0xToken [--nonce 22-29] \
-        --snapshot snapshot-20260911-compact.csv --out queued.csv [--compare payment-list.csv]
+        --snapshot snapshot-20260911.csv --out queued.csv [--compare payment-list.csv]
 
 For every Safe transaction `build` writes a file to import into the Safe web app's Transaction
 Builder, the recipients of that transaction, and the exact transaction the Safe will be asked to
@@ -816,7 +816,7 @@ SAFE_TX_SERVICE = {
     11155111: "https://api.safe.global/tx-service/sep",
 }
 OFFICIAL_MULTISEND_CALL_ONLY = {a.lower() for addresses in MULTISEND_CALL_ONLY.values() for a in addresses}
-# The reviewers' format (harmony-airdrop-tracking/snapshot-20260911-compact.csv). migration_balance is
+# The reviewers' format (harmony-airdrop-tracking/snapshot-20260911.csv). migration_balance is
 # the wallet part of the entitlement, what an airdrop pays the wallet, truncated to whole ONE;
 # total_balance, in the other snapshot files, also counts vault principal and is never compared with
 # a payment.
@@ -1278,7 +1278,8 @@ def main(argv: list[str] | None = None) -> None:
                    help="list the transfers must match exactly, e.g. payment-list.csv (address and amount columns)")
     s.add_argument("--amount-unit", choices=["atto", "one"], help="unit of the --compare amount column, if its name does not say")
     s.add_argument("--snapshot", type=Path,
-                   help="snapshot-20260911-compact.csv: adds last_signed and last_inbound, and every amount must equal its "
+                   help="harmony-airdrop-tracking's snapshot-20260911.csv: adds last_signed and last_inbound, and every "
+                        "amount must equal its "
                         "migration_balance to the whole ONE (snapshot files without that column add the dates only)")
     s.add_argument("--out", type=Path,
                    help="write the five-column list (one1_address,eth_address,migration_balance,last_signed,last_inbound; "
