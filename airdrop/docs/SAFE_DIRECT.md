@@ -159,7 +159,7 @@ the Safe's queue:
 
 ```bash
 ./airdrop.py safe-batch show --safe 0xReserveSafe --token 0xToken \
-    --snapshot snapshot-20260911-compact.csv --out queued.csv
+    --snapshot snapshot-20260911-compact.csv --out queued.csv [--compare payment-list.csv]
 ```
 
 Proposed Safe transactions are not on-chain until executed; the Safe web app stores them in Safe's
@@ -172,21 +172,25 @@ transaction pays a gas refund, or if an address is paid twice.
 It writes two files:
 
 - `queued.csv` has exactly the reviewers' five columns,
-  `one1_address,eth_address,total_drop_balance,last_signed,last_inbound`, one row per transfer in
-  payment order. `total_drop_balance` is the exact amount the transaction pays (all decimals). It is
-  deliberately not called `total_balance`, which everywhere in these repositories means the whole
-  entitlement, including self-stake and delegations that become validator-vault principal. The two
-  dates come from `--snapshot`.
+  `one1_address,eth_address,migration_balance,last_signed,last_inbound`, one row per transfer in
+  payment order. `migration_balance` is the amount the transaction pays, truncated to whole ONE as
+  the reviewers asked. It is deliberately not called `total_balance`, which everywhere in these
+  repositories means the whole entitlement, including self-stake and delegations that become
+  validator-vault principal. The two dates come from `--snapshot`.
 - `queued-details.csv` (or `--details PATH`) adds the nonce, the position in the transaction, the
-  amount in the smallest unit, the snapshot's `total_drop_balance` and a `check` column: `ok`, or
-  why not (`differs from snapshot`, `not in snapshot`, `differs from list`, `not in list`).
+  exact amount (in ONE and in the smallest unit), the snapshot's `migration_balance` and a `check`
+  column: `ok`, or why not (`differs from snapshot`, `not in snapshot`, `differs from list`,
+  `not in list`).
 
-`--snapshot` is `harmony-airdrop-tracking/snapshot-20260911-compact.csv`, the initial-distribution
-wallets in the same five columns. Every transfer must equal the wallet's `total_drop_balance` there,
-so a row of `queued.csv` is identical to that wallet's row in the snapshot. Snapshot files without a
-`total_drop_balance` column work for the dates only; their `total_balance` is never compared with a
-payment. `--compare` checks the amounts against any other list with address and amount columns as
-well, such as a batch's `payment-list.csv`.
+`--snapshot` is `harmony-airdrop-tracking/snapshot-20260911-compact.csv`: every address whose
+whole entitlement is at least 1 ONE, in the same five columns, with `migration_balance` (the wallet
+part of the entitlement) truncated the same way, so it is 0 for a payment under 1 ONE. Every
+transfer must equal the wallet's `migration_balance` there to the whole ONE, so a row of
+`queued.csv` is identical to that wallet's row in the snapshot. Because the snapshot has no
+decimals, that check cannot see a difference smaller than 1 ONE; `--compare` with the batch's
+`payment-list.csv` (or any list with address and amount columns) checks every amount exactly.
+Snapshot files without a `migration_balance` column work for the dates only; their `total_balance`
+is never compared with a payment.
 
 By default `show` lists every transaction still queued; `--nonce 22-29` or `--safe-tx-hash` picks
 some, and nonces of executed transactions work too, for checking afterwards. Without `--out` the
