@@ -159,7 +159,7 @@ the Safe's queue:
 
 ```bash
 ./airdrop.py safe-batch show --safe 0xReserveSafe --token 0xToken \
-    --snapshot snapshot-20260911-compact.csv --out queued.csv [--compare payment-list.csv]
+    --snapshot snapshot-20260911.csv --out queued.csv [--compare payment-list.csv]
 ```
 
 Proposed Safe transactions are not on-chain until executed; the Safe web app stores them in Safe's
@@ -182,7 +182,7 @@ It writes two files:
   column: `ok`, or why not (`differs from snapshot`, `not in snapshot`, `differs from list`,
   `not in list`).
 
-`--snapshot` is `harmony-airdrop-tracking/snapshot-20260911-compact.csv`: every address whose
+`--snapshot` is `harmony-airdrop-tracking/snapshot-20260911.csv`: every address whose
 whole entitlement is at least 1 ONE, in the same five columns, with `migration_balance` (the wallet
 part of the entitlement) truncated the same way, so it is 0 for a payment under 1 ONE. Every
 transfer must equal the wallet's `migration_balance` there to the whole ONE, so a row of
