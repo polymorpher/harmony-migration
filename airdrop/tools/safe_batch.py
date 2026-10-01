@@ -834,7 +834,8 @@ def service_json(url: str, api_key: str | None):
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60,
+                                    context=common.https_context()) as response:
             return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         hint = " (the service may want an API key: --api-key or SAFE_API_KEY)" if exc.code in (401, 403, 429) else ""

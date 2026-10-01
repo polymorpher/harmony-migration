@@ -22,6 +22,7 @@ import functools
 import hashlib
 import json
 import os
+import ssl
 import sys
 import time
 import urllib.error
@@ -561,6 +562,22 @@ def load_env(env_path: Path) -> dict:
     return values
 
 
+SYSTEM_CA_BUNDLE = Path("/etc/ssl/cert.pem")
+
+
+@functools.lru_cache(maxsize=None)
+def https_context() -> ssl.SSLContext:
+    """Default certificate verification, also trusting the operating system's CA bundle.
+
+    Python from the python.org macOS installer has no CA certificates of its own until its
+    "Install Certificates" script is run; /etc/ssl/cert.pem is the bundle macOS maintains.
+    """
+    context = ssl.create_default_context()
+    if SYSTEM_CA_BUNDLE.is_file():
+        context.load_verify_locations(cafile=str(SYSTEM_CA_BUNDLE))
+    return context
+
+
 class Rpc:
     """Minimal JSON-RPC client for read-only calls, with batching and retries."""
 
@@ -580,7 +597,7 @@ class Rpc:
         last_error = None
         for attempt in range(self.retries):
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                with urllib.request.urlopen(request, timeout=self.timeout, context=https_context()) as response:
                     return json.loads(response.read().decode())
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
                 last_error = exc
