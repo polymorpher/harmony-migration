@@ -37,6 +37,8 @@ import argparse
 import csv
 import hashlib
 import json
+import os
+import ssl
 import sys
 import time
 import urllib.request
@@ -70,9 +72,18 @@ def one1_to_hex(value: str) -> str:
     return "0x" + bytes(out).hex()
 
 
+def https_context() -> ssl.SSLContext:
+    """Default verification, also trusting macOS's /etc/ssl/cert.pem (python.org's Python ships none)."""
+    context = ssl.create_default_context()
+    if os.path.isfile("/etc/ssl/cert.pem"):
+        context.load_verify_locations(cafile="/etc/ssl/cert.pem")
+    return context
+
+
 class Rpc:
     def __init__(self, url: str, batch: int):
         self.url, self.batch = url, batch
+        self.context = https_context()
 
     def calls(self, requests: list[tuple[str, list]]) -> list:
         out = []
@@ -85,7 +96,7 @@ class Rpc:
         for attempt in range(6):
             try:
                 req = urllib.request.Request(self.url, body.encode(), {"Content-Type": "application/json"})
-                replies = json.load(urllib.request.urlopen(req, timeout=120))
+                replies = json.load(urllib.request.urlopen(req, timeout=120, context=self.context))
                 by_id = {r["id"]: r for r in replies}
                 if any("error" in r for r in replies):
                     raise RuntimeError(next(r["error"] for r in replies if "error" in r))
