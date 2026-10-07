@@ -51,11 +51,15 @@ validator_address,delegator_address,amount_one
   column `validator`. `amount_atto` (whole numbers in the smallest unit) or `amount_one` (decimal
   ONE) say their unit; a bare `amount` column needs `--amount-unit`.
 - The pipeline's `initial-stage/vault-shares.csv` works as it is. When a file has a
-  `destination_status` column, every row must be `ready`.
+  `destination_status` column, every row must be `ready`. Rows whose amount is 0 are skipped and
+  counted before any check.
 - The claim portal's `confirmed-wallets.sh --csv` companion file,
   `confirmed-wallets-<time>[-<filters>]-vault-shares.csv`, also works as it is (`validator_address`,
-  `address`, `expected_shares_atto`). Rows whose amount is 0 are skipped and counted. Export it with
-  `--decision approved --vault pending` to get only approved wallets' positions not yet marked sent.
+  `address`, `expected_shares_atto`). `build` recognises it by its `decision` and `sent_status`
+  columns and deposits it only if every non-zero row is `approved` and `pending` (not sent, not
+  blocked by a hold, redirect, exchange delivery or a mismatch with the ledger). Export it with
+  `--decision approved --vault pending`; an unfiltered or older export stops the build. `show
+  --compare` does not apply this check. Lists without those columns are read as always.
 - `--input` can be repeated, for example the initial-stage list together with the confirmed
   wallets. Each file's columns and unit are detected separately, and a delegator listed twice for
   one validator, across files too, is refused. Building such lists together means each vault is

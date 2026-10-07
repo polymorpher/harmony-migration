@@ -112,6 +112,15 @@ Useful options: `--max-transfers N` (transfers per Safe transaction, default 300
 `--expect-total` and `--expect-count` (stop unless the list matches what you expect). The list
 order is kept, so `--include` addresses from step 1 land in the first transaction.
 
+Any list with an address and an amount column works. The claim portal's confirmed-wallets export
+(`db/ops/confirmed-wallets.sh --csv`) also works, with `--address-column address --amount-column
+wallet_allocation_atto`, but `build` (like `select-batch` and the contract `build`) recognises it by
+its `decision` and `wallet_status` columns and pays it only if every row is `approved` and
+`pending`. Export it with `--decision approved --wallet pending`; an unfiltered or older export
+stops the build at the first unreviewed, rejected, blocked or already-paid wallet. The portal's
+vault-shares export is refused here; it goes to `vault-batch`. Lists without those columns are read
+as always.
+
 Output:
 
 ```text
