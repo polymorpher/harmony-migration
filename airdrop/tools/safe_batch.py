@@ -487,7 +487,8 @@ def cmd_build(args: argparse.Namespace) -> None:
             raise common.InputError(f"--max-transfers must be between 1 and {MAX_TRANSFERS}")
         if args.first_transfers is not None and not 1 <= args.first_transfers <= args.max_transfers:
             raise common.InputError("--first-transfers must be between 1 and --max-transfers")
-        rows, info = common.read_rows(args.input, args.address_column, args.amount_column, args.amount_unit)
+        rows, info = common.read_rows(args.input, args.address_column, args.amount_column, args.amount_unit,
+                                      review_portal_exports=True)
         raw_count = len(rows)
         rows = common.consolidate(rows, args.order, args.merge_duplicates)
         for row in rows:
@@ -1259,7 +1260,10 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
 
     b = sub.add_parser("build", help="prepare the Safe transactions for a recipient list")
-    b.add_argument("--input", required=True, type=Path, help="CSV file or directory of CSV files")
+    b.add_argument("--input", required=True, type=Path,
+                   help="CSV file or directory of CSV files with an address and an amount column. A claim portal "
+                        "confirmed-wallets export must hold only approved, pending rows (export it with --decision "
+                        "approved --wallet pending)")
     b.add_argument("--out-dir", required=True, type=Path, help="output directory, e.g. runs/safe-batch-1")
     b.add_argument("--safe", help="address of the Safe that holds the tokens (default: RESERVE_ADDRESS from .env)")
     b.add_argument("--token", help="address of the ERC-20 token (default: TOKEN_ADDRESS from .env)")

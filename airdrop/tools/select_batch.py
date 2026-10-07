@@ -214,7 +214,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     try:
-        rows, info = common.read_rows(args.input, args.address_column, args.amount_column, args.amount_unit)
+        rows, info = common.read_rows(args.input, args.address_column, args.amount_column, args.amount_unit,
+                                      review_portal_exports=True)
         rows = common.consolidate(rows, "input", merge_duplicates=False)
         by_address = {r.address.lower(): r for r in rows}
 

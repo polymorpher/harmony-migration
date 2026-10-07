@@ -46,7 +46,8 @@ def main(argv: list[str] | None = None) -> None:
 
     started = time.time()
     try:
-        rows, info = common.read_rows(args.input, args.address_column, args.amount_column, args.amount_unit)
+        rows, info = common.read_rows(args.input, args.address_column, args.amount_column, args.amount_unit,
+                                      review_portal_exports=True)
         raw_count = len(rows)
         rows = common.consolidate(rows, args.order, args.merge_duplicates)
         if args.run_dir.exists():

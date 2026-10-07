@@ -360,13 +360,54 @@ def detect_amount_unit(column: str, explicit: str | None) -> str:
     )
 
 
+# The claim portal's confirmed-wallets exports (harmony-claim-portal, db/ops/confirmed-wallets.sh
+# --csv) carry each wallet's review state. A list that has these columns may hold only approved
+# wallets whose part is still to send; lists without them are read as they always were.
+PORTAL_DECISION_COLUMN = "decision"
+PORTAL_WALLET_STATUS_COLUMN = "wallet_status"  # confirmed-wallets-<time>.csv
+PORTAL_VAULT_STATUS_COLUMN = "sent_status"  # confirmed-wallets-<time>-vault-shares.csv
+
+
+class PortalReview:
+    """Refuses rows of a claim portal export that are not approved, or whose part is not pending."""
+
+    def __init__(self, header: list[str], status_column: str, export_flags: str) -> None:
+        lowered = [h.strip().lower() for h in header]
+        self.decision = lowered.index(PORTAL_DECISION_COLUMN) if PORTAL_DECISION_COLUMN in lowered else None
+        self.status = lowered.index(status_column) if status_column in lowered else None
+        self.status_column = status_column
+        self.export_flags = export_flags
+
+    @property
+    def columns(self) -> list[str]:
+        named = ((PORTAL_DECISION_COLUMN, self.decision), (self.status_column, self.status))
+        return [name for name, index in named if index is not None]
+
+    def check(self, record: list[str], where: str) -> None:
+        def cell(index: int) -> str:
+            return record[index].strip().lower() if index < len(record) else ""
+
+        if self.decision is not None and cell(self.decision) != "approved":
+            raise InputError(f"{where}: {PORTAL_DECISION_COLUMN} is {cell(self.decision) or 'empty'!r}, not "
+                             f"'approved'. This is a claim portal export; only approved wallets may be paid. "
+                             f"Export it with {self.export_flags}")
+        if self.status is not None and cell(self.status) != "pending":
+            raise InputError(f"{where}: {self.status_column} is {cell(self.status) or 'empty'!r}, not 'pending' "
+                             f"(sent means it was already paid, blocked that it may not be sent yet). Export it "
+                             f"with {self.export_flags}")
+
+
 def read_rows(
     input_path: Path,
     address_column: str | None = None,
     amount_column: str | None = None,
     amount_unit: str | None = None,
+    review_portal_exports: bool = False,
 ) -> tuple[list[Row], dict]:
-    """Read every CSV under `input_path`. Returns the rows in file order and a description of what was read."""
+    """Read every CSV under `input_path`. Returns the rows in file order and a description of what was read.
+
+    With `review_portal_exports`, a claim portal export is accepted only when every row is approved
+    and still to send (PortalReview); other lists are unaffected."""
     rows: list[Row] = []
     sources = []
     resolved_unit = None
@@ -378,6 +419,12 @@ def read_rows(
                 header = next(reader)
             except StopIteration:
                 raise InputError(f"{path}: empty file") from None
+            review = None
+            if review_portal_exports:
+                if PORTAL_VAULT_STATUS_COLUMN in [h.strip().lower() for h in header]:
+                    raise InputError(f"{path}: this is the claim portal's vault-shares export; vault shares are "
+                                     "deposited with vault-batch, not paid as wallet tokens")
+                review = PortalReview(header, PORTAL_WALLET_STATUS_COLUMN, "--decision approved --wallet pending")
             addr_col = _pick_column(header, address_column, ADDRESS_COLUMNS, "address", str(path))
             amt_col = _pick_column(header, amount_column, ATTO_COLUMNS + ONE_COLUMNS + GENERIC_AMOUNT_COLUMNS, "amount", str(path))
             unit = detect_amount_unit(amt_col, amount_unit)
@@ -393,9 +440,14 @@ def read_rows(
                 where = f"{path}:{line_no}"
                 if len(record) <= max(ai, mi):
                     raise InputError(f"{where}: too few columns")
+                if review is not None:
+                    review.check(record, where)
                 rows.append(Row(normalize_address(record[ai], where), parse_amount(record[mi], unit, where), where))
                 count += 1
-        sources.append({"path": str(path), "sha256": sha256_file(path), "rows": count})
+        source = {"path": str(path), "sha256": sha256_file(path), "rows": count}
+        if review is not None and review.columns:
+            source["portal_review_columns"] = review.columns
+        sources.append(source)
     if not rows:
         raise InputError("the input contains no recipients")
     info = {
