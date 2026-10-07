@@ -33,6 +33,7 @@ import reconcile  # noqa: E402
 import safe_batch  # noqa: E402
 import select_batch  # noqa: E402
 import status  # noqa: E402
+import vault_batch  # noqa: E402
 import verify  # noqa: E402
 
 FORGE_SCRIPTS = {
@@ -252,6 +253,10 @@ def cmd_safe_batch(env: dict, ns: argparse.Namespace) -> None:
     safe_batch.main(ns.args)
 
 
+def cmd_vault_batch(env: dict, ns: argparse.Namespace) -> None:
+    vault_batch.main(ns.args)
+
+
 # ---------------------------------------------------------------------------------------------
 # local demo: the whole flow against an Anvil node, using Anvil's well-known development keys
 # ---------------------------------------------------------------------------------------------
@@ -360,6 +365,7 @@ PASSTHROUGH = {
     "test": (cmd_test, "forge test flags"),
     "select-batch": (cmd_select_batch, "options for tools/select_batch.py: --input FILE --out-dir DIR [--budget N] ..."),
     "safe-batch": (cmd_safe_batch, "tools/safe_batch.py build|verify|hash|show ..."),
+    "vault-batch": (cmd_vault_batch, "tools/vault_batch.py build|verify|show|hash|reconcile ..."),
 }
 FORGE_EXTRA_HELP = "Extra forge flags may follow a `--` separator."
 
@@ -409,6 +415,8 @@ def build_parser() -> argparse.ArgumentParser:
         + PASSTHROUGH["select-batch"][1], cmd_select_batch)
     add("safe-batch", "Without a contract: prepare, verify, hash, or show queued Safe transactions that pay a list directly. "
         + PASSTHROUGH["safe-batch"][1], cmd_safe_batch)
+    add("vault-batch", "Deploy GovernorDelegator validator vaults and fund delegator principal from the Safe: prepare, "
+        "verify, show queued, hash, reconcile. " + PASSTHROUGH["vault-batch"][1], cmd_vault_batch)
     add("help", "Show this help.", None)
     return parser
 

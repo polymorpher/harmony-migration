@@ -1,0 +1,30 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "src/GovernorDelegator.sol": {
+      "content": "// SPDX-License-Identifier: MIT\n// ONE governor/delegator vault with funded batch deposits; see LICENSE and NOTICE.txt.\npragma solidity ^0.8.24;\ninterface IERC20 {\n    function transfer(address to, uint256 value) external returns (bool);\n    function transferFrom(address from, address to, uint256 value) external returns (bool);\n}\ncontract GovernorDelegator {\n    IERC20 public immutable asset;\n    address public governor;\n    mapping(address => uint256) public balanceOf;\n    uint16 public feeBps;\n    event GovernorTransferred(address indexed previous, address indexed next);\n    event FeeUpdated(uint16 previousFeeBps, uint16 newFeeBps);\n    event Deposit(address indexed caller, address indexed delegator, uint256 assets);\n    event Withdraw(address indexed caller, address indexed delegator, uint256 assets);\n    modifier onlyGovernor() {\n        require(msg.sender == governor);\n        _;\n    }\n    constructor(IERC20 token, address initialGovernor) {\n        require(initialGovernor != address(0));\n        governor = initialGovernor;\n        emit GovernorTransferred(address(0), initialGovernor);\n        asset = token;\n    }\n    function transferGovernor(address next) external onlyGovernor {\n        require(next != address(0));\n        emit GovernorTransferred(governor, next);\n        governor = next;\n    }\n    function setFeeBps(uint16 value) external onlyGovernor {\n        require(value <= 10_000);\n        emit FeeUpdated(feeBps, value);\n        feeBps = value;\n    }\n    function deposit(uint256 amount, address delegator) external {\n        require(delegator != address(0));\n        require(asset.transferFrom(msg.sender, address(this), amount));\n        balanceOf[delegator] += amount;\n        emit Deposit(msg.sender, delegator, amount);\n    }\n    function depositBatch(uint256[] calldata amounts, address[] calldata delegators) external {\n        require(delegators.length == amounts.length);\n        uint256 total;\n        for (uint256 i; i < delegators.length; ++i) {\n            require(delegators[i] != address(0));\n            total += amounts[i];\n        }\n        require(asset.transferFrom(msg.sender, address(this), total));\n        for (uint256 i; i < delegators.length; ++i) {\n            balanceOf[delegators[i]] += amounts[i];\n            emit Deposit(msg.sender, delegators[i], amounts[i]);\n        }\n    }\n    function withdraw(uint256 amount, address delegator) external {\n        balanceOf[msg.sender] -= amount;\n        require(asset.transfer(delegator, amount));\n        emit Withdraw(msg.sender, delegator, amount);\n    }\n}\n"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "evmVersion": "cancun",
+    "metadata": {
+      "bytecodeHash": "none",
+      "appendCBOR": false
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "storageLayout",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers"
+        ]
+      }
+    }
+  }
+}
