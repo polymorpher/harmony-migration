@@ -180,6 +180,24 @@ def to_one1(address: str, hrp: str = "one") -> str:
     return hrp + "1" + "".join(_BECH32_CHARSET[d] for d in data + checksum)
 
 
+def from_one1(value: str, hrp: str = "one", checksum: bool = True) -> str:
+    """The 0x address (EIP-55, or lower case) of a Harmony bech32 (one1...) address; its checksum must be valid."""
+    text = value.strip().lower()
+    if not text.startswith(hrp + "1") or any(c not in _BECH32_CHARSET for c in text[len(hrp) + 1:]):
+        raise InputError(f"not a {hrp}1 address: {value!r}")
+    data = [_BECH32_CHARSET.index(c) for c in text[len(hrp) + 1:]]
+    expanded = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+    if len(data) != 38 or _bech32_polymod(expanded + data) != 1:
+        raise InputError(f"bad {hrp}1 address checksum: {value!r}")
+    acc, bits, out = 0, 0, bytearray()
+    for d in data[:-6]:
+        acc, bits = (acc << 5) | d, bits + 5
+        while bits >= 8:
+            bits -= 8
+            out.append((acc >> bits) & 0xFF)
+    return to_checksum("0x" + bytes(out).hex()) if checksum else "0x" + bytes(out).hex()
+
+
 def parse_amount(value: str, unit: str, where: str) -> int:
     """Return the amount in atto (smallest unit). `unit` is 'atto' or 'one'."""
     text = value.strip().replace(",", "").replace("_", "")
