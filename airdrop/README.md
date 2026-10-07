@@ -32,6 +32,15 @@ before signing. `docs/SAFE_DIRECT.md` explains the procedure; `tools/select_batc
 recipients of a batch and `tools/safe_batch.py` prepares, verifies and hashes the Safe
 transactions.
 
+## Validator vaults
+
+Staked and delegated ONE does not go to the wallet; it becomes principal in a per-validator
+`GovernorDelegator` vault. `tools/vault_batch.py` prepares the Safe transactions that deploy the
+vaults (through the standard CREATE2 deployer, so every vault address is known before signing) and
+fund each delegator's credit, decodes what is queued in the Safe for review, checks deposits
+against Harmony's own delegation record at the cutoff block, and reconciles the vaults after
+execution. `docs/VAULT_DIRECT.md` explains the procedure.
+
 ## What you can check yourself
 
 - That the published list produces the root written in the contract, using either the Python
@@ -66,7 +75,10 @@ tools/reconcile.py             read every recipient's balance after the run
 tools/approve_calldata.py      the one transaction the reserve has to send
 tools/select_batch.py          choose the recipients of the next batch (budget, required, held, paid)
 tools/safe_batch.py            without the contract: Safe transactions that pay a list, their hashes
+tools/vault_batch.py           Safe transactions that deploy and fund validator vaults; queue review
 tools/common.py                keccak, ABI encoding, the tree, CSV reading, JSON-RPC
+vault/GovernorDelegator.json   the audited vault build (creation and runtime code, hashes)
+vault/GovernorDelegator.compiler-input.json  its solc standard-JSON input, including the source
 test/                          Solidity tests, including a cross-check against the Python tool
 examples/recipients-example.csv a small made-up list to try the tools on
 runs/                          generated run directories (ignored by git, published on release)
@@ -146,3 +158,4 @@ Gas: a batch of 400 recipients uses about 11 million gas. Ethereum caps a single
 - `docs/VERIFY.md`: how to check the published files and the contract without trusting anyone.
 - `docs/DESIGN.md`: why this design was chosen over alternatives, and the exact hashing rules.
 - `docs/SAFE_DIRECT.md`: paying a list directly from the Safe, and what each signer checks.
+- `docs/VAULT_DIRECT.md`: deploying and funding validator vaults from the Safe.
