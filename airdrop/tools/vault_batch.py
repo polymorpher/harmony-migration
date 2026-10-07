@@ -316,8 +316,10 @@ def _zero_amount(text: str) -> bool:
         return False
 
 
-def read_deposits(paths: list[Path], args) -> tuple[list[Deposit], dict]:
-    """Every row of every input. Each file's columns and unit are detected on their own; zero rows are skipped."""
+def read_deposits(paths: list[Path], args, review_portal_exports: bool = False) -> tuple[list[Deposit], dict]:
+    """Every row of every input. Each file's columns and unit are detected on their own; zero rows are
+    skipped before any other check. With `review_portal_exports` (build), a claim portal export must
+    hold only approved wallets' positions that are still to send (common.PortalReview)."""
     deposits, sources = [], []
     files = [f for p in paths for f in common.csv_sources(p)]
     if len({f.resolve() for f in files}) != len(files):
@@ -335,6 +337,8 @@ def read_deposits(paths: list[Path], args) -> tuple[list[Deposit], dict]:
             ai = _column(header, args.amount_column, AMOUNT_COLUMNS, "amount", str(file))
             unit = common.detect_amount_unit(header[ai], args.amount_unit)
             si = _column(header, None, ("destination_status",), "status", str(file), required=False)
+            review = (common.PortalReview(header, common.PORTAL_VAULT_STATUS_COLUMN, "--decision approved --vault pending")
+                      if review_portal_exports else None)
             count = zeros = 0
             for line, record in enumerate(reader, start=2):
                 if not record or all(not c.strip() for c in record):
@@ -342,18 +346,23 @@ def read_deposits(paths: list[Path], args) -> tuple[list[Deposit], dict]:
                 where = f"{file}:{line}"
                 if len(record) <= max(vi, di, ai):
                     raise common.InputError(f"{where}: too few columns")
-                if si is not None and record[si].strip().lower() != "ready":
-                    raise common.InputError(f"{where}: destination_status is {record[si]!r}, not ready")
                 if _zero_amount(record[ai]):
                     zeros += 1
                     continue
+                if si is not None and record[si].strip().lower() != "ready":
+                    raise common.InputError(f"{where}: destination_status is {record[si]!r}, not ready")
+                if review is not None:
+                    review.check(record, where)
                 deposits.append(Deposit(common.normalize_address(record[vi], where),
                                         common.normalize_address(record[di], where),
                                         common.parse_amount(record[ai], unit, where), where))
                 count += 1
-        sources.append({"path": str(file), "sha256": common.sha256_file(file), "rows": count, "zero_rows_skipped": zeros,
-                        "columns": {"validator": header[vi], "delegator": header[di], "amount": header[ai]},
-                        "amount_unit": unit})
+        source = {"path": str(file), "sha256": common.sha256_file(file), "rows": count, "zero_rows_skipped": zeros,
+                  "columns": {"validator": header[vi], "delegator": header[di], "amount": header[ai]},
+                  "amount_unit": unit}
+        if review is not None and review.columns:
+            source["portal_review_columns"] = review.columns
+        sources.append(source)
     if not deposits:
         raise common.InputError("the deposit list is empty")
     return deposits, {"sources": sources, "amount_unit": ",".join(sorted({s["amount_unit"] for s in sources}))}
@@ -718,7 +727,7 @@ def cmd_build(args: argparse.Namespace) -> None:
             raise common.InputError(f"--min-vault-one: not a number: {args.min_vault_one!r}") from None
         min_vault = 0 if zero_minimum else common.parse_amount(args.min_vault_one, "one", "--min-vault-one")
 
-        deposits, info = read_deposits(args.input, args)
+        deposits, info = read_deposits(args.input, args, review_portal_exports=True)
         only, skip = parse_validators(args.validator), parse_validators(args.exclude_validator)
         if only & skip:
             raise common.InputError(f"{sorted(only & skip)[0]} is given to both --validator and --exclude-validator")
@@ -1623,7 +1632,9 @@ def main(argv: list[str] | None = None) -> None:
                    help="deposit list: CSV (or directory of CSVs) with validator_address, delegator_address (or "
                         "beneficiary_address) and amount_atto or amount_one columns. Repeat it to combine lists, e.g. the "
                         "initial-stage vault-shares.csv and the claim portal's confirmed-wallets-*-vault-shares.csv "
-                        "(address, expected_shares_atto); each file's columns are detected on their own")
+                        "(address, expected_shares_atto); each file's columns are detected on their own. A portal "
+                        "export must hold only approved, pending rows (export it with --decision approved --vault "
+                        "pending)")
     b.add_argument("--validator", action="append",
                    help="build only these validators' vaults (0x or one1; repeatable or comma-separated), e.g. a pilot")
     b.add_argument("--exclude-validator", action="append",
