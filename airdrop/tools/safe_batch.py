@@ -169,6 +169,7 @@ def safe_tx_hash(chain_id: int, safe: str, tx: SafeTx) -> bytes:
 
 
 def tx_record(chain_id: int, safe: str, tx: SafeTx) -> dict:
+    """The Safe transaction and its hashes; without a nonce, the two hashes that depend on it are None."""
     return {
         "safe": safe,
         "chainId": chain_id,
@@ -184,8 +185,8 @@ def tx_record(chain_id: int, safe: str, tx: SafeTx) -> dict:
         "nonce": tx.nonce,
         "dataKeccak256": common.hex0x(common.keccak256(tx.data)),
         "domainHash": common.hex0x(domain_hash(chain_id, safe)),
-        "messageHash": common.hex0x(message_hash(tx)),
-        "safeTxHash": common.hex0x(safe_tx_hash(chain_id, safe, tx)),
+        "messageHash": None if tx.nonce is None else common.hex0x(message_hash(tx)),
+        "safeTxHash": None if tx.nonce is None else common.hex0x(safe_tx_hash(chain_id, safe, tx)),
     }
 
 
@@ -339,8 +340,8 @@ def slices(rows: list[common.Row], sizes: list[int]) -> list[list[common.Row]]:
     return out
 
 
-def tx_dir(out_dir: Path, index: int, nonce: int) -> Path:
-    return out_dir / f"tx-{index:02d}-nonce-{nonce}"
+def tx_dir(out_dir: Path, index: int, nonce: int | None) -> Path:
+    return out_dir / (f"tx-{index:02d}" if nonce is None else f"tx-{index:02d}-nonce-{nonce}")
 
 
 def write_recipients(path: Path, rows: list[common.Row]) -> str:
@@ -368,8 +369,8 @@ def multisend_for(version: str, override: str | None) -> str:
 
 
 def build_transactions(chain_id: int, safe: str, token: str, multisend: str, rows: list[common.Row],
-                       sizes: list[int], first_nonce: int) -> list[tuple[list[common.Row], SafeTx]]:
-    return [(chunk, transfers_tx(token, multisend, chunk, first_nonce + i))
+                       sizes: list[int], first_nonce: int | None) -> list[tuple[list[common.Row], SafeTx]]:
+    return [(chunk, transfers_tx(token, multisend, chunk, None if first_nonce is None else first_nonce + i))
             for i, chunk in enumerate(slices(rows, sizes))]
 
 
@@ -390,10 +391,20 @@ def signing_sheet(manifest: dict) -> str:
         f"- Domain hash (same for every transaction of this Safe on this chain): `{manifest['domain_hash']}`",
         "",
     ]
+    nonce_free = manifest["first_nonce"] is None
+    if nonce_free:
+        lines += [
+            "Built without a nonce. The Safe web app assigns one when a transaction is proposed, and the message",
+            "hash and Safe transaction hash depend on it. Once proposed, get them from the queue with",
+            "`safe-batch show`, or from a folder with",
+            "`safe-batch hash --safe-transaction <folder>/safe-transaction.json --nonce <assigned nonce>`.",
+            "",
+        ]
     for tx in manifest["transactions"]:
         kind = "delegate call to MultiSendCallOnly" if tx["operation"] == DELEGATECALL else "direct call to the token"
+        title = f"## Safe transaction {tx['index']} of {len(manifest['transactions'])}"
         lines += [
-            f"## Safe transaction {tx['index']} of {len(manifest['transactions'])}: nonce {tx['nonce']}",
+            title if nonce_free else f"{title}: nonce {tx['nonce']}",
             "",
             f"- Folder: `{tx['folder']}` (import `transaction-builder.json` into the Transaction Builder)",
             f"- Recipients: {tx['recipients']} (list positions {tx['first_position']} to "
@@ -402,10 +413,13 @@ def signing_sheet(manifest: dict) -> str:
             "- safeTxGas 0, baseGas 0, gasPrice 0, gasToken and refundReceiver the zero address",
             f"- Call data: {tx['data_bytes']} bytes, keccak-256 `{tx['data_keccak256']}`",
             f"- Domain hash: `{manifest['domain_hash']}`",
-            f"- Message hash: `{tx['message_hash']}`",
-            f"- Safe transaction hash: `{tx['safe_tx_hash']}`",
-            "",
         ]
+        if not nonce_free:
+            lines += [
+                f"- Message hash: `{tx['message_hash']}`",
+                f"- Safe transaction hash: `{tx['safe_tx_hash']}`",
+            ]
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -423,14 +437,17 @@ def resolve_safe(args: argparse.Namespace) -> dict:
         raise common.InputError("need --safe and --token (or RESERVE_ADDRESS and TOKEN_ADDRESS in .env)")
     safe = common.normalize_address(safe_text, "--safe")
     token = common.normalize_address(token_text, "--token")
-    sources = {"safe_version": "argument", "nonce": "argument", "chain_id": "argument"}
+    no_nonce = getattr(args, "no_nonce", False)
+    if no_nonce and args.nonce is not None:
+        raise common.InputError("pass --nonce or --no-nonce, not both")
+    sources = {"safe_version": "argument", "nonce": "none" if no_nonce else "argument", "chain_id": "argument"}
     chain_id, version, nonce = args.chain_id, args.safe_version, args.nonce
     rpc_url = args.rpc_url or env.get("RPC_URL", "")
-    if version is None or nonce is None or chain_id is None:
+    if version is None or chain_id is None or (nonce is None and not no_nonce):
         if not rpc_url:
             raise common.InputError(
                 "need --rpc-url (or RPC_URL in .env) to read the Safe's version, nonce and chain id, "
-                "or pass --safe-version, --nonce and --chain-id to build offline"
+                "or pass --safe-version, --chain-id and --nonce (or --no-nonce) to build offline"
             )
         rpc = common.Rpc(rpc_url)
         rpc_chain = rpc.chain_id()
@@ -448,13 +465,13 @@ def resolve_safe(args: argparse.Namespace) -> dict:
             chain_id, sources["chain_id"] = rpc_chain, "chain"
         if version is None:
             version, sources["safe_version"] = chain_version, "chain"
-        if nonce is None:
+        if nonce is None and not no_nonce:
             nonce, sources["nonce"] = chain_nonce, "chain"
     if version not in MULTISEND_CALL_ONLY:
         raise common.InputError(
             f"Safe version {version} is not one this tool knows ({', '.join(sorted(MULTISEND_CALL_ONLY))})"
         )
-    if nonce < 0 or chain_id <= 0:
+    if (nonce is not None and nonce < 0) or chain_id <= 0:
         raise common.InputError("--nonce must be >= 0 and --chain-id > 0")
     return {"safe": safe, "token": token, "chain_id": chain_id, "safe_version": version, "nonce": nonce,
             "sources": sources}
@@ -504,9 +521,13 @@ def cmd_build(args: argparse.Namespace) -> None:
         folder.mkdir()
         record = tx_record(args.chain_id, safe, tx)
         amount = sum(r.amount for r in chunk)
-        name = f"{args.label or 'Direct payment'} - Safe tx {i} of {len(txs)} - nonce {tx.nonce}"
-        description = (f"{len(chunk)} ERC-20 transfers from {safe} on token {token}; "
-                       f"total {amount}; expected safeTxHash {record['safeTxHash']}")
+        name = f"{args.label or 'Direct payment'} - Safe tx {i} of {len(txs)}"
+        description = f"{len(chunk)} ERC-20 transfers from {safe} on token {token}; total {amount}; "
+        if tx.nonce is None:
+            description += f"call data keccak-256 {record['dataKeccak256']}"
+        else:
+            name += f" - nonce {tx.nonce}"
+            description += f"expected safeTxHash {record['safeTxHash']}"
         builder = tx_builder_file(args.chain_id, safe, token, chunk, name, description, created_ms)
         (folder / "transaction-builder.json").write_text(json.dumps(builder, indent=1) + "\n", encoding="utf-8")
         (folder / "safe-transaction.json").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
@@ -565,7 +586,10 @@ def cmd_build(args: argparse.Namespace) -> None:
     print(f"total            : {total} ({common.format_one(total)} tokens)")
     src = resolved["sources"]
     print(f"safe / version   : {safe} / {args.safe_version} ({src['safe_version']}) on chain {args.chain_id} ({src['chain_id']})")
-    print(f"first nonce      : {args.nonce} ({src['nonce']})")
+    if args.nonce is None:
+        print("first nonce      : none (the Safe web app assigns it; Safe transaction hashes are not computed)")
+    else:
+        print(f"first nonce      : {args.nonce} ({src['nonce']})")
     if src["nonce"] == "chain":
         print("note: the nonce is the Safe's next executed nonce. If other transactions are already queued in the "
               "Safe web app, rebuild with --nonce set to the next free nonce there.", file=sys.stderr)
@@ -575,8 +599,12 @@ def cmd_build(args: argparse.Namespace) -> None:
     print(f"recipients.csv   : sha256 {recipients_sha}")
     print(f"Safe transactions: {len(entries)}")
     for e in entries:
-        print(f"  #{e['index']:<3} nonce {e['nonce']:<6} {e['recipients']:>4} transfers  {e['amount_display']:>32}  "
-              f"safeTxHash {e['safe_tx_hash']}")
+        if e["nonce"] is None:
+            print(f"  #{e['index']:<3} {e['recipients']:>4} transfers  {e['amount_display']:>32}  "
+                  f"call data keccak-256 {e['data_keccak256']}")
+        else:
+            print(f"  #{e['index']:<3} nonce {e['nonce']:<6} {e['recipients']:>4} transfers  {e['amount_display']:>32}  "
+                  f"safeTxHash {e['safe_tx_hash']}")
     print(f"written to       : {args.out_dir} (see SIGNING-SHEET.md)")
 
 
@@ -619,7 +647,7 @@ def verify_offline(out_dir: Path, checks: Checks) -> tuple[dict, list[common.Row
     checks.ok(sum(sizes) == len(rows), "transactions do not cover the list exactly")
     txs = build_transactions(chain_id, safe, token, multisend, rows, sizes, manifest["first_nonce"])
     for entry, (chunk, tx) in zip(manifest["transactions"], txs):
-        label = f"transaction {entry['index']} (nonce {entry['nonce']})"
+        label = f"transaction {entry['index']}" + ("" if entry["nonce"] is None else f" (nonce {entry['nonce']})")
         folder = out_dir / entry["folder"]
         record = tx_record(chain_id, safe, tx)
         checks.ok(entry["nonce"] == tx.nonce and entry["to"] == tx.to and entry["operation"] == tx.operation,
@@ -679,13 +707,14 @@ def verify_chain(manifest: dict, rows: list[common.Row], rpc: common.Rpc, checks
         print(f"  owner          : {owner}")
     checks.ok(version == manifest["safe_version"], f"Safe reports version {version}, manifest says {manifest['safe_version']}")
     first = manifest["first_nonce"]
-    last = first + len(manifest["transactions"]) - 1
-    if nonce > last:
-        checks.warn(f"Safe nonce {nonce} is past every transaction here (nonces {first}-{last}): all were executed or replaced")
-    elif nonce > first:
-        checks.warn(f"Safe nonce {nonce}: nonces {first}-{nonce - 1} were already used (executed or replaced)")
-    elif nonce < first:
-        checks.warn(f"Safe nonce is {nonce}; nonces {nonce}-{first - 1} must be executed before this batch can run")
+    if first is not None:
+        last = first + len(manifest["transactions"]) - 1
+        if nonce > last:
+            checks.warn(f"Safe nonce {nonce} is past every transaction here (nonces {first}-{last}): all were executed or replaced")
+        elif nonce > first:
+            checks.warn(f"Safe nonce {nonce}: nonces {first}-{nonce - 1} were already used (executed or replaced)")
+        elif nonce < first:
+            checks.warn(f"Safe nonce is {nonce}; nonces {nonce}-{first - 1} must be executed before this batch can run")
 
     code = rpc.call("eth_getCode", [multisend, "latest"])
     code_hash = common.hex0x(common.keccak256(common.unhex(code)))
@@ -695,9 +724,14 @@ def verify_chain(manifest: dict, rows: list[common.Row], rpc: common.Rpc, checks
     decimals = common.decode_word(rpc_call(rpc, token, "decimals()"))
     symbol = decode_string(rpc_call(rpc, token, "symbol()"))
     balance = common.decode_word(rpc_call(rpc, token, "balanceOf(address)", safe))
-    pending = sum(int(t["amount"]) for t in manifest["transactions"] if t["nonce"] >= nonce)
+    if first is None:
+        pending = sum(int(t["amount"]) for t in manifest["transactions"])
+        pending_note = "all transactions here; built without a nonce, so none is known to have run"
+    else:
+        pending = sum(int(t["amount"]) for t in manifest["transactions"] if t["nonce"] >= nonce)
+        pending_note = f"transactions with nonce >= {nonce}"
     print(f"token            : {symbol}, {decimals} decimals; Safe balance {common.format_one(balance)}")
-    print(f"still to send    : {common.format_one(pending)} (transactions with nonce >= {nonce})")
+    print(f"still to send    : {common.format_one(pending)} ({pending_note})")
     checks.ok(decimals == 18, f"token has {decimals} decimals; amounts in this tool assume 18")
     checks.ok(balance >= pending, "the Safe holds less than the transactions still to send")
 
@@ -729,8 +763,11 @@ def cmd_verify(args: argparse.Namespace) -> None:
         manifest, rows = verify_offline(args.out_dir, checks)
         print(f"run              : {args.out_dir} ({manifest['label'] or 'no label'})")
         print(f"recipients       : {len(rows)}, total {common.format_one(sum(r.amount for r in rows))}")
-        print(f"Safe transactions: {len(manifest['transactions'])}, nonces {manifest['first_nonce']}-"
-              f"{manifest['first_nonce'] + len(manifest['transactions']) - 1}")
+        if manifest["first_nonce"] is None:
+            print(f"Safe transactions: {len(manifest['transactions'])}, built without a nonce")
+        else:
+            print(f"Safe transactions: {len(manifest['transactions'])}, nonces {manifest['first_nonce']}-"
+                  f"{manifest['first_nonce'] + len(manifest['transactions']) - 1}")
         env = common.load_env(args.env)
         rpc_url = args.rpc_url
         if not rpc_url and not args.offline and env.get("RPC_URL") and env.get("CHAIN_ID") == str(manifest["chain_id"]):
@@ -749,7 +786,10 @@ def cmd_verify(args: argparse.Namespace) -> None:
     if checks.failures:
         common.die(f"{len(checks.failures)} check(s) failed")
     for entry in manifest["transactions"]:
-        print(f"  #{entry['index']:<3} nonce {entry['nonce']:<6} safeTxHash {entry['safe_tx_hash']}")
+        if entry["nonce"] is None:
+            print(f"  #{entry['index']:<3} {entry['folder']:<10} call data keccak-256 {entry['data_keccak256']}")
+        else:
+            print(f"  #{entry['index']:<3} nonce {entry['nonce']:<6} safeTxHash {entry['safe_tx_hash']}")
     print("OK: every file and hash matches the recipient list")
 
 
@@ -764,8 +804,12 @@ def cmd_hash(args: argparse.Namespace) -> None:
             record = json.loads(Path(args.safe_transaction).read_text(encoding="utf-8"))
             safe = common.normalize_address(record["safe"], "safe")
             chain_id = int(record["chainId"])
+            nonce = args.nonce if args.nonce is not None else record["nonce"]
+            if nonce is None:
+                raise common.InputError(f"{args.safe_transaction} was built without a nonce; pass --nonce with the one "
+                                        "the Safe web app assigned")
             tx = SafeTx(common.normalize_address(record["to"], "to"), int(record["value"]), common.unhex(record["data"]),
-                        int(record["operation"]), int(record["nonce"]), int(record["safeTxGas"]), int(record["baseGas"]),
+                        int(record["operation"]), int(nonce), int(record["safeTxGas"]), int(record["baseGas"]),
                         int(record["gasPrice"]), record["gasToken"], record["refundReceiver"])
         else:
             if not (args.safe and args.chain_id and args.nonce is not None and args.to):
@@ -1224,6 +1268,10 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--nonce", type=int,
                    help="Safe nonce of the first transaction, then +1 for each (default: the Safe's next nonce "
                         "on-chain; set it if other transactions are already queued in the Safe web app)")
+    b.add_argument("--no-nonce", action="store_true",
+                   help="do not tie the files to a nonce: no nonce in folder names or Transaction Builder text, and "
+                        "no Safe transaction hashes (they depend on the nonce assigned at proposal; get them with "
+                        "`show`, or `hash --safe-transaction FILE --nonce N`)")
     b.add_argument("--safe-version", choices=sorted(MULTISEND_CALL_ONLY), help="default: read from the Safe")
     b.add_argument("--env", type=Path, default=common.default_env_path())
     b.add_argument("--multisend", help="MultiSendCallOnly address, if not the official one for --safe-version")
@@ -1254,7 +1302,9 @@ def main(argv: list[str] | None = None) -> None:
     h.add_argument("--safe-transaction", help="a safe-transaction.json written by build")
     h.add_argument("--safe")
     h.add_argument("--chain-id", type=int)
-    h.add_argument("--nonce", type=int)
+    h.add_argument("--nonce", type=int,
+                   help="the Safe nonce; with --safe-transaction it overrides the file's (required for a file built "
+                        "with --no-nonce)")
     h.add_argument("--to")
     h.add_argument("--value", type=int, default=0)
     h.add_argument("--data", help="call data as hex")

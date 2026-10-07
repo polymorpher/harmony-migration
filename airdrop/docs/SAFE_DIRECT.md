@@ -99,6 +99,14 @@ queue, pass `--nonce` with the next free nonce shown there. Passing `--safe-vers
 `--chain-id` together builds without any RPC; with an RPC they are checked against the Safe.
 `--label` is only a name shown in the Transaction Builder and on the signing sheet.
 
+`--no-nonce` builds files that do not depend on where the transactions land in the queue, for a
+record that stays correct whatever is proposed first. Folder names and Transaction Builder text
+carry no nonce, and the message hash and Safe transaction hash are not computed, because they
+depend on the nonce the Safe web app assigns. After proposing, read them from the queue with
+`safe-batch show`, or compute them for one folder with
+`safe-batch hash --safe-transaction <folder>/safe-transaction.json --nonce <assigned nonce>`.
+The transfers, call data and Transaction Builder calls are the same as with a nonce.
+
 Useful options: `--max-transfers N` (transfers per Safe transaction, default 300, at most 450),
 `--first-transfers N` (make the first transaction small, as a pilot, before the large ones),
 `--expect-total` and `--expect-count` (stop unless the list matches what you expect). The list
