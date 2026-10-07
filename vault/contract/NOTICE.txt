@@ -1,0 +1,39 @@
+GovernorDelegator: ONE custody with permissionless, fully funded batch deposits.
+Copyright (c) 2016-2026 Zeppelin Group Ltd. Full MIT license: LICENSE.
+Known mainnet ONE asset: 0xff74317e948695297acb79cb2de06111f5cc16b3.
+No receipt token, aggregate principal counter, initializer or constructor balance list.
+The reserve multisig approves the vault and calls depositBatch with amounts first, then
+recipients. The vault pulls their exact summed amount from msg.sender, then credits
+those recipients atomically. All calls are funded; no administrative credit minting.
+This replaces the separate direct reserve-to-vault transfer for initial funding.
+Unsolicited direct transfers remain unallocated assets and do not create credits.
+Later batches, normal deposits and self-stake use the same funded accounting.
+Duplicate recipients sum normally; every successful repeated batch pulls new funds.
+The constructor sets asset and governor. Governor can transfer its role and set its
+fee, never another holder's principal. Fee range is 0 to 10000 bps (0% to 100%),
+with no lower deployment-specific ceiling. Only the holder can withdraw its credited
+principal, immediately and without a withdrawal request or delay. Checked subtraction
+rejects amounts exceeding the holder's balance; a failed token transfer rolls back
+the debit. Actual custody is read from the ONE token balance.
+Stablecoin rewards remain a separate distribution. Historical earning attribution
+must survive principal withdrawal; this contract chooses no daily averaging policy.
+No receipt token or ERC-4626 compliance is claimed.
+Local prototype; see report.json in the parent folder for scoped validation.
+
+Source reduction: unused token-interface declarations and named error declarations
+were removed. Remaining guards use plain require statements and checked arithmetic;
+revert messages/selectors are less descriptive. Token balance queries and approval methods used by
+tests are declared in a test-only interface. The deployed ONE token is unchanged.
+The October 6 update intentionally removes the request/delay state, functions and
+events; depositFor is renamed depositBatch and has no legacy alias. The batch still
+pulls one summed token transfer rather than calling deposit once per recipient.
+
+Naming: deposit/depositBatch credit delegator(s). In withdraw, delegator is the
+payout destination; msg.sender is always the debited account. The redundant owner
+function argument and its equality check are removed. No third-party withdrawal
+allowance exists. The Withdraw event is now Withdraw(caller,delegator,assets);
+its duplicate owner field is removed. Indexers must update the event signature.
+The two-argument withdrawal selector replaces the old three-argument selector;
+clients must update their ABI and calls. The unused IERC20.balanceOf declaration
+is removed from this source and declared only in the test token interface.
+The vault balanceOf mapping and public getter remain unchanged.
