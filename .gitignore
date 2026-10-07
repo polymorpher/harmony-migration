@@ -34,3 +34,5 @@ manifests/results.sha256
 manifests/releases/2026-09-11.json
 embargoed/
 toolkit/cmd/cutoff-final-verifier/
+
+/vault/local
