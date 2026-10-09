@@ -215,6 +215,22 @@ five columns go to standard output (`--format json` for JSON); the checks and ha
 standard error. Compare the printed Safe transaction hashes with the Safe web app, and the domain
 and message hashes with the hardware wallet screen.
 
+When a queued payment is replaced by a corrected version, `diff` shows what changed between
+the two, so a signer who approved the old list only has to check the difference:
+
+```bash
+./airdrop.py safe-batch diff --safe 0xReserveSafe --token 0xToken \
+    --old old-queued-details.csv --old-nonce 39 --new 40
+```
+
+Each side is a CSV list, a Safe nonce, or a Safe transaction hash. Safe transactions are read from
+the Safe Transaction Service, decoded from their raw data, and their hashes recomputed;
+`--old-nonce` picks one transaction's rows from a `show` details file. If several proposals share
+the new nonce, the one paying recipients of the old list is compared and the others are named.
+The output lists the recipients in both with the same amount, and those removed, added or
+changed, so the reviewer checks only the difference. It fails if anything was added or changed;
+`--expect-removed ADDRESS` (repeatable) also makes it fail unless exactly those were removed.
+
 A signer can also copy a transaction's raw data from the Safe web app into a file and run:
 
 ```bash
