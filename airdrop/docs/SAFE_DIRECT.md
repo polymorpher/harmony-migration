@@ -231,6 +231,52 @@ The output lists the recipients in both with the same amount, and those removed,
 changed, so the reviewer checks only the difference. It fails if anything was added or changed;
 `--expect-removed ADDRESS` (repeatable) also makes it fail unless exactly those were removed.
 
+### Checking a payment against its sheet, and against everything already paid
+
+When the list comes from a spreadsheet (for example the confirmed-wallets sheet exported from the
+claim portal), `crosscheck` checks the queued payment against that sheet and shows that nobody in
+it has been paid already:
+
+```bash
+./airdrop.py safe-batch crosscheck --safe 0xReserveSafe --token 0xToken \
+    --sheet ~/Downloads/confirmed.csv --exchange-wallets ~/Downloads/wallets-standardized.zip
+```
+
+- `--sheet` is the sheet saved as CSV: an `address` column and `migration_balance` (or `amount`,
+  or `--amount-column NAME`) in ONE. A spreadsheet rounds what it exports, so each paid amount is
+  compared at the decimals the sheet shows for it: `17788985.19` matches any amount from
+  17,788,985.185 to 17,788,985.195 ONE. An amount with all 18 decimals has to match exactly.
+- `--exchange-wallets` is harmony-migration's `exchanges/wallets-standardized`: the folder, or a
+  .zip of it. Every exchange wallet is delivered manually, to the exchange, so none may appear in an
+  airdrop. Each file must equal what the inventory's `summary.json` lists (SHA-256 and row count),
+  so a missing or edited exchange file fails the check.
+- `--exclude FILE` (repeatable) adds another list of addresses that must not be paid, such as a
+  batch's `hold.txt`: one address per line with `#` comments, or a CSV with an address column.
+- By default the payment is every queued transaction that pays a wallet of the sheet;
+  `--safe-tx-hash` (repeatable) picks it instead. Two proposals at one nonce that both pay
+  wallets of the sheet must be told apart with `--safe-tx-hash`.
+
+It reads all of the Safe's transactions from the Safe Transaction Service, decodes each one from
+its raw data and recomputes its Safe transaction hash, then checks:
+
+1. the payment pays exactly the sheet: every wallet in it, at its amount, and nobody else;
+2. nobody in it received the token in an executed Safe transaction (the initial distribution
+   batches, the exchange deliveries, tests, anything);
+3. nobody in it is paid by another queued transaction;
+4. nobody in it is an exchange wallet or an exchange's delivery address;
+5. nobody in it is on an `--exclude` list.
+
+It prints a report ending in `RESULT: PASS` or `RESULT: FAIL` (and exits with status 1), and writes
+to `--out-dir` (default `./crosscheck`):
+
+- `report.txt`: the printed report;
+- `payment-vs-sheet.csv`: one row per wallet: what the transaction pays, what the sheet says, and
+  a `check` column (`ok`, or every reason it is not);
+- `completed-safe-transfers.csv`: every transfer the Safe has executed, with the nonce, execution
+  time and Ethereum transaction hash. `known_as` names the exchange when the recipient is an
+  exchange wallet or delivery address, so the manual exchange deliveries can be told apart;
+- `queued-safe-transfers.csv`: the transfers of the other queued transactions.
+
 A signer can also copy a transaction's raw data from the Safe web app into a file and run:
 
 ```bash
