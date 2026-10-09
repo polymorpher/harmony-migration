@@ -1251,6 +1251,187 @@ def cmd_show(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# diff: what changed between two versions of a payment
+# ---------------------------------------------------------------------------------------------
+
+
+def is_tx_hash(text: str) -> bool:
+    body = text.strip().removeprefix("0x")
+    return text.strip().startswith("0x") and len(body) == 64 and all(c in "0123456789abcdefABCDEF" for c in body)
+
+
+def decode_proposal(record: dict, safe: str, token: str, chain_id: int):
+    """(label, {address: amount}, problems) of one Safe transaction, decoded from its raw data."""
+    tx_hash = str(record.get("safeTxHash", ""))
+    problems = []
+    if str(record.get("safe", "")).lower() != safe.lower():
+        problems.append(f"{tx_hash} belongs to Safe {record.get('safe')}, not {safe}")
+    tx = service_safe_tx(record)
+    computed = tx_record(chain_id, safe, tx)["safeTxHash"]
+    if computed.lower() != tx_hash.lower():
+        problems.append(f"{tx_hash}: its content hashes to {computed}; do not sign")
+    transfers, issues = token_transfers(tx, token)
+    problems += [f"{tx_hash}: {p}" for p in issues]
+    paid: dict[str, int] = {}
+    for recipient, amount in transfers:
+        if recipient.lower() in paid:
+            problems.append(f"{tx_hash}: {recipient} is paid twice")
+        paid[recipient.lower()] = paid.get(recipient.lower(), 0) + amount
+    status = "executed" if record.get("isExecuted") else (
+        f"queued, {len(record.get('confirmations') or [])} of {record.get('confirmationsRequired')} signatures")
+    submitted = str(record.get("submissionDate") or "")[:16].replace("T", " ")
+    label = (f"Safe transaction at nonce {tx.nonce} ({status}, submitted {submitted} UTC)\n"
+             f"      Safe transaction hash {computed}, recomputed from its data")
+    return label, paid, problems
+
+
+def safe_proposals(source: str, safe: str, token: str, args: argparse.Namespace, api_key: str | None) -> list:
+    """Every proposal for a Safe transaction hash or a nonce, decoded."""
+    base = (args.service_url or SAFE_TX_SERVICE.get(args.chain_id, "")).rstrip("/")
+    if not base:
+        raise common.InputError(f"no known Safe Transaction Service for chain {args.chain_id}; pass --service-url")
+    if is_tx_hash(source):
+        records = [service_json(f"{base}/api/v1/multisig-transactions/{source.strip()}/", api_key)]
+    else:
+        records = service_pages(f"{base}/api/v1/safes/{safe}/multisig-transactions/?nonce={int(source)}&limit=100", api_key)
+        if not records:
+            raise common.InputError(f"nothing was proposed at nonce {source}")
+    return [decode_proposal(r, safe, token, args.chain_id) for r in records]
+
+
+def one_line(label: str, paid: dict[str, int]) -> str:
+    """A short description of an unrelated proposal."""
+    head = label.splitlines()[0].replace("Safe transaction at ", "")
+    if len(paid) == 1:
+        (address, amount), = paid.items()
+        what = f"1 transfer, {common.format_one(amount)} ONE to {common.to_checksum(address)}"
+    else:
+        what = f"{len(paid)} transfers, {common.format_one(sum(paid.values()))} ONE"
+    return f"{what}; {head}"
+
+
+def listed_transfers(path: Path, nonce: int | None, amount_unit: str | None):
+    """(label, {address: amount}, problems) of a CSV list, such as an earlier `show` details file."""
+    if not path.is_file():
+        raise common.InputError(f"not found: {path}")
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        header = [h.strip().lower() for h in next(csv.reader(handle), [])]
+    address = next((c for c in ("eth_address", "address", "destination_address", "recipient") if c in header), None)
+    if address is None:
+        raise common.InputError(f"{path}: no eth_address or address column; columns are {header}")
+    amount = "amount_atto" if "amount_atto" in header else None
+    rows: list[tuple[str, int, str]] = []
+    if nonce is not None:
+        if "nonce" not in header:
+            raise common.InputError(f"{path} has no nonce column, so --old-nonce cannot select rows")
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            for line, record in enumerate(reader, start=2):
+                record = {k.strip().lower(): v for k, v in record.items()}
+                if record["nonce"].strip() == str(nonce):
+                    unit = "atto" if amount else (amount_unit or common.detect_amount_unit("amount", amount_unit))
+                    value = record[amount] if amount else record["amount"]
+                    rows.append((common.normalize_address(record[address], f"{path}:{line}"),
+                                 common.parse_amount(value, unit, f"{path}:{line}"), f"{path}:{line}"))
+        if not rows:
+            raise common.InputError(f"{path} has no rows with nonce {nonce}")
+    else:
+        read, _ = common.read_rows(path, address, amount, "atto" if amount else amount_unit)
+        rows = [(r.address, r.amount, r.source) for r in read]
+    paid: dict[str, int] = {}
+    problems = []
+    for recipient, value, source in rows:
+        if recipient.lower() in paid:
+            problems.append(f"{source}: {recipient} appears twice")
+        paid[recipient.lower()] = paid.get(recipient.lower(), 0) + value
+    label = f"{path}" + (f", rows with nonce {nonce}" if nonce is not None else "")
+    return label, paid, problems
+
+
+def cmd_diff(args: argparse.Namespace) -> None:
+    out = print
+    try:
+        env = common.load_env(args.env)
+        safe = common.normalize_address(args.safe or env.get("RESERVE_ADDRESS", ""), "--safe")
+        token = common.normalize_address(args.token or env.get("TOKEN_ADDRESS", ""), "--token")
+        api_key = args.api_key or env.get("SAFE_API_KEY")
+        expected = {common.normalize_address(a, "--expect-removed").lower() for a in args.expect_removed or []}
+        sides = {}
+        for name, source in (("old", args.old), ("new", args.new)):
+            if is_tx_hash(source) or source.strip().isdigit():
+                sides[name] = safe_proposals(source, safe, token, args, api_key)
+            else:
+                sides[name] = [listed_transfers(Path(source), args.old_nonce if name == "old" else None, args.amount_unit)]
+        if len(sides["old"]) > 1:
+            raise common.InputError(f"nonce {args.old} has {len(sides['old'])} proposals; give --old as a Safe transaction "
+                                    "hash or as the CSV list you reviewed")
+        old_label, old, old_problems = sides["old"][0]
+        # Several proposals can share a nonce (only one of them can execute): compare with the one
+        # that pays recipients of the old list.
+        related = [p for p in sides["new"] if set(p[1]) & set(old)]
+        others = [p for p in sides["new"] if not set(p[1]) & set(old)]
+        if len(sides["new"]) > 1 and len(related) != 1:
+            raise common.InputError(f"nonce {args.new} has {len(sides['new'])} proposals and {len(related)} of them pay "
+                                    "recipients of the old list; give --new as a Safe transaction hash")
+        new_label, new, new_problems = related[0] if len(sides["new"]) > 1 else sides["new"][0]
+    except (common.InputError, KeyError, ValueError) as exc:
+        common.die(str(exc))
+        return
+    same = sorted(a for a in new if a in old and old[a] == new[a])
+    changed = sorted(a for a in new if a in old and old[a] != new[a])
+    added = sorted(a for a in new if a not in old)
+    removed = sorted(a for a in old if a not in new)
+    show = lambda atto: common.format_one(atto)  # noqa: E731
+    checksum = lambda a: common.to_checksum(a)  # noqa: E731
+
+    out(f"old : {old_label}")
+    out(f"      {len(old)} transfers, {show(sum(old.values()))} ONE")
+    out(f"new : {new_label}")
+    out(f"      {len(new)} transfers, {show(sum(new.values()))} ONE")
+    if len(sides["new"]) > 1:
+        out(f"      also proposed at this nonce, paying no one on the old list (only one proposal per nonce "
+            f"can execute):")
+        for label, paid, _ in others:
+            out(f"        {one_line(label, paid)}")
+    out("")
+    out(f"in both, same amount        : {len(same)}")
+    out(f"removed (in old, not in new): {len(removed)}")
+    for a in removed:
+        out(f"    {checksum(a)}  {show(old[a])} ONE")
+    out(f"added (in new, not in old)  : {len(added)}")
+    for a in added:
+        out(f"    {checksum(a)}  {show(new[a])} ONE")
+    out(f"amount changed              : {len(changed)}")
+    for a in changed:
+        out(f"    {checksum(a)}  old {show(old[a])}  new {show(new[a])} ONE")
+    out(f"old total - new total       : {show(sum(old.values()) - sum(new.values()))} ONE")
+    out("")
+
+    failures = old_problems + new_problems
+    if added:
+        failures.append(f"{len(added)} recipient(s) in the new version are not in the old one")
+    if changed:
+        failures.append(f"{len(changed)} amount(s) differ between the versions")
+    if args.expect_removed is not None and set(removed) != expected:
+        missing = sorted(expected - set(removed))
+        extra = sorted(set(removed) - expected)
+        if missing:
+            failures.append("expected to be removed but still present or never listed: "
+                            + ", ".join(checksum(a) for a in missing))
+        if extra:
+            failures.append("removed but not expected: " + ", ".join(checksum(a) for a in extra))
+    for message in failures:
+        out(f"FAIL: {message}")
+    if failures:
+        common.die(f"{len(failures)} check(s) failed; do not sign until they are explained")
+    if removed:
+        out(f"OK: the new version pays exactly the old list minus the {len(removed)} recipient(s) listed as removed. "
+            "Nothing was added and no amount changed.")
+    else:
+        out("OK: the new version pays exactly the old list. Nothing was removed, added or changed.")
+
+
+# ---------------------------------------------------------------------------------------------
 # argument parsing
 # ---------------------------------------------------------------------------------------------
 
@@ -1348,6 +1529,25 @@ def main(argv: list[str] | None = None) -> None:
                    help="read the transaction(s) from a JSON file saved from the service's API instead of fetching them")
     s.add_argument("--env", type=Path, default=common.default_env_path())
     s.set_defaults(func=cmd_show)
+
+    d = sub.add_parser("diff", help="compare two versions of a payment: which recipients were removed, added or changed")
+    d.add_argument("--old", required=True,
+                   help="the earlier version: a CSV (for example an earlier `show` details file), a Safe nonce, "
+                        "or a Safe transaction hash")
+    d.add_argument("--new", required=True,
+                   help="the new version: a Safe nonce, a Safe transaction hash, or a CSV. If several proposals share "
+                        "the nonce, the one paying recipients of the old list is compared and the others are named")
+    d.add_argument("--old-nonce", type=int, help="with a `show` details file as --old, use only its rows with this nonce")
+    d.add_argument("--expect-removed", action="append",
+                   help="an address that must be the only change, removed from the old version (repeatable)")
+    d.add_argument("--safe", help="the Safe (default: RESERVE_ADDRESS from .env)")
+    d.add_argument("--token", help="the only token the transactions may transfer (default: TOKEN_ADDRESS from .env)")
+    d.add_argument("--chain-id", type=int, default=1, help="1 for Ethereum mainnet (default)")
+    d.add_argument("--amount-unit", choices=["atto", "one"], help="unit of a CSV's amount column if it has no amount_atto")
+    d.add_argument("--service-url", help="Safe Transaction Service base URL (default: Safe's hosted service for --chain-id)")
+    d.add_argument("--api-key", help="Safe API key, if the service asks for one (default: SAFE_API_KEY)")
+    d.add_argument("--env", type=Path, default=common.default_env_path())
+    d.set_defaults(func=cmd_diff)
 
     args = parser.parse_args(argv)
     args.func(args)

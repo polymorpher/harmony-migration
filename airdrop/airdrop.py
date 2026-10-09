@@ -364,7 +364,7 @@ PASSTHROUGH = {
     "reconcile": (cmd_reconcile, "options for tools/reconcile.py, e.g. --block N"),
     "test": (cmd_test, "forge test flags"),
     "select-batch": (cmd_select_batch, "options for tools/select_batch.py: --input FILE --out-dir DIR [--budget N] ..."),
-    "safe-batch": (cmd_safe_batch, "tools/safe_batch.py build|verify|hash|show ..."),
+    "safe-batch": (cmd_safe_batch, "tools/safe_batch.py build|verify|hash|show|diff ..."),
     "vault-batch": (cmd_vault_batch, "tools/vault_batch.py build|verify|show|hash|reconcile ..."),
 }
 FORGE_EXTRA_HELP = "Extra forge flags may follow a `--` separator."
