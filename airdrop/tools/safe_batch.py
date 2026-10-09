@@ -22,6 +22,11 @@ MultiSendCallOnly contract), and the Safe's signers approve every batch.
     python3 tools/safe_batch.py show --safe 0xSafe --token 0xToken [--nonce 22-29] \
         --snapshot snapshot-20260911.csv --out queued.csv [--compare payment-list.csv]
 
+    # the queued payment of a sheet pays exactly that sheet, and nobody the Safe already paid, nobody
+    # in another queued transaction, and no exchange wallet
+    python3 tools/safe_batch.py crosscheck --safe 0xSafe --token 0xToken --sheet sheet.csv \
+        --exchange-wallets wallets-standardized.zip [--exclude hold.txt] [--out-dir crosscheck]
+
 For every Safe transaction `build` writes a file to import into the Safe web app's Transaction
 Builder, the recipients of that transaction, and the exact transaction the Safe will be asked to
 sign (target, call data, operation, nonce) with the three hashes a signer checks: the domain hash
@@ -34,12 +39,15 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as _dt
+import hashlib
 import io
 import json
+import re
 import shutil
 import sys
 import urllib.error
 import urllib.request
+import zipfile
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -1432,6 +1440,494 @@ def cmd_diff(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# crosscheck: a queued payment against its sheet, everything the Safe paid, and the exchanges
+# ---------------------------------------------------------------------------------------------
+
+SHEET_ADDRESS_COLUMNS = ("address", "eth_address")
+# migration_balance is the wallet part in the claim portal's confirmed-wallets sheet.
+SHEET_AMOUNT_COLUMNS = ("migration_balance", "amount", "amount_one", "wallet_allocation_one")
+HEX_ADDRESS = re.compile(r"0x[0-9a-fA-F]{40}")
+LISTED = 20  # addresses printed per failed check; the CSV files have all of them
+
+
+@dataclass
+class SheetRow:
+    address: str  # lower case
+    shown: str  # the amount as the sheet shows it
+    amount: int  # atto
+    tolerance: int  # atto: half a unit of the last decimal the sheet shows
+    line: int
+
+
+def sheet_amount(text: str, where: str) -> tuple[int, int]:
+    """(atto, tolerance) of an amount as a spreadsheet shows it, rounded to the decimals it shows."""
+    try:
+        value = Decimal(text.strip().replace(",", ""))
+    except InvalidOperation:
+        raise common.InputError(f"{where}: not a number: {text!r}") from None
+    if not value.is_finite() or value < 0:
+        raise common.InputError(f"{where}: not a non-negative amount: {text!r}")
+    _, digits, exponent = value.as_tuple()
+    if exponent < -18:
+        raise common.InputError(f"{where}: more than 18 decimals: {text!r}")
+    return int("".join(map(str, digits))) * 10 ** (18 + exponent), 10 ** (18 + exponent) // 2
+
+
+def column_index(header: list[str], wanted: str | None, candidates: tuple[str, ...], where: str) -> int:
+    lowered = [h.strip().lower() for h in header]
+    for name in [wanted.strip().lower()] if wanted else candidates:
+        if name in lowered:
+            return lowered.index(name)
+    raise common.InputError(f"{where}: no {' or '.join([wanted] if wanted else candidates)} column; columns are {header}")
+
+
+def read_sheet(path: Path, amount_column: str | None) -> tuple[list[SheetRow], str]:
+    """The rows a payment must equal, and the name of the amount column."""
+    if not path.is_file():
+        raise common.InputError(f"sheet not found: {path}")
+    rows = []
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.reader(handle)
+        header = next(reader, None)
+        if not header:
+            raise common.InputError(f"{path}: empty file")
+        address = column_index(header, None, SHEET_ADDRESS_COLUMNS, str(path))
+        amount = column_index(header, amount_column, SHEET_AMOUNT_COLUMNS, str(path))
+        for line, record in enumerate(reader, start=2):
+            if not any(cell.strip() for cell in record):
+                continue
+            where = f"{path.name}:{line}"
+            if len(record) <= max(address, amount):
+                raise common.InputError(f"{where}: too few columns")
+            value, tolerance = sheet_amount(record[amount], where)
+            rows.append(SheetRow(common.normalize_address(record[address], where).lower(), record[amount].strip(),
+                                 value, tolerance, line))
+    if not rows:
+        raise common.InputError(f"{path}: no rows")
+    return rows, header[amount].strip()
+
+
+def read_address_list(path: Path) -> set[str]:
+    """Lower-case addresses of a CSV with an address column, or of a plain list (one per line, # comments)."""
+    if not path.is_file():
+        raise common.InputError(f"not found: {path}")
+    lines = [line for line in path.read_text(encoding="utf-8-sig").splitlines()
+             if line.strip() and not line.lstrip().startswith("#")]
+    records = list(csv.reader(lines))
+    if not records:
+        raise common.InputError(f"{path}: no addresses")
+    header = [h.strip().lower() for h in records[0]]
+    column = next((header.index(c) for c in ("eth_address", "address_hex", *common.ADDRESS_COLUMNS) if c in header), None)
+    body = records if column is None else records[1:]
+    found = set()
+    for record in body:
+        text = record[column or 0].strip() if len(record) > (column or 0) else ""
+        if text.lower().startswith("one1"):
+            found.add(common.from_one1(text, checksum=False))
+        else:
+            found.add(common.normalize_address(text, str(path)).lower())
+    return found
+
+
+@dataclass
+class Inventory:
+    wallets: dict[str, str]  # exchange wallet (lower case): exchange
+    destinations: dict[str, str]  # delivery address (lower case): whose
+    files: dict[str, tuple[str, int]]  # file name: (sha256, rows)
+    counts: dict[str, int]  # wallets per exchange
+    problems: list[str]
+    notes: list[str]
+    has_summary: bool = False
+
+    def known_as(self, address: str) -> str:
+        wallet = f"{self.wallets[address]} exchange wallet" if address in self.wallets else ""
+        return "; ".join(x for x in (wallet, self.destinations.get(address, "")) if x)
+
+
+def inventory_members(path: Path) -> dict[str, bytes]:
+    """{file name: content} of the CSV files and summary.json in a directory or a zip, at any depth."""
+    def wanted(name: str) -> bool:
+        parts = Path(name).parts
+        return (bool(parts) and "__MACOSX" not in parts and not parts[-1].startswith(".")
+                and (parts[-1].lower().endswith(".csv") or parts[-1] == "summary.json"))
+
+    found: list[tuple[str, bytes]] = []
+    if path.is_dir():
+        found = [(p.relative_to(path).as_posix(), p.read_bytes()) for p in sorted(path.rglob("*"))
+                 if p.is_file() and wanted(p.relative_to(path).as_posix())]
+    elif path.is_file() and zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as archive:
+            found = [(i.filename, archive.read(i)) for i in archive.infolist() if not i.is_dir() and wanted(i.filename)]
+    else:
+        raise common.InputError(f"{path}: not found, or neither a folder nor a .zip file")
+    members: dict[str, bytes] = {}
+    for name, content in found:
+        if Path(name).name in members:
+            raise common.InputError(f"{path}: holds two files named {Path(name).name}")
+        members[Path(name).name] = content
+    return members
+
+
+def read_inventory(path: Path) -> Inventory:
+    """The exchanges' wallets (harmony-migration exchanges/wallets-standardized), checked against its summary.json."""
+    members = inventory_members(path)
+    summary = members.pop("summary.json", None)
+    if not members:
+        raise common.InputError(f"{path}: no exchange wallet .csv files in it")
+    inventory = Inventory({}, {}, {}, defaultdict(int), [], [])
+    for name, content in sorted(members.items()):
+        reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
+        fields = {f.strip().lower(): f for f in reader.fieldnames or []}
+        if "address_hex" not in fields or "exchange_id" not in fields:
+            raise common.InputError(f"{path}: {name} is not an exchange wallet file (no address_hex and exchange_id columns)")
+        rows = 0
+        for line, record in enumerate(reader, start=2):
+            rows += 1
+            exchange = record[fields["exchange_id"]].strip()
+            wallet = record[fields["address_hex"]].strip().lower()
+            if not HEX_ADDRESS.fullmatch(wallet):
+                inventory.problems.append(f"{name}:{line}: not an address: {wallet!r}")
+                continue
+            if inventory.wallets.setdefault(wallet, exchange) != exchange:
+                inventory.notes.append(f"{wallet} is listed by both {inventory.wallets[wallet]} and {exchange}")
+            inventory.counts[exchange] += 1
+            for column, what in (("configured_destination", "delivery address"),
+                                 ("configured_staking_destination", "staking delivery address")):
+                target = (record.get(fields.get(column, "")) or "").strip().lower()
+                if HEX_ADDRESS.fullmatch(target):
+                    inventory.destinations.setdefault(target, f"{exchange} {what}")
+        inventory.files[name] = (hashlib.sha256(content).hexdigest(), rows)
+    if summary is None:
+        inventory.notes.append("no summary.json, so nothing confirms that every exchange's file is present")
+        return inventory
+    inventory.has_summary = True
+    listed = json.loads(summary).get("exchanges", {})
+    for exchange, info in sorted(listed.items()):
+        name = Path(str(info.get("output", ""))).name
+        if name not in inventory.files:
+            inventory.problems.append(f"{name} ({exchange}) is listed in summary.json but missing")
+        elif inventory.files[name][0] != str(info.get("output_sha256", "")).lower().removeprefix("0x"):
+            inventory.problems.append(f"{name} is not the file summary.json lists (its SHA-256 differs)")
+        elif inventory.files[name][1] != int(info.get("normalized_rows", -1)):
+            inventory.problems.append(f"{name} has {inventory.files[name][1]} rows, summary.json says "
+                                      f"{info.get('normalized_rows')}")
+    unlisted = sorted(set(inventory.files) - {Path(str(i.get("output", ""))).name for i in listed.values()})
+    if unlisted:
+        inventory.notes.append(f"not listed in summary.json, read anyway: {', '.join(unlisted)}")
+    return inventory
+
+
+@dataclass
+class Proposal:
+    nonce: int
+    safe_tx_hash: str  # lower case, as the service lists it
+    message_hash: str
+    executed: bool
+    successful: bool
+    executed_at: str
+    execution_tx: str
+    signatures: str
+    transfers: list[tuple[str, int]]  # (lower-case recipient, atto)
+    other_calls: list[str]  # why it is not only plain transfers of the token
+    unreadable: str | None  # why its record cannot be trusted
+
+
+def read_proposals(records: list[dict], chain_id: int, safe: str, token: str) -> list[Proposal]:
+    proposals = []
+    for record in records:
+        listed = str(record.get("safeTxHash", "")).lower()
+        proposal = Proposal(int(record["nonce"]), listed, "", bool(record.get("isExecuted")),
+                            record.get("isSuccessful") is not False, record.get("executionDate") or "",
+                            record.get("transactionHash") or "",
+                            f"{len(record.get('confirmations') or [])} of {record.get('confirmationsRequired')}",
+                            [], [], None)
+        if str(record.get("safe", "")).lower() != safe.lower():
+            proposal.unreadable = f"belongs to Safe {record.get('safe')}"
+        else:
+            try:
+                tx = service_safe_tx(record)
+                computed = tx_record(chain_id, safe, tx)
+                proposal.message_hash = computed["messageHash"]
+                if computed["safeTxHash"].lower() != listed:
+                    proposal.unreadable = f"listed as {listed}, but its content hashes to {computed['safeTxHash']}"
+                transfers, proposal.other_calls = token_transfers(tx, token)
+                proposal.transfers = [(recipient.lower(), amount) for recipient, amount in transfers]
+            except (KeyError, ValueError, common.InputError) as exc:
+                proposal.unreadable = f"cannot read it: {exc}"
+        proposals.append(proposal)
+    return proposals
+
+
+def nonce_span(proposals: list[Proposal]) -> str:
+    nonces = sorted({p.nonce for p in proposals})
+    if not nonces:
+        return "none"
+    return f"nonce {nonces[0]}" if len(nonces) == 1 else f"nonces {nonces[0]}-{nonces[-1]}"
+
+
+def cmd_crosscheck(args: argparse.Namespace) -> None:
+    report: list[str] = []
+
+    def out(text: str = "") -> None:
+        print(text)
+        report.append(text)
+
+    try:
+        env = common.load_env(args.env)
+        safe_text = args.safe or env.get("RESERVE_ADDRESS", "")
+        token_text = args.token or env.get("TOKEN_ADDRESS", "")
+        if not safe_text or not token_text:
+            raise common.InputError("need --safe and --token (or RESERVE_ADDRESS and TOKEN_ADDRESS in .env)")
+        safe = common.normalize_address(safe_text, "--safe")
+        token = common.normalize_address(token_text, "--token")
+        sheet, amount_column = read_sheet(args.sheet, args.amount_column)
+        inventory = read_inventory(args.exchange_wallets)
+        excluded = {path: read_address_list(path) for path in args.exclude or []}
+        base = (args.service_url or SAFE_TX_SERVICE.get(args.chain_id, "")).rstrip("/")
+        if not base:
+            raise common.InputError(f"no known Safe Transaction Service for chain {args.chain_id}; pass --service-url")
+        api_key = args.api_key or env.get("SAFE_API_KEY")
+        info = service_json(f"{base}/api/v1/safes/{safe}/", api_key)
+        records = service_pages(f"{base}/api/v1/safes/{safe}/multisig-transactions/?ordering=nonce&limit=100", api_key)
+        next_nonce = int(info["nonce"])
+        proposals = read_proposals(records, args.chain_id, safe, token)
+        in_sheet = {row.address for row in sheet}
+        if args.safe_tx_hash:
+            wanted = {h.strip().lower() for h in args.safe_tx_hash}
+            targets = [p for p in proposals if p.safe_tx_hash in wanted]
+            missing = wanted - {p.safe_tx_hash for p in targets}
+            if missing:
+                raise common.InputError(f"not among the Safe's transactions: {', '.join(sorted(missing))}")
+        else:
+            targets = [p for p in proposals if not p.executed and p.nonce >= next_nonce
+                       and any(address in in_sheet for address, _ in p.transfers)]
+            if not targets:
+                raise common.InputError("no transaction waiting in the Safe's queue pays any wallet of the sheet; "
+                                        "propose it first, or pick one with --safe-tx-hash")
+        by_nonce: dict[int, list[Proposal]] = defaultdict(list)
+        for target in targets:
+            by_nonce[target.nonce].append(target)
+        competing = {n: group for n, group in by_nonce.items() if len(group) > 1}
+        if competing:
+            raise common.InputError(
+                "competing proposals at one nonce pay wallets of the sheet, and only one of them can execute; pick "
+                "one with --safe-tx-hash: "
+                + "; ".join(f"nonce {n}: {', '.join(p.safe_tx_hash for p in g)}" for n, g in sorted(competing.items())))
+    except (common.InputError, KeyError, ValueError) as exc:
+        common.die(str(exc))
+        return
+
+    targets.sort(key=lambda p: p.nonce)
+    chosen = {p.safe_tx_hash for p in targets}
+    executed = [p for p in proposals if p.executed and p.safe_tx_hash not in chosen]
+    queued = [p for p in proposals if not p.executed and p.nonce >= next_nonce and p.safe_tx_hash not in chosen]
+    dropped = [p for p in proposals if not p.executed and p.nonce < next_nonce and p.safe_tx_hash not in chosen]
+    show = common.format_one
+    plain = lambda atto: show(atto).replace(",", "")  # noqa: E731
+    failed_sections = []
+
+    def verdict(section: str, problems: list[str]) -> None:
+        for message in problems:
+            out(f"   FAIL: {message}")
+        if problems:
+            failed_sections.append(section)
+        out("   PASS" if not problems else f"   FAIL ({len(problems)})")
+        out()
+
+    def listing(lines: list[str]) -> list[str]:
+        if len(lines) > LISTED:
+            return lines[:LISTED] + [f"... and {len(lines) - LISTED} more (see the check column of payment-vs-sheet.csv)"]
+        return lines
+
+    def flagged(addresses: list[str]) -> list[str]:
+        return listing([f"{common.to_checksum(a)}: {'; '.join(reasons[a])}" for a in addresses])
+
+    out(f"Safe         : {safe} on chain {args.chain_id}, version {info.get('version')}, "
+        f"{info.get('threshold')} of {len(info.get('owners') or [])} owners, next nonce {next_nonce}")
+    out(f"token        : {token}")
+    out(f"sheet        : {args.sheet.name}, {len(sheet)} rows, column {amount_column}, "
+        f"total {show(sum(r.amount for r in sheet))} ONE")
+    out(f"               sha256 {common.sha256_file(args.sheet)}")
+    out()
+
+    # 1. the payment equals the sheet
+    out("1. The proposed Safe transaction pays exactly the sheet")
+    problems = []
+    paid: dict[str, tuple[Proposal, int, int]] = {}
+    for target in targets:
+        status = ("executed" if target.successful else "executed but FAILED") if target.executed else "queued"
+        out(f"   nonce {target.nonce:<6}: Safe transaction hash {target.safe_tx_hash}")
+        out(f"                 message hash {target.message_hash}")
+        out(f"                 {status}, signed by {target.signatures}, {len(target.transfers)} transfers, "
+            f"{show(sum(a for _, a in target.transfers))} ONE")
+        if target.unreadable:
+            problems.append(f"nonce {target.nonce}: {target.unreadable}")
+        problems += [f"nonce {target.nonce}: {p}" for p in target.other_calls]
+        if not target.executed and target.nonce < next_nonce:
+            problems.append(f"nonce {target.nonce} is already used by another transaction; this one can never execute")
+        for position, (address, amount) in enumerate(target.transfers, start=1):
+            if address in paid:
+                problems.append(f"{common.to_checksum(address)} is paid twice (nonce {paid[address][0].nonce} "
+                                f"and nonce {target.nonce})")
+            else:
+                paid[address] = (target, position, amount)
+        for rival in queued:
+            if rival.nonce == target.nonce:
+                out(f"   note        : nonce {target.nonce} also has proposal {rival.safe_tx_hash} (transfers: "
+                    f"{len(rival.transfers)}, {show(sum(a for _, a in rival.transfers))} ONE); only one of the two "
+                    "can execute")
+    out(f"   domain hash : {common.hex0x(domain_hash(args.chain_id, safe))}")
+    out("                 (each hash recomputed from the transaction's data)")
+    rows_by_address: dict[str, SheetRow] = {}
+    for row in sheet:
+        if row.address in rows_by_address:
+            problems.append(f"{args.sheet.name}:{row.line}: {common.to_checksum(row.address)} is listed twice "
+                            f"(also line {rows_by_address[row.address].line})")
+        else:
+            rows_by_address[row.address] = row
+    reasons: dict[str, list[str]] = defaultdict(list)
+    equal, largest = 0, 0
+    for address, (_, _, amount) in paid.items():
+        row = rows_by_address.get(address)
+        if row is None:
+            reasons[address].append("not in the sheet")
+        elif abs(amount - row.amount) > row.tolerance:
+            reasons[address].append(f"pays {show(amount)} ONE, the sheet says {row.shown}")
+        else:
+            equal += 1
+            largest = max(largest, abs(amount - row.amount))
+    unpaid = [a for a in rows_by_address if a not in paid]
+    for address in unpaid:
+        reasons[address].append("in the sheet, not paid")
+    total = sum(a for _, _, a in paid.values())
+    out(f"   paid        : {len(paid)} wallets, {show(total)} ONE")
+    out(f"   equal       : {equal} of {len(paid)} amounts equal the sheet, each rounded to the decimals the sheet "
+        f"shows (largest rounding difference {show(largest)} ONE)")
+    out(f"   not in sheet: {sum(1 for a in paid if a not in rows_by_address)}")
+    out(f"   not paid    : {len(unpaid)} of the sheet's {len(rows_by_address)} rows")
+    everyone = [*paid, *unpaid]
+    verdict("1", problems + flagged([a for a in everyone if reasons[a]]))
+
+    # 2. nobody in it was paid before
+    out("2. Nobody in it was paid before by the Safe")
+    problems = [f"nonce {p.nonce} ({p.safe_tx_hash}): {p.unreadable}; the Safe's history cannot be trusted"
+                for p in executed if p.unreadable]
+    history, before = [], []
+    for p in executed:
+        if not p.successful:
+            continue
+        for position, (address, amount) in enumerate(p.transfers, start=1):
+            history.append({"nonce": p.nonce, "safe_tx_hash": p.safe_tx_hash, "executed_at": p.executed_at,
+                            "execution_tx_hash": p.execution_tx, "position": position, "eth_address": address,
+                            "one1_address": common.to_one1(address), "amount": plain(amount),
+                            "amount_atto": str(amount), "known_as": inventory.known_as(address)})
+    paid_before: dict[str, list[str]] = defaultdict(list)
+    for row in history:
+        paid_before[row["eth_address"]].append(f"paid {show(int(row['amount_atto']))} ONE at nonce {row['nonce']}")
+    for address in everyone:
+        if paid_before.get(address):
+            reasons[address] += paid_before[address]
+            before.append(address)
+    successful = [p for p in executed if p.successful]
+    out(f"   history     : {len(successful)} executed transactions ({nonce_span(successful)}), {len(history)} "
+        f"transfers to {len(paid_before)} addresses, {show(sum(int(r['amount_atto']) for r in history))} ONE")
+    for p in executed:
+        if not p.successful:
+            out(f"   note        : nonce {p.nonce} executed but failed, so it paid nothing")
+        elif p.other_calls:
+            out(f"   note        : nonce {p.nonce} (transfers: {len(p.transfers)}) also {'; '.join(p.other_calls)}"
+                if p.transfers else f"   note        : nonce {p.nonce} pays no tokens: {'; '.join(p.other_calls)}")
+    for p in dropped:
+        out(f"   ignored     : nonce {p.nonce} proposal {p.safe_tx_hash} was never executed and no longer can be")
+    out(f"   overlap     : {len(before)} of the {len(everyone)} wallets")
+    verdict("2", problems + flagged(before))
+
+    # 3. nobody in it is in another queued transaction
+    out("3. Nobody in it is in another queued transaction")
+    problems = [f"nonce {p.nonce} ({p.safe_tx_hash}): {p.unreadable}" for p in queued if p.unreadable]
+    pending, elsewhere = [], []
+    for p in queued:
+        for position, (address, amount) in enumerate(p.transfers, start=1):
+            pending.append({"nonce": p.nonce, "safe_tx_hash": p.safe_tx_hash, "signatures": p.signatures,
+                            "position": position, "eth_address": address, "one1_address": common.to_one1(address),
+                            "amount": plain(amount), "amount_atto": str(amount),
+                            "known_as": inventory.known_as(address)})
+    queued_for: dict[str, list[str]] = defaultdict(list)
+    for row in pending:
+        queued_for[row["eth_address"]].append(f"also queued at nonce {row['nonce']} ({row['safe_tx_hash'][:10]}...)")
+    for address in everyone:
+        if queued_for.get(address):
+            reasons[address] += queued_for[address]
+            elsewhere.append(address)
+    out(f"   queued      : {len(queued)} other proposals ({', '.join(f'nonce {p.nonce}' for p in queued) or 'none'}), "
+        f"{len(pending)} transfers")
+    out(f"   overlap     : {len(elsewhere)} of the {len(everyone)} wallets")
+    verdict("3", problems + flagged(elsewhere))
+
+    # 4. nobody in it is an exchange wallet or delivery address
+    out("4. Nobody in it is an exchange wallet or an exchange's delivery address (exchanges are paid manually)")
+    exchanges = [a for a in everyone if inventory.known_as(a)]
+    for address in exchanges:
+        reasons[address].append(inventory.known_as(address))
+    source = (f"sha256 {common.sha256_file(args.exchange_wallets)}" if args.exchange_wallets.is_file()
+              else f"{len(inventory.files)} files")
+    out(f"   inventory   : {args.exchange_wallets.name} ({source})")
+    if inventory.has_summary and not inventory.problems:
+        out("                 every exchange file listed in its summary.json is present and equal to it "
+            "(SHA-256 and rows)")
+    out(f"                 {len(inventory.wallets):,} wallets: "
+        + ", ".join(f"{e} {c:,}" for e, c in sorted(inventory.counts.items())))
+    out(f"                 {len(inventory.destinations)} delivery addresses")
+    for note in listing(inventory.notes):
+        out(f"   note        : {note}")
+    out(f"   overlap     : {len(exchanges)} of the {len(everyone)} wallets")
+    verdict("4", listing(inventory.problems) + flagged(exchanges))
+
+    # 5. nobody in it is on another do-not-pay list
+    for number, (path, addresses) in enumerate(excluded.items(), start=5):
+        out(f"{number}. Nobody in it is in {path.name} ({len(addresses)} addresses, sha256 {common.sha256_file(path)})")
+        hits = [a for a in everyone if a in addresses]
+        for address in hits:
+            reasons[address].append(f"in {path.name}")
+        out(f"   overlap     : {len(hits)} of the {len(everyone)} wallets")
+        verdict(str(number), flagged(hits))
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    table = []
+    for address, (target, position, amount) in paid.items():
+        row = rows_by_address.get(address)
+        table.append({"nonce": target.nonce, "safe_tx_hash": target.safe_tx_hash, "position": position,
+                      "eth_address": address, "one1_address": common.to_one1(address), "paid": plain(amount),
+                      "paid_atto": str(amount), "sheet_line": row.line if row else "", "sheet_amount": row.shown if row else "",
+                      "check": "; ".join(reasons[address]) or "ok"})
+    for address in unpaid:
+        row = rows_by_address[address]
+        table.append({"eth_address": address, "one1_address": common.to_one1(address), "sheet_line": row.line,
+                      "sheet_amount": row.shown, "check": "; ".join(reasons[address])})
+    files = {
+        "payment-vs-sheet.csv": (["nonce", "safe_tx_hash", "position", "eth_address", "one1_address", "paid",
+                                  "paid_atto", "sheet_line", "sheet_amount", "check"], table),
+        "completed-safe-transfers.csv": (["nonce", "safe_tx_hash", "executed_at", "execution_tx_hash", "position",
+                                          "eth_address", "one1_address", "amount", "amount_atto", "known_as"], history),
+        "queued-safe-transfers.csv": (["nonce", "safe_tx_hash", "signatures", "position", "eth_address",
+                                       "one1_address", "amount", "amount_atto", "known_as"], pending),
+    }
+    for name, (fields, rows) in files.items():
+        write_table(args.out_dir / name, "csv", fields, rows)
+    out("files        : " + ", ".join(str(args.out_dir / name) for name in [*files, "report.txt"]))
+    if failed_sections:
+        out(f"RESULT: FAIL in check {', '.join(failed_sections)}. Do not sign until every FAIL above is explained.")
+    else:
+        out(f"RESULT: PASS. The Safe transaction(s) above pay exactly the {len(rows_by_address)} wallets of "
+            f"{args.sheet.name}; none of them was paid by the Safe before, is in another queued transaction, "
+            "or is an exchange wallet" + (", or is on the --exclude lists" if excluded else "") + ". Before signing, "
+            "check that the Safe web app and your wallet show the same hashes.")
+    (args.out_dir / "report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+    if failed_sections:
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------------------------
 # argument parsing
 # ---------------------------------------------------------------------------------------------
 
@@ -1548,6 +2044,31 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--api-key", help="Safe API key, if the service asks for one (default: SAFE_API_KEY)")
     d.add_argument("--env", type=Path, default=common.default_env_path())
     d.set_defaults(func=cmd_diff)
+
+    c = sub.add_parser("crosscheck",
+                       help="check a queued payment against the sheet it pays, everything the Safe already paid, "
+                            "the other queued transactions and the exchange wallets")
+    c.add_argument("--sheet", required=True, type=Path,
+                   help="the sheet the payment must equal, as CSV: an address column and migration_balance (or "
+                        "amount) in ONE; amounts rounded by a spreadsheet are compared at the decimals shown")
+    c.add_argument("--exchange-wallets", required=True, type=Path,
+                   help="harmony-migration's exchanges/wallets-standardized, as the folder or a .zip of it")
+    c.add_argument("--exclude", type=Path, action="append",
+                   help="another list of addresses that must not be paid, e.g. a hold.txt (CSV with an address "
+                        "column, or one address per line); repeatable")
+    c.add_argument("--safe-tx-hash", action="append",
+                   help="the Safe transaction(s) to check (repeatable); default: every queued transaction that "
+                        "pays a wallet of the sheet")
+    c.add_argument("--out-dir", type=Path, default=Path("crosscheck"),
+                   help="where to write the report and the transfer lists (default: ./crosscheck)")
+    c.add_argument("--amount-column", help="the sheet's amount column, if not migration_balance or amount")
+    c.add_argument("--safe", help="the Safe (default: RESERVE_ADDRESS from .env)")
+    c.add_argument("--token", help="the only token the transactions may transfer (default: TOKEN_ADDRESS from .env)")
+    c.add_argument("--chain-id", type=int, default=1, help="1 for Ethereum mainnet (default)")
+    c.add_argument("--service-url", help="Safe Transaction Service base URL (default: Safe's hosted service for --chain-id)")
+    c.add_argument("--api-key", help="Safe API key, if the service asks for one (default: SAFE_API_KEY)")
+    c.add_argument("--env", type=Path, default=common.default_env_path())
+    c.set_defaults(func=cmd_crosscheck)
 
     args = parser.parse_args(argv)
     args.func(args)
