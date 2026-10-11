@@ -39,7 +39,9 @@ Staked and delegated ONE does not go to the wallet; it becomes principal in a pe
 vaults (through the standard CREATE2 deployer, so every vault address is known before signing) and
 fund each delegator's credit, decodes what is queued in the Safe for review, checks deposits
 against Harmony's own delegation record at the cutoff block, and reconciles the vaults after
-execution. `docs/VAULT_DIRECT.md` explains the procedure.
+execution. It can also send the deployments from a private key instead of the Safe, record each
+vault in `vault/deployments-<time>.csv`, and publish every vault's source on Etherscan.
+`docs/VAULT_DIRECT.md` explains the procedure.
 
 ## What you can check yourself
 
@@ -67,6 +69,7 @@ script/Execute.s.sol           send batches, skipping the ones already sent
 script/Simulate.s.sol          full dress rehearsal on a fork; sends nothing
 script/VerifyRoot.s.sol        recompute the root in Solidity and compare with files and contract
 script/DeployRehearsalToken.s.sol
+script/DeployVaults.s.sol      send the vault deployments planned by `vault-batch deploy` from a private key
 script/lib/                    shared helpers: the tree construction, reading run files, .env
 tools/build.py                 recipient list -> run directory (batches, proofs, root)
 tools/verify.py                recompute everything from the list and compare (Python)
@@ -75,10 +78,13 @@ tools/reconcile.py             read every recipient's balance after the run
 tools/approve_calldata.py      the one transaction the reserve has to send
 tools/select_batch.py          choose the recipients of the next batch (budget, required, held, paid)
 tools/safe_batch.py            without the contract: Safe transactions that pay a list, their hashes
-tools/vault_batch.py           Safe transactions that deploy and fund validator vaults; queue review
+tools/vault_batch.py           Safe transactions that deploy and fund validator vaults; queue review;
+                               deploying the vaults from a private key
 tools/common.py                keccak, ABI encoding, the tree, CSV reading, JSON-RPC
 vault/GovernorDelegator.json   the audited vault build (creation and runtime code, hashes)
 vault/GovernorDelegator.compiler-input.json  its solc standard-JSON input, including the source
+vault/LICENSE, vault/NOTICE.txt  the license and notice the source refers to; published with it on Etherscan
+vault/deployments-<time>.csv   every mainnet vault deployed from a private key: validator, governor, vault, transaction
 test/                          Solidity tests, including a cross-check against the Python tool
 examples/recipients-example.csv a small made-up list to try the tools on
 runs/                          generated run directories (ignored by git, published on release)
