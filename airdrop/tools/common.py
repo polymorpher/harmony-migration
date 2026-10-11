@@ -26,6 +26,7 @@ import ssl
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -751,5 +752,17 @@ def die(message: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+def redact_url(url: str) -> str:
+    """An RPC URL safe to print: providers put API keys in the path, query or user info."""
+    parts = urllib.parse.urlsplit(url)
+    if not parts.hostname or not (parts.path.strip("/") or parts.query or parts.username):
+        return url
+    port = f":{parts.port}" if parts.port else ""
+    return f"{parts.scheme}://{parts.hostname}{port}/<redacted>"
+
+
 def default_env_path() -> Path:
-    return Path(__file__).resolve().parents[1] / ".env"
+    """airdrop/.env, or the file AIRDROP_ENV names (relative to airdrop/), e.g. .env.sepolia."""
+    folder = Path(__file__).resolve().parents[1]
+    name = os.environ.get("AIRDROP_ENV", "")
+    return folder / (Path(name).expanduser() if name else ".env")
