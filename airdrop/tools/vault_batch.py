@@ -24,6 +24,14 @@ Everything runs through Safe's official MultiSendCallOnly, like `safe-batch`.
     # after execution: every vault's code, governor, custody, allowance and every delegator credit
     python3 tools/vault_batch.py reconcile --out-dir runs/vaults-1 --rpc-url URL
 
+    # or deploy a run's vaults from a private key instead of the Safe (dry run without --broadcast);
+    # every vault deployed is recorded in vault/deployments-<time>.csv
+    python3 tools/vault_batch.py deploy --out-dir runs/vaults-1 --rpc-url URL [--account NAME] [--broadcast]
+
+    # publish every deployed vault's source on Etherscan, with LICENSE and NOTICE.txt (deploy
+    # --broadcast does this itself when ETHERSCAN_API_KEY is set)
+    python3 tools/vault_batch.py etherscan --out-dir runs/vaults-1
+
 The vault address is computed before anything is signed:
 keccak256(0xff ++ deployer ++ salt ++ keccak256(creation code ++ abi.encode(token, governor)))[12:],
 with the salt equal to the validator address as a 32-byte word. The creation code is the audited
@@ -35,10 +43,18 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as _dt
+import getpass
+import hashlib
 import json
+import os
+import re
 import shutil
+import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -1619,6 +1635,505 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# source verification on Etherscan
+# ---------------------------------------------------------------------------------------------
+
+COMPILER_INPUT_PATH = ARTIFACT_PATH.parent / "GovernorDelegator.compiler-input.json"
+# The contract's header points to these two files; they are published with the verified source.
+LICENSE_FILES = {"LICENSE": "20aebc68b11c063133aa2af0ef4bb29875477c6d16d715718f0daec563938b84",
+                 "NOTICE.txt": "1413fff5aa26b54093d6b5275e49ca8423ed8d9e886ac55e262db3fa10dbb582"}
+ETHERSCAN_API = "https://api.etherscan.io/v2/api"
+ETHERSCAN_CHAINS = {1: "https://etherscan.io", 11155111: "https://sepolia.etherscan.io"}
+CONTRACT_NAME = "src/GovernorDelegator.sol:GovernorDelegator"
+ETHERSCAN_POLL_SECONDS = 5
+ETHERSCAN_ATTEMPTS = 24
+
+
+def etherscan_input() -> str:
+    """The pinned solc input with LICENSE and NOTICE.txt added as comment-only sources.
+
+    solc compiles every source, so the two text files go in as block comments; with no metadata
+    hash in the bytecode the compiled code is byte-identical to the audited build.
+    """
+    data = json.loads(COMPILER_INPUT_PATH.read_text(encoding="utf-8"))
+    source = data["sources"]["src/GovernorDelegator.sol"]["content"].encode()
+    if hashlib.sha256(source).hexdigest() != AUDITED_SOURCE_SHA256 or set(data["sources"]) != {"src/GovernorDelegator.sol"}:
+        raise common.InputError(f"{COMPILER_INPUT_PATH} is not the audited source")
+    for name, digest in LICENSE_FILES.items():
+        path = ARTIFACT_PATH.parent / name
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != digest:
+            raise common.InputError(f"{path} differs from the file published with the audited contract")
+        text = raw.decode("utf-8")
+        data["sources"][name] = {"content": "/*\n" + text + "*/\n"}
+    return json.dumps(data, separators=(",", ":"))
+
+
+class Etherscan:
+    def __init__(self, url: str, key: str, chain_id: int):
+        self.url, self.key, self.chain_id = url, key, chain_id
+
+    def call(self, params: dict, post: bool = False) -> dict:
+        query = {"chainid": str(self.chain_id)}
+        fields = {**params, "apikey": self.key}
+        if post:
+            request = urllib.request.Request(f"{self.url}?{urllib.parse.urlencode(query)}",
+                                             urllib.parse.urlencode(fields).encode(),
+                                             {"User-Agent": "harmony-airdrop-tools/1"})
+        else:
+            request = urllib.request.Request(f"{self.url}?{urllib.parse.urlencode({**query, **fields})}",
+                                             headers={"User-Agent": "harmony-airdrop-tools/1"})
+        error = None
+        for attempt in range(6):
+            try:
+                with urllib.request.urlopen(request, timeout=60, context=common.https_context()) as response:
+                    answer = json.loads(response.read().decode())
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                error = getattr(exc, "reason", exc)
+            else:
+                if "rate limit" not in str(answer.get("result", "")).lower():
+                    return answer
+                error = answer["result"]
+            time.sleep(attempt + 1)
+        raise RuntimeError(f"Etherscan request failed: {error}")
+
+
+def submit_vault_source(es: Etherscan, vault: Vault, token: str, source: str, compiler: str) -> str | None:
+    """Etherscan's id for the submission, or None when Etherscan already shows source for the address."""
+    fields = {"module": "contract", "action": "verifysourcecode", "contractaddress": vault.address,
+              "codeformat": "solidity-standard-json-input", "sourceCode": source, "contractname": CONTRACT_NAME,
+              "compilerversion": "v" + compiler, "constructorArguements": (aw(token) + aw(vault.governor)).hex()}
+    for _ in range(ETHERSCAN_ATTEMPTS):
+        answer = es.call(fields, post=True)
+        result = str(answer.get("result", ""))
+        if answer.get("status") == "1":
+            return result
+        if "already verified" in result.lower():
+            return None
+        if "unable to locate contractcode" not in result.lower():
+            raise RuntimeError(f"Etherscan refused the submission: {result}")
+        time.sleep(ETHERSCAN_POLL_SECONDS)  # Etherscan has not indexed the new contract yet
+    raise RuntimeError("Etherscan has still not indexed the contract; run `vault-batch etherscan` again later")
+
+
+def wait_for_verification(es: Etherscan, guid: str) -> None:
+    for _ in range(ETHERSCAN_ATTEMPTS):
+        time.sleep(ETHERSCAN_POLL_SECONDS)
+        result = str(es.call({"module": "contract", "action": "checkverifystatus", "guid": guid}).get("result", ""))
+        if result.lower().startswith("pass") or "already verified" in result.lower():
+            return
+        if "pending" not in result.lower() and "in progress" not in result.lower():
+            raise RuntimeError(f"Etherscan could not verify it: {result}")
+    raise RuntimeError(f"Etherscan is still checking submission {guid}; run `vault-batch etherscan` again later")
+
+
+def etherscan_match(es: Etherscan, vault: Vault, token: str) -> str:
+    """'exact match' when Etherscan holds this vault's own verification, else what it shows instead.
+
+    Once one vault is verified, Etherscan may show identical vaults as a "similar match" of it and
+    refuse their own submissions; their code tab then carries the other vault's constructor arguments.
+    """
+    entries = es.call({"module": "contract", "action": "getsourcecode", "address": vault.address}).get("result")
+    entry = entries[0] if isinstance(entries, list) and entries else {}
+    if not entry.get("SourceCode"):
+        raise RuntimeError("Etherscan shows no source for it")
+    similar = entry.get("SimilarMatch") or ""
+    if similar or str(entry.get("ConstructorArguments", "")).lower() != (aw(token) + aw(vault.governor)).hex():
+        return f"similar match of {similar or 'another contract'}"
+    return "exact match"
+
+
+def etherscan_settings(args, chain_id: int) -> tuple[str, str] | None:
+    """(API URL, key) when Etherscan verification can run, else None."""
+    key = args.etherscan_api_key or common.load_env(args.env).get("ETHERSCAN_API_KEY", "")
+    if not key or (chain_id not in ETHERSCAN_CHAINS and not args.etherscan_url):
+        return None
+    return args.etherscan_url or ETHERSCAN_API, key
+
+
+def verify_on_etherscan(settings: tuple[str, str], chain_id: int, token: str, vaults: list[Vault],
+                        artifact: Artifact) -> tuple[list[str], int]:
+    """Submit every vault before waiting on any, then read back what Etherscan shows for each.
+
+    Returns the failures and the number of vaults Etherscan shows only as a similar match.
+    """
+    source, compiler = etherscan_input(), artifact.info["compiler"]
+    es = Etherscan(settings[0], settings[1], chain_id)
+    explorer = ETHERSCAN_CHAINS.get(chain_id, settings[0])
+    errors, guids = {}, {}
+    for v in vaults:
+        try:
+            guids[v.address] = submit_vault_source(es, v, token, source, compiler)
+        except RuntimeError as exc:
+            errors[v.address] = str(exc)
+    for v in vaults:
+        if guids.get(v.address):
+            try:
+                wait_for_verification(es, guids[v.address])
+            except RuntimeError as exc:
+                errors[v.address] = str(exc)
+    similar = 0
+    for i, v in enumerate(vaults, start=1):
+        outcome = "FAILED"
+        if v.address not in errors:
+            try:
+                outcome = etherscan_match(es, v, token)
+            except RuntimeError as exc:
+                errors[v.address] = str(exc)
+        similar += outcome.startswith("similar")
+        print(f"etherscan        : {i}/{len(vaults)} {v.address} {outcome}  {explorer}/address/{v.address}#code", flush=True)
+    if similar:
+        print(f"note: {similar} vault(s) are similar matches: Etherscan matched them to an identical vault it had "
+              "already verified and refuses their own submission. Their code tab shows that vault's constructor "
+              "arguments; `governor()` under Read Contract shows each vault's own governor.")
+    return [f"{a}: {m}" for a, m in errors.items()], similar
+
+
+def cmd_etherscan(args: argparse.Namespace) -> None:
+    try:
+        checks = sb.Checks()
+        manifest, artifact, vaults = verify_offline(args.out_dir, checks)
+        if checks.failures:
+            raise common.InputError(f"{args.out_dir} does not verify ({checks.failures[0]}); run `vault-batch verify`")
+        token, chain_id = manifest["token"], manifest["chain_id"]
+        settings = etherscan_settings(args, chain_id)
+        if settings is None:
+            raise common.InputError("set ETHERSCAN_API_KEY in .env (or pass --etherscan-api-key)"
+                                    if chain_id in ETHERSCAN_CHAINS or args.etherscan_url
+                                    else f"Etherscan has no explorer for chain {chain_id}")
+        rpc_url = args.rpc_url or common.load_env(args.env).get("RPC_URL", "")
+        if not rpc_url:
+            raise common.InputError("pass --rpc-url")
+        rpc = common.Rpc(rpc_url)
+        rpc_chain = rpc.chain_id()
+        if rpc_chain != chain_id:
+            raise common.InputError(f"the RPC is on chain {rpc_chain}, the run on chain {chain_id}")
+        states = vault_states(rpc, artifact, token, [v.address for v in vaults])
+        live = [v for v in vaults if states[v.address.lower()]["deployed"]]
+        for v in live:
+            s = states[v.address.lower()]
+            if not (s.get("code_ok") and s.get("asset_ok")):
+                raise common.InputError(f"{v.address} exists but does not hold the audited code for this token")
+        print(f"run              : {args.out_dir}; {len(live)} of {len(vaults)} vault(s) deployed")
+        failures, similar = verify_on_etherscan(settings, chain_id, token, live, artifact)
+    except (common.InputError, RuntimeError, KeyError, ValueError) as exc:
+        common.die(str(exc))
+        return
+    for m in failures:
+        print(f"FAIL: {m}")
+    if failures:
+        common.die(f"{len(failures)} vault(s) are not verified; run the same command again to retry them")
+    if len(live) < len(vaults):
+        print(f"note: {len(vaults) - len(live)} vault(s) of this run are not deployed yet")
+    print(f"OK: every deployed vault of this run shows the audited source on Etherscan, with LICENSE and NOTICE.txt"
+          + (f"; {similar} as a similar match" if similar else ""))
+
+
+# ---------------------------------------------------------------------------------------------
+# deploy from a private key
+# ---------------------------------------------------------------------------------------------
+
+# Deploying moves no ONE and gives the sender no role in a vault, so a plain wallet may send the
+# deployments instead of the Safe; the vault addresses are the same either way.
+DEPLOY_SCRIPT = "script/DeployVaults.s.sol:DeployVaults"
+SENDER_KEY_ENV = "VAULT_SENDER_PRIVATE_KEY"
+DEPLOY_PLAN_FORMAT = "vault-sender-deploy/v1"
+DEFAULT_KEYSTORE_DIR = "~/.foundry/keystores"
+LEDGER_DIR = ARTIFACT_PATH.parent
+LEDGER_FIELDS = ["chain_id", "validator_address", "validator_one1", "governor_address", "vault_address", "status",
+                 "tx_hash", "block_number", "sender", "run"]
+
+
+def ask_secret(what: str) -> str:
+    if not sys.stdin.isatty():
+        raise common.InputError(f"cannot ask for the {what}: standard input is not a terminal")
+    return getpass.getpass(f"{what} (hidden): ")
+
+
+def keystore_password(args, env: dict, path: Path) -> tuple[str, str]:
+    """The keystore password from touchid-helper when TOUCHID_HELPER names it, otherwise typed once."""
+    configured = args.touchid_helper or env.get("TOUCHID_HELPER", "")
+    if args.no_touchid or not configured:
+        return ask_secret(f"password of keystore {path}"), "typed"
+    helper = Path(configured).expanduser()
+    if not (helper.is_file() and os.access(helper, os.X_OK)):
+        raise common.InputError(f"touchid-helper {helper} is not an executable file (fix TOUCHID_HELPER or "
+                                "--touchid-helper, or pass --no-touchid to type the password)")
+    print(f"password         : asking {helper} (approve with Touch ID)", flush=True)
+    result = subprocess.run([str(helper), "get", "-s", args.keychain_service, "-a", path.name],
+                            stdin=subprocess.DEVNULL, capture_output=True)
+    if result.returncode != 0:
+        raise common.InputError(f"{result.stderr.decode(errors='replace').strip() or 'touchid-helper failed'} "
+                                "(--no-touchid types the password instead)")
+    return result.stdout.decode().rstrip("\r\n"), "from touchid-helper"
+
+
+def unlock_keystore(path: Path, password: str) -> str:
+    result = subprocess.run(["cast", "wallet", "decrypt-keystore", path.name, "--keystore-dir", str(path.parent)],
+                            env={**os.environ, "CAST_UNSAFE_PASSWORD": password}, stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True)
+    match = re.search(r"private key is: (0x[0-9a-fA-F]{64})\s*$", result.stdout)
+    if result.returncode != 0 or not match:
+        lines = (result.stderr or result.stdout).strip().splitlines()
+        raise common.InputError(f"could not unlock {path}: {lines[-1] if lines else 'no output'} "
+                                "(a wrong password shows as Mac Mismatch)")
+    return match.group(1)
+
+
+def sender_key(args) -> tuple[str, str]:
+    """The sender's private key and where it came from, asked for once per command.
+
+    The Foundry keystore named by VAULT_SENDER_ACCOUNT is unlocked with its password (from
+    touchid-helper, or typed); without that keystore the private key itself is typed.
+    """
+    env = common.load_env(args.env)
+    account = args.account or env.get("VAULT_SENDER_ACCOUNT", "")
+    path = Path(args.keystore_dir).expanduser() / account if account else None
+    if path and path.is_file():
+        password, how = keystore_password(args, env, path)
+        key, source = unlock_keystore(path, password), f"keystore {path} (password {how})"
+    else:
+        missing = f"no keystore at {path}" if path else "no keystore named (VAULT_SENDER_ACCOUNT, --account)"
+        print(f"{missing}; enter the sender's private key instead", flush=True)
+        key, source = ask_secret("sender private key"), "typed private key"
+    key = key.strip()
+    if not re.fullmatch(r"(0x)?[0-9a-fA-F]{64}", key):
+        raise common.InputError("the private key is not 32 bytes of hex")
+    return "0x" + key.removeprefix("0x"), source
+
+
+def forge_deploy(forge_args: list[str], key: str, capture: bool) -> subprocess.CompletedProcess:
+    return subprocess.run(["forge", "script", DEPLOY_SCRIPT, *forge_args], cwd=HERE, stdin=subprocess.DEVNULL,
+                          env={**os.environ, SENDER_KEY_ENV: key}, capture_output=capture, text=True)
+
+
+def key_address(key: str) -> str:
+    result = forge_deploy(["--sig", "sender()"], key, capture=True)
+    match = re.search(r"== Return ==\s*0: address (0x[0-9a-fA-F]{40})", result.stdout)
+    if result.returncode != 0 or not match:
+        lines = (result.stderr or result.stdout).strip().splitlines()
+        raise RuntimeError(f"forge could not derive the sender's address: {lines[-1] if lines else 'no output'}")
+    return common.to_checksum(match.group(1))
+
+
+def gwei_to_wei(text: str, name: str) -> int:
+    try:
+        value = Decimal(text)
+    except Exception:
+        raise common.InputError(f"{name}: not a number: {text!r}") from None
+    if value <= 0:
+        raise common.InputError(f"{name} must be positive")
+    return int(value * 10**9)
+
+
+def earlier_deployments(ledger_dir: Path, chain_id: int) -> dict[str, dict]:
+    """vault address -> the row of an earlier ledger in ledger_dir that holds its deployment transaction."""
+    found = {}
+    for path in sorted(ledger_dir.glob("deployments-*.csv")):
+        with path.open(newline="", encoding="utf-8") as handle:
+            for r in csv.DictReader(handle):
+                if r.get("chain_id") == str(chain_id) and r.get("tx_hash"):
+                    found.setdefault(r["vault_address"].lower(), r)
+    return found
+
+
+def broadcast_hashes(chain_id: int, since: float) -> dict[str, str]:
+    """call data (lowercase hex) -> transaction hash, from the broadcast log forge wrote after `since`."""
+    path = HERE / "broadcast" / Path(DEPLOY_SCRIPT.split(":")[0]).name / str(chain_id) / "run-latest.json"
+    if not path.is_file() or path.stat().st_mtime < since:
+        return {}
+    log = json.loads(path.read_text(encoding="utf-8"))
+    hashes = {}
+    for entry in log.get("transactions", []):
+        tx = entry.get("transaction") or {}
+        data = tx.get("input") or tx.get("data")
+        if entry.get("hash") and data:
+            hashes[data.lower()] = entry["hash"]
+    return hashes
+
+
+def cmd_deploy(args: argparse.Namespace) -> None:
+    started = time.time()
+    stamp = _dt.datetime.fromtimestamp(started, _dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    try:
+        checks = sb.Checks()
+        manifest, artifact, vaults = verify_offline(args.out_dir, checks)
+        if checks.failures:
+            raise common.InputError(f"{args.out_dir} does not verify ({checks.failures[0]}); run `vault-batch verify`")
+        token, chain_id = manifest["token"], manifest["chain_id"]
+        out_dir = args.out_dir.resolve()
+        if not out_dir.is_relative_to((HERE / "runs").resolve()):
+            raise common.InputError(f"--out-dir must be inside {HERE / 'runs'}: the forge script may only read files there")
+        planned = [v for v in vaults if v.deploy] if manifest["phase"] in ("all", "deploy") else []
+        if not planned:
+            raise common.InputError(f"{args.out_dir} deploys no vaults (built with --phase fund, or every vault existed)")
+        for tool in ("forge", "cast"):
+            if shutil.which(tool) is None:
+                raise common.InputError(f"{tool} is not installed or not on PATH")
+        prices = parse_prices(args.gas_price_gwei)
+        max_fee = gwei_to_wei(args.max_fee_gwei, "--max-fee-gwei") if args.max_fee_gwei else None
+        tip = gwei_to_wei(args.priority_fee_gwei, "--priority-fee-gwei") if args.priority_fee_gwei else None
+        expected_sender = common.normalize_address(args.sender, "--sender") if args.sender else None
+        ledger_dir = args.ledger_dir or (LEDGER_DIR if chain_id == 1 else out_dir)
+
+        rpc_url = args.rpc_url or common.load_env(args.env).get("RPC_URL", "")
+        if not rpc_url:
+            raise common.InputError("pass --rpc-url")
+        rpc = common.Rpc(rpc_url)
+        rpc_chain = rpc.chain_id()
+        if rpc_chain != chain_id:
+            raise common.InputError(f"the RPC is on chain {rpc_chain}, the run on chain {chain_id}")
+        factory_hash = common.hex0x(common.keccak256(common.unhex(rpc.call("eth_getCode", [FACTORY, "latest"]))))
+        if factory_hash != FACTORY_CODE_HASH:
+            raise common.InputError(f"no standard CREATE2 deployer at {FACTORY} on this chain")
+        states = vault_states(rpc, artifact, token, [v.address for v in planned])
+        existing = [v for v in planned if states[v.address.lower()]["deployed"]]
+        for v in existing:
+            s = states[v.address.lower()]
+            if not (s.get("code_ok") and s.get("asset_ok")):
+                raise common.InputError(f"{v.address} (vault of {v.validator}) exists on-chain but does not hold the "
+                                        "expected code or token")
+        todo = [v for v in planned if v not in existing]
+        print(f"run              : {args.out_dir} (phase {manifest['phase']}); {len(planned)} vault(s) to deploy, "
+              f"{len(existing)} already on-chain")
+        if not todo:
+            print("nothing to deploy: every vault of this run exists on-chain")
+            return
+
+        key, source = sender_key(args)
+        sender = key_address(key)
+        if expected_sender and sender.lower() != expected_sender.lower():
+            raise common.InputError(f"the key belongs to {sender}, not to --sender {expected_sender}")
+        balance = int(rpc.call("eth_getBalance", [sender, "latest"]), 16)
+        mined, pending = (int(rpc.call("eth_getTransactionCount", [sender, b]), 16) for b in ("latest", "pending"))
+        if pending != mined:
+            raise common.InputError(f"{sender} has {pending - mined} pending transaction(s); wait until they are mined")
+        data = [common.hex0x(deploy_data(artifact, token, v.validator, v.governor)) for v in todo]
+        estimates = [int(e, 16) for e in
+                     rpc_batch(rpc, [("eth_estimateGas", [{"from": sender, "to": FACTORY, "data": d}]) for d in data])]
+        if max(estimates) > GAS_TX_CAP:
+            raise common.InputError(f"a deployment needs {max(estimates):,} gas, above the {GAS_TX_CAP:,} per-transaction cap")
+        gas_limits = [min(e * 6 // 5, GAS_TX_CAP) for e in estimates]
+        gas = sum(estimates)
+        price = max_fee or int(rpc.call("eth_gasPrice", []), 16)
+        cost = gas * price
+    except (common.InputError, RuntimeError, KeyError, ValueError) as exc:
+        common.die(str(exc))
+        return
+
+    print(f"sender           : {sender}, key from {source}")
+    print(f"balance          : {Decimal(balance) / 10**18:f} ETH; nonce {mined}")
+    print(f"transactions     : {len(todo)}, one per vault, through the CREATE2 deployer {FACTORY}")
+    print(f"estimated gas    : {gas:,} ({gas_costs(gas, prices)})")
+    print(f"gas limit        : {max(gas_limits):,} per transaction at most (the RPC's estimate plus 20%; forge's own "
+          "figures below may assume older gas prices for state creation)")
+    print(f"estimated cost   : {Decimal(cost) / 10**18:f} ETH at {Decimal(price) / 10**9:f} gwei "
+          f"({'--max-fee-gwei' if max_fee else 'the gas price the RPC reports now'})")
+    if balance < cost:
+        message = f"{sender} holds less ETH than the deployments are estimated to cost"
+        if args.broadcast:
+            common.die(message)
+            return
+        print(f"warning: {message}")
+    print("note: do not propose this run's Safe deploy transactions"
+          + ("; its fund transactions still apply" if manifest["phase"] == "all" else ""))
+
+    plan_path = out_dir / f"sender-deploy-{stamp}.json"
+    plan = {"format": DEPLOY_PLAN_FORMAT, "created_utc": stamp, "chain_id": chain_id, "factory": FACTORY,
+            "sender": sender, "run": out_dir.name, "validators": [v.validator for v in todo],
+            "governors": [v.governor for v in todo], "vaults": [v.address for v in todo], "data": data,
+            "gas": gas_limits}
+    plan_path.write_text(json.dumps(plan, indent=1) + "\n", encoding="utf-8")
+    forge_args = ["--sig", "run(string)", str(plan_path), "--rpc-url", rpc_url]
+    if args.broadcast:
+        forge_args += ["--broadcast", "--slow"]
+    if max_fee:
+        forge_args += ["--with-gas-price", str(max_fee)]
+    if tip:
+        forge_args += ["--priority-gas-price", str(tip)]
+    sys.stdout.flush()
+    shown = [common.redact_url(a) if a == rpc_url else a for a in forge_args]
+    print(f"$ forge script {DEPLOY_SCRIPT} {' '.join(shown)}  ({SENDER_KEY_ENV} set)", file=sys.stderr, flush=True)
+    interrupted = False
+    try:
+        result = forge_deploy(forge_args, key, capture=False)
+    except KeyboardInterrupt:
+        interrupted, result = True, None
+    if not args.broadcast:
+        plan_path.unlink()
+        if interrupted or result.returncode != 0:
+            common.die("the simulation failed; nothing was sent")
+            return
+        print("dry run: forge simulated every deployment against the chain; nothing was sent. Add --broadcast to send.")
+        return
+
+    # Whatever forge reported, record what is on-chain now.
+    try:
+        sent = broadcast_hashes(chain_id, started)
+        mine = {v.address.lower(): sent[d.lower()] for v, d in zip(todo, data) if d.lower() in sent}
+        receipts = dict(zip(mine, rpc_batch(rpc, [("eth_getTransactionReceipt", [h]) for h in mine.values()])))
+        after = vault_states(rpc, artifact, token, [v.address for v in planned])
+        earlier = earlier_deployments(ledger_dir, chain_id)
+    except (RuntimeError, KeyError, ValueError) as exc:
+        common.die(f"could not read the result back ({exc}); run deploy again without --broadcast to see the state")
+        return
+    rows, missing, failures = [], [], []
+    for v in planned:
+        s = after[v.address.lower()]
+        if not s["deployed"]:
+            missing.append(v)
+            continue
+        if not (s.get("code_ok") and s.get("asset_ok")):
+            failures.append(f"{v.address} (vault of {v.validator}) does not hold the expected code or token")
+            continue
+        r = receipts.get(v.address.lower())
+        ours = (r and r.get("status") == "0x1" and str(r.get("from", "")).lower() == sender.lower()
+                and str(r.get("to", "")).lower() == FACTORY.lower())
+        row = {"chain_id": str(chain_id), "validator_address": v.validator, "validator_one1": common.to_one1(v.validator),
+               "governor_address": v.governor, "vault_address": v.address, "run": out_dir.name}
+        if ours:
+            row.update(status="deployed", tx_hash=r["transactionHash"], block_number=str(int(r["blockNumber"], 16)),
+                       sender=sender)
+        else:
+            prior = earlier.get(v.address.lower(), {})
+            row.update(status="existing", tx_hash=prior.get("tx_hash", ""), block_number=prior.get("block_number", ""),
+                       sender=prior.get("sender", ""))
+        rows.append(row)
+    deployed = sum(1 for r in rows if r["status"] == "deployed")
+    if deployed:
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        ledger = ledger_dir / f"deployments-{stamp}.csv"
+        sb.write_table(ledger, "csv", LEDGER_FIELDS, rows)
+        print(f"ledger           : {ledger} ({deployed} deployed now, {len(rows) - deployed} already on-chain)")
+    print(f"vaults           : {len(planned)} planned; {deployed} deployed by {sender}; "
+          f"{len(rows) - deployed} deployed earlier; {len(missing)} not deployed")
+    for m in failures:
+        print(f"FAIL: {m}")
+    if failures or missing or interrupted or result.returncode != 0:
+        common.die("not every vault is deployed; once no transaction of the sender is pending, run the same command "
+                   "again: it deploys only what is missing")
+        return
+    print("OK: every vault of this run is deployed with the audited code")
+    settings = etherscan_settings(args, chain_id)
+    if settings is None:
+        print(f"etherscan        : not verified (no ETHERSCAN_API_KEY, or no explorer for chain {chain_id}); later: "
+              f"vault-batch etherscan --out-dir {args.out_dir}")
+    else:
+        try:
+            failures, _ = verify_on_etherscan(settings, chain_id, token, planned, artifact)
+        except (common.InputError, RuntimeError) as exc:
+            failures = [str(exc)]
+        for m in failures:
+            print(f"FAIL: {m}")
+        if failures:
+            common.die(f"the vaults are deployed and recorded, but {len(failures)} are not verified on Etherscan; "
+                       f"retry with: vault-batch etherscan --out-dir {args.out_dir}")
+            return
+    print("next             : fund them from the Safe with `vault-batch build --phase fund ...` "
+          "(deploy transactions are left out on their own)")
+
+
+# ---------------------------------------------------------------------------------------------
 # argument parsing
 # ---------------------------------------------------------------------------------------------
 
@@ -1740,6 +2255,46 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--out", type=Path, help="report CSV (default: <out-dir>/reconcile-block-<block>.csv)")
     r.add_argument("--env", type=Path, default=common.default_env_path())
     r.set_defaults(func=cmd_reconcile)
+
+    d = sub.add_parser("deploy", help="deploy a run's vaults from a private key instead of the Safe (dry run by "
+                                      "default) and record them in vault/deployments-<time>.csv")
+    d.add_argument("--out-dir", required=True, type=Path,
+                   help="a run built with --phase deploy (or all), inside runs/; only its vaults not on-chain yet are sent")
+    d.add_argument("--rpc-url", help="Ethereum RPC (default: RPC_URL from .env)")
+    d.add_argument("--broadcast", action="store_true", help="send the transactions; without it forge only simulates them")
+    d.add_argument("--account",
+                   help="Foundry keystore name in --keystore-dir, as given to `cast wallet import` (default: "
+                        "VAULT_SENDER_ACCOUNT from .env). Without either, or without that keystore, the private key "
+                        "is asked for instead")
+    d.add_argument("--keystore-dir", default=DEFAULT_KEYSTORE_DIR, help=f"default: {DEFAULT_KEYSTORE_DIR}")
+    d.add_argument("--touchid-helper",
+                   help="touchid-helper binary that releases the keystore password after Touch ID (default: "
+                        "TOUCHID_HELPER from .env); without either, the password is asked for once")
+    d.add_argument("--keychain-service", default="foundry-keystore",
+                   help="touchid-helper service (-s) holding the password; the account (-a) is the keystore name "
+                        "(default: foundry-keystore)")
+    d.add_argument("--no-touchid", action="store_true", help="type the keystore password even if TOUCHID_HELPER is set")
+    d.add_argument("--sender", help="stop unless the key belongs to this address")
+    d.add_argument("--max-fee-gwei", help="max fee per gas (default: forge's estimate from the RPC)")
+    d.add_argument("--priority-fee-gwei", help="max priority fee per gas (default: forge's estimate from the RPC)")
+    d.add_argument("--gas-price-gwei", default="0.1,0.3,1", help="gas prices for the printed cost estimate")
+    d.add_argument("--ledger-dir", type=Path,
+                   help="where deployments-<time>.csv goes (default: vault/ for Ethereum mainnet, the run directory "
+                        "for any other chain)")
+    d.add_argument("--etherscan-api-key", help="verify the deployed vaults' source on Etherscan, with LICENSE and "
+                                               "NOTICE.txt (default: ETHERSCAN_API_KEY from .env; without one, skipped)")
+    d.add_argument("--etherscan-url", help=argparse.SUPPRESS)
+    d.add_argument("--env", type=Path, default=common.default_env_path())
+    d.set_defaults(func=cmd_deploy)
+
+    e = sub.add_parser("etherscan", help="verify the source of a run's deployed vaults on Etherscan, with LICENSE "
+                                         "and NOTICE.txt; vaults already verified are reported as such")
+    e.add_argument("--out-dir", required=True, type=Path, help="the run whose vaults to verify (deploy, fund or both)")
+    e.add_argument("--rpc-url", help="Ethereum RPC, to find which vaults are deployed (default: RPC_URL from .env)")
+    e.add_argument("--etherscan-api-key", help="default: ETHERSCAN_API_KEY from .env")
+    e.add_argument("--etherscan-url", help=argparse.SUPPRESS)
+    e.add_argument("--env", type=Path, default=common.default_env_path())
+    e.set_defaults(func=cmd_etherscan)
 
     args = parser.parse_args(argv)
     args.func(args)

@@ -56,7 +56,12 @@ class CliError(Exception):
 
 
 def load_environment() -> dict:
-    env = common.load_env(HERE / ".env")
+    path = common.default_env_path()
+    if os.environ.get("AIRDROP_ENV"):
+        if not path.is_file():
+            raise CliError(f"AIRDROP_ENV names {path}, which does not exist")
+        print(f"settings         : {path} (AIRDROP_ENV)", file=sys.stderr)
+    env = common.load_env(path)
     for key, value in env.items():
         os.environ[key] = value  # forge scripts read the role addresses with vm.env*
     return env
@@ -87,6 +92,8 @@ def redact(cmd: list[str]) -> str:
     for i, token in enumerate(shown):
         if token == "--private-key" and i + 1 < len(shown):
             shown[i + 1] = "<redacted>"
+        elif token == "--rpc-url" and i + 1 < len(shown):
+            shown[i + 1] = common.redact_url(shown[i + 1])
     return " ".join(shlex.quote(t) for t in shown)
 
 
@@ -365,7 +372,7 @@ PASSTHROUGH = {
     "test": (cmd_test, "forge test flags"),
     "select-batch": (cmd_select_batch, "options for tools/select_batch.py: --input FILE --out-dir DIR [--budget N] ..."),
     "safe-batch": (cmd_safe_batch, "tools/safe_batch.py build|verify|hash|show|diff|crosscheck ..."),
-    "vault-batch": (cmd_vault_batch, "tools/vault_batch.py build|verify|show|hash|reconcile ..."),
+    "vault-batch": (cmd_vault_batch, "tools/vault_batch.py build|verify|show|hash|reconcile|deploy ..."),
 }
 FORGE_EXTRA_HELP = "Extra forge flags may follow a `--` separator."
 
@@ -416,7 +423,8 @@ def build_parser() -> argparse.ArgumentParser:
     add("safe-batch", "Without a contract: prepare, verify, hash, or show queued Safe transactions that pay a list directly. "
         + PASSTHROUGH["safe-batch"][1], cmd_safe_batch)
     add("vault-batch", "Deploy GovernorDelegator validator vaults and fund delegator principal from the Safe: prepare, "
-        "verify, show queued, hash, reconcile. " + PASSTHROUGH["vault-batch"][1], cmd_vault_batch)
+        "verify, show queued, hash, reconcile; or deploy the vaults from a private key. "
+        + PASSTHROUGH["vault-batch"][1], cmd_vault_batch)
     add("help", "Show this help.", None)
     return parser
 
