@@ -250,6 +250,10 @@ it has been paid already:
   .zip of it. Every exchange wallet is delivered manually, to the exchange, so none may appear in an
   airdrop. Each file must equal what the inventory's `summary.json` lists (SHA-256 and row count),
   so a missing or edited exchange file fails the check.
+- `--exchange ID` (repeatable) is for a manual delivery to an exchange that takes it at its own
+  wallets (`destination_mode` `same_address` in `summary.json`, such as `crypto-com`): that
+  exchange's wallets may be paid, and every other exchange wallet and delivery address still fails.
+  Naming any other kind of exchange stops the check.
 - `--exclude FILE` (repeatable) adds another list of addresses that must not be paid, such as a
   batch's `hold.txt`: one address per line with `#` comments, or a CSV with an address column.
 - By default the payment is every queued transaction that pays a wallet of the sheet;
@@ -263,7 +267,8 @@ its raw data and recomputes its Safe transaction hash, then checks:
 2. nobody in it received the token in an executed Safe transaction (the initial distribution
    batches, the exchange deliveries, tests, anything);
 3. nobody in it is paid by another queued transaction;
-4. nobody in it is an exchange wallet or an exchange's delivery address;
+4. nobody in it is an exchange wallet or an exchange's delivery address, except the wallets of the
+   exchanges named with `--exchange`;
 5. nobody in it is on an `--exclude` list.
 
 It prints a report ending in `RESULT: PASS` or `RESULT: FAIL` (and exits with status 1), and writes
