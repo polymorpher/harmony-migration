@@ -1482,7 +1482,19 @@ def cmd_show(args: argparse.Namespace) -> None:
     if bad:
         failures.append(f"{bad} deposit(s) do not match (see the check column of the details file)")
     if args.out:
-        note(f"written to       : {args.out}, {args.out.stem}-vaults{args.out.suffix}, {args.out.stem}-details{args.out.suffix}")
+        extra = (", Harmony's amount at the cutoff" if cutoff is not None else "") + \
+                (", the list's amount" if expected is not None else "") + \
+                (" and a check column (ok, or why not)" if checked else "")
+        vaults_file = args.out.with_name(f"{args.out.stem}-vaults{args.out.suffix}")
+        details_file = args.out.with_name(f"{args.out.stem}-details{args.out.suffix}")
+        note(f"written to       : {args.out}")
+        note("                   one row per deposit: validator, vault, delegator and the exact ONE credited")
+        note(f"                   {vaults_file}")
+        note("                   one row per vault: validator" + (" and its Harmony name" if names else "")
+             + ", governor, vault address, where it was deployed, number of deposits and total ONE")
+        note(f"                   {details_file}")
+        note("                   one row per deposit with its nonce, call and position, the amount in the smallest "
+             f"unit, the governor{extra}")
     for m in warnings:
         note(f"warning: {m}")
     for m in failures:

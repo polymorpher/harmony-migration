@@ -1244,8 +1244,16 @@ def cmd_show(args: argparse.Namespace) -> None:
         failures.append(f"{bad} transfer(s) do not match (see the check column of the details file)")
     if args.out:
         note(f"written to       : {args.out}")
+        note("                   one row per transfer, in payment order: one1 and 0x address, migration_balance (the "
+             "amount paid, truncated to whole ONE)" + (", last_signed and last_inbound from the snapshot"
+                                                       if args.snapshot else ""))
     if details:
+        extra = (", the snapshot's migration_balance" if payment_snapshot else "") + \
+                (", the list's amount" if expected is not None else "") + \
+                (" and a check column (ok, or why not)" if checked else "")
         note(f"details          : {details}")
+        note(f"                   one row per transfer with its nonce and position, the exact amount in ONE and in the "
+             f"smallest unit{extra}")
     elif checked and bad:
         note("details          : pass --out or --details to write the per-transfer checks")
     for message in warnings:
