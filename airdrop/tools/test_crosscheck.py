@@ -89,8 +89,10 @@ class Fixture(unittest.TestCase):
             writer.writeheader()
             writer.writerows(rows)
             contents[name] = buffer.getvalue().encode()
+        modes = {"kucoin": "aggregate", "htx": "same_address"}
         summary = {"exchanges": {name[:-4]: {"output": f"exchanges/wallets-standardized/{name}", "normalized_rows": 1,
-                                              "output_sha256": hashlib.sha256(data).hexdigest()}
+                                              "output_sha256": hashlib.sha256(data).hexdigest(),
+                                              "destination_mode": modes[name[:-4]]}
                                  for name, data in contents.items()}}
         if alter:
             contents["htx.csv"] += b"htx,0x" + b"12" * 20 + b",,,\n"
@@ -111,6 +113,7 @@ class InputTests(Fixture):
         self.assertTrue(inventory.has_summary)
         self.assertEqual(inventory.wallets, {DAVE: "kucoin", ALICE: "htx"})
         self.assertEqual(inventory.known_as(HOT), "kucoin delivery address")
+        self.assertEqual(inventory.modes, {"kucoin": "aggregate", "htx": "same_address"})
 
     def test_an_altered_or_missing_file_is_a_problem(self):
         self.assertIn("SHA-256 differs", " ".join(safe_batch.read_inventory(self.inventory_zip(alter=True)).problems))
@@ -125,11 +128,12 @@ class InputTests(Fixture):
 
 
 class CrosscheckTests(Fixture):
-    def run_check(self, sheet: list[dict], records: list[dict], next_nonce: int, safe_tx_hash=None, exclude=None):
+    def run_check(self, sheet: list[dict], records: list[dict], next_nonce: int, safe_tx_hash=None, exclude=None,
+                  exchange=None):
         sheet_path = write_csv(self.dir / "sheet.csv", ["address", "migration_balance"], sheet)
         args = SimpleNamespace(env=self.dir / "none.env", safe=SAFE, token=TOKEN, sheet=sheet_path, amount_column=None,
                                exchange_wallets=self.inventory_zip(), exclude=exclude, service_url=None, chain_id=1,
-                               api_key=None, safe_tx_hash=safe_tx_hash, out_dir=self.dir / "out")
+                               api_key=None, safe_tx_hash=safe_tx_hash, out_dir=self.dir / "out", exchange=exchange)
         info = {"nonce": str(next_nonce), "version": "1.4.1", "threshold": 2, "owners": [ALICE, BOB, CAROL]}
         stdout = io.StringIO()
         code = 0
@@ -171,6 +175,27 @@ class CrosscheckTests(Fixture):
         self.assertIn("kucoin exchange wallet", report)
         self.assertIn("kucoin delivery address", report)
         self.assertIn("RESULT: FAIL in check 1, 4.", report)
+
+    def test_a_same_address_exchange_named_with_exchange_may_be_paid(self):
+        records = [record(1, [(ALICE, 2 * ONE)], False)]
+        sheet = [{"address": ALICE, "migration_balance": "2"}]
+        code, report = self.run_check(sheet, records, 1)
+        self.assertEqual(code, 1)
+        self.assertIn("htx exchange wallet", report)
+        code, report = self.run_check(sheet, records, 1, exchange=["htx"])
+        self.assertEqual(code, 0, report)
+        self.assertIn("except htx's own wallets", report)
+        self.assertIn("1 of the 1 wallets are htx wallets", report)
+        self.assertIn(",2,ok", (self.dir / "out" / "payment-vs-sheet.csv").read_text())
+        records = [record(1, [(ALICE, 2 * ONE), (DAVE, ONE)], False)]
+        sheet.append({"address": DAVE, "migration_balance": "1"})
+        code, report = self.run_check(sheet, records, 1, exchange=["htx"])
+        self.assertEqual(code, 1)
+        self.assertIn("kucoin exchange wallet", report)
+        self.assertIn("RESULT: FAIL in check 4.", report)
+        for exchange in ("kucoin", "okx"):  # not same_address; not in the inventory
+            code, report = self.run_check(sheet, records, 1, exchange=[exchange])
+            self.assertEqual((code, report), (1, ""))
 
     def test_another_queued_payment_to_the_same_wallet_fails(self):
         mine, other = record(1, [(BOB, 2 * ONE)], False), record(2, [(BOB, 2 * ONE)], False)
