@@ -382,7 +382,7 @@ export AIRDROP_ENV=.env.sepolia
     --out-dir runs/sepolia-vaults-pilots-deploy --no-nonce --phase deploy
 ./airdrop.py vault-batch deploy --out-dir runs/sepolia-vaults-pilots-deploy --broadcast
 ./airdrop.py vault-batch build --input $I --input $C --validator $MODULO \
-    --out-dir runs/sepolia-vaults-pilot-1 --no-nonce --phase fund --max-rows-per-call 100 --gas-target 3000000
+    --out-dir runs/sepolia-vaults-pilot-1 --no-nonce --phase fund --max-rows-per-call 90 --gas-target 2500000
 ./airdrop.py vault-batch verify --out-dir runs/sepolia-vaults-pilot-1 --rpc-url https://ethereum-sepolia-rpc.publicnode.com \
     --harmony-rpc https://api.s0.t.hmny.io
 # propose tx-01-fund in the Safe web app on Sepolia, then review the queue:
@@ -399,10 +399,12 @@ unset AIRDROP_ENV
   byte of deployed code (mainnet 202) and 110,979 gas per new storage slot (mainnet 22,441). A vault
   deployment takes about 3.77 million gas there instead of 565,000. `deploy` sets each
   transaction's gas limit from the node's `eth_estimateGas` plus 20%, so this is handled; forge's
-  own "estimated gas" figures still use the older prices. A deposit to a new delegator costs
-  about 115,000 gas instead of 26,000, so build Sepolia funding runs with `--max-rows-per-call 100
-  --gas-target 3000000`: about 100 deposits per Safe transaction, about 11.5 million gas, under the
-  16,777,216 per-transaction cap. The build's gas estimates assume mainnet prices.
+  own "estimated gas" figures still use the older prices. Funding the pilots there took about
+  113,000 gas per deposit to a new delegator and about 230,000 per vault in a transaction (mainnet
+  26,000 and 40,000), so build Sepolia funding runs with `--max-rows-per-call 90 --gas-target
+  2500000`. That keeps every transaction under about 11 million gas whether it holds many deposits
+  or many small vaults, below the 16,777,216 per-transaction cap. The build's gas estimates assume
+  mainnet prices.
 - `deployments-<time>.csv` goes into the run directory, not `vault/`, and Etherscan verification
   goes to sepolia.etherscan.io.
 - `show` needs `--chain-id 11155111` to read Safe's Sepolia Transaction Service.
