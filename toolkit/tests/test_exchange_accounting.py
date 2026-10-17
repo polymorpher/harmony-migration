@@ -583,6 +583,53 @@ class ExchangeNormalizationTest(unittest.TestCase):
                     config, path, self.module.file_sha256(path), "", "same_address"
                 )
 
+    def test_signed_statement_binds_wallet_hash_and_destination(self):
+        module = self.module
+        wallet = self.private_key_address(module, 7)
+        message = f"Example owns this address, and transfers all of it to {self.WALLET}"
+
+        def statement(address, text, digest, signature):
+            return (
+                f"address: {module.lib.hex_to_bech32(address)} \n"
+                f"message: {text} \n"
+                f"hash: {digest} \n"
+                f"signature: {signature}\n"
+            )
+
+        good = statement(
+            wallet, message, module.eip191_hash(message).hex(),
+            self.signature(module, 7, message, 11),
+        )
+        config = {"id": "example"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "example.txt"
+            path.write_text(good, encoding="utf-8")
+            rows, physical, blank, details = module.parse_eip191_statement(
+                config, path, module.file_sha256(path), self.WALLET, "configured"
+            )
+            self.assertEqual((len(rows), physical, blank), (1, 1, 0))
+            self.assertEqual(rows[0]["address_hex"].lower(), wallet)
+            self.assertEqual(rows[0]["authorization_status"], "verified")
+            self.assertEqual(
+                rows[0]["authorization_destination"].lower(), self.WALLET
+            )
+            self.assertEqual(details["authorization_designated_rows"], 1)
+            other = f"Example owns this address, and transfers all of it to {self.STAKING}"
+            cases = (
+                (good.replace(module.eip191_hash(message).hex(), "00" * 32), "EIP-191 digest"),
+                (statement(wallet, other, module.eip191_hash(other).hex(),
+                           self.signature(module, 7, other, 11)), "configured destination"),
+                (statement(wallet, message, module.eip191_hash(message).hex(),
+                           self.signature(module, 8, message, 11)), "signer mismatch"),
+                ("\n".join(good.splitlines()[:3]) + "\n", "missing signature"),
+            )
+            for text, error in cases:
+                path.write_text(text, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, error):
+                    module.parse_eip191_statement(
+                        config, path, module.file_sha256(path), self.WALLET, "configured"
+                    )
+
     def test_one_to_atto_conversion_is_exact_for_large_values(self):
         self.assertEqual(
             self.module.decimal_one_to_atto("12345678901.123456789012345678", "t"),
