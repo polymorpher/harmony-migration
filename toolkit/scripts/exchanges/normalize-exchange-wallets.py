@@ -1231,6 +1231,97 @@ def parse_mexc(config, path, raw_sha256, destination, state):
     }
 
 
+STATEMENT_FIELDS = ("address", "message", "hash", "signature")
+
+
+def statement_blocks(path):
+    """Yield (first line number, {field: value}) per blank-line-separated block."""
+    lines = path.read_text(encoding="utf-8-sig").splitlines()
+    block, start = {}, None
+    for number, raw in enumerate(lines + [""], start=1):
+        text = raw.strip()
+        if not text:
+            if block:
+                yield start, block
+            block, start = {}, None
+            continue
+        if text.startswith("#"):
+            continue
+        field, separator, value = text.partition(":")
+        field = field.strip().lower()
+        if not separator or field not in STATEMENT_FIELDS:
+            raise ValueError(
+                f"{path}:{number}: expected `field: value` with one of "
+                f"{', '.join(STATEMENT_FIELDS)}"
+            )
+        if field in block:
+            raise ValueError(f"{path}:{number}: duplicate {field}")
+        block[field] = value.strip()
+        start = start or number
+
+
+def parse_eip191_statement(config, path, raw_sha256, destination, state):
+    """Signed statements as `field: value` blocks, one per wallet.
+
+    Each block gives the wallet `address`, the signed `message`, its EIP-191
+    `hash` and the `signature`. The message must name exactly the configured
+    destination, the hash must be the message's EIP-191 digest, and the low-s
+    signature must recover to the wallet.
+    """
+    configured = normalize_address(destination, str(path))
+    rows = []
+    for number, block in statement_blocks(path):
+        context = f"{path}:{number}"
+        missing = [field for field in STATEMENT_FIELDS if field not in block]
+        if missing:
+            raise ValueError(f"{context}: missing {', '.join(missing)}")
+        address = normalize_address(block["address"], context)
+        message = block["message"]
+        if message_addresses(message) != {configured}:
+            raise ValueError(
+                f"{context}: signed message does not name configured destination"
+            )
+        digest = block["hash"].lower().removeprefix("0x")
+        if digest != eip191_hash(message).hex():
+            raise ValueError(
+                f"{context}: hash is not the EIP-191 digest of the message"
+            )
+        signature = block["signature"]
+        if recover_eip191_address(message, signature, context) != address:
+            raise ValueError(f"{context}: signature signer mismatch")
+        row = base_row(
+            config["id"],
+            path,
+            raw_sha256,
+            "",
+            number,
+            block["address"],
+            destination,
+            state,
+        )
+        row.update(
+            {
+                "authorization_type": "EIP-191",
+                "authorization_destination": lib.to_checksum(configured),
+                "authorization_message_sha256": hashlib.sha256(
+                    message.encode("utf-8")
+                ).hexdigest(),
+                "authorization_signature_sha256": hashlib.sha256(
+                    signature.encode("utf-8")
+                ).hexdigest(),
+                "authorization_status": "verified",
+            }
+        )
+        rows.append(row)
+    if not rows:
+        raise ValueError(f"{path}: no signed statement")
+    return rows, len(rows), 0, {
+        "authorization_artifact": str(path),
+        "authorization_artifact_sha256": raw_sha256,
+        "authorization_designated_rows": len(rows),
+    }
+
+
 DIGITALX_WALLET_TYPES = ("warm/sender wallet", "user deposit address")
 DIGITALX_SUMMARY_LABELS = {
     "wallet_balance": "Sum of current wallet balance",
@@ -1501,6 +1592,7 @@ def main():
         "csv_okx_atto": parse_okx,
         "csv_bybit_amount": parse_bybit,
         "txt_address_list": parse_txt_address_list,
+        "txt_eip191_statement": parse_eip191_statement,
     }
     summaries = {}
     all_addresses = {}
