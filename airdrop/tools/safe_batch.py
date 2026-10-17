@@ -23,9 +23,10 @@ MultiSendCallOnly contract), and the Safe's signers approve every batch.
         --snapshot snapshot-20260911.csv --out queued.csv [--compare payment-list.csv]
 
     # the queued payment of a sheet pays exactly that sheet, and nobody the Safe already paid, nobody
-    # in another queued transaction, and no exchange wallet
+    # in another queued transaction, and no exchange wallet (but those of a same-address exchange
+    # named with --exchange, for its own manual delivery)
     python3 tools/safe_batch.py crosscheck --safe 0xSafe --token 0xToken --sheet sheet.csv \
-        --exchange-wallets wallets-standardized.zip [--exclude hold.txt] [--out-dir crosscheck]
+        --exchange-wallets wallets-standardized.zip [--exchange crypto-com] [--exclude hold.txt] [--out-dir crosscheck]
 
 For every Safe transaction `build` writes a file to import into the Safe web app's Transaction
 Builder, the recipients of that transaction, and the exact transaction the Safe will be asked to
@@ -49,7 +50,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -1546,6 +1547,7 @@ class Inventory:
     problems: list[str]
     notes: list[str]
     has_summary: bool = False
+    modes: dict[str, str] = field(default_factory=dict)  # exchange: destination_mode from summary.json
 
     def known_as(self, address: str) -> str:
         wallet = f"{self.wallets[address]} exchange wallet" if address in self.wallets else ""
@@ -1611,6 +1613,7 @@ def read_inventory(path: Path) -> Inventory:
     inventory.has_summary = True
     listed = json.loads(summary).get("exchanges", {})
     for exchange, info in sorted(listed.items()):
+        inventory.modes[exchange] = str(info.get("destination_mode") or "")
         name = Path(str(info.get("output", ""))).name
         if name not in inventory.files:
             inventory.problems.append(f"{name} ({exchange}) is listed in summary.json but missing")
@@ -1690,6 +1693,15 @@ def cmd_crosscheck(args: argparse.Namespace) -> None:
         token = common.normalize_address(token_text, "--token")
         sheet, amount_column = read_sheet(args.sheet, args.amount_column)
         inventory = read_inventory(args.exchange_wallets)
+        own = set(getattr(args, "exchange", None) or [])
+        for exchange in sorted(own):
+            if exchange not in inventory.counts:
+                raise common.InputError(f"--exchange {exchange}: no such exchange in {args.exchange_wallets.name}")
+            if inventory.modes.get(exchange) != "same_address":
+                raise common.InputError(
+                    f"--exchange {exchange}: summary.json gives its destination_mode as "
+                    f"{inventory.modes.get(exchange) or 'nothing'}; only an exchange delivered at its own wallets "
+                    "(same_address) can be named")
         excluded = {path: read_address_list(path) for path in args.exclude or []}
         base = (args.service_url or SAFE_TX_SERVICE.get(args.chain_id, "")).rstrip("/")
         if not base:
@@ -1872,9 +1884,16 @@ def cmd_crosscheck(args: argparse.Namespace) -> None:
     out(f"   overlap     : {len(elsewhere)} of the {len(everyone)} wallets")
     verdict("3", problems + flagged(elsewhere))
 
-    # 4. nobody in it is an exchange wallet or delivery address
-    out("4. Nobody in it is an exchange wallet or an exchange's delivery address (exchanges are paid manually)")
+    # 4. nobody in it is an exchange wallet or delivery address, except the named exchanges' own wallets
+    named = ", ".join(sorted(own))
+    if own:
+        out(f"4. Nobody in it is an exchange wallet or an exchange's delivery address, except {named}'s own "
+            "wallets (--exchange: delivered at their own address)")
+    else:
+        out("4. Nobody in it is an exchange wallet or an exchange's delivery address (exchanges are paid manually)")
     exchanges = [a for a in everyone if inventory.known_as(a)]
+    allowed = [a for a in exchanges if inventory.wallets.get(a) in own and a not in inventory.destinations]
+    exchanges = [a for a in exchanges if a not in allowed]
     for address in exchanges:
         reasons[address].append(inventory.known_as(address))
     source = (f"sha256 {common.sha256_file(args.exchange_wallets)}" if args.exchange_wallets.is_file()
@@ -1888,6 +1907,9 @@ def cmd_crosscheck(args: argparse.Namespace) -> None:
     out(f"                 {len(inventory.destinations)} delivery addresses")
     for note in listing(inventory.notes):
         out(f"   note        : {note}")
+    if own:
+        out(f"   own wallets : {len(allowed)} of the {len(everyone)} wallets are {named} wallets, paid at their own "
+            "address")
     out(f"   overlap     : {len(exchanges)} of the {len(everyone)} wallets")
     verdict("4", listing(inventory.problems) + flagged(exchanges))
 
@@ -1928,7 +1950,8 @@ def cmd_crosscheck(args: argparse.Namespace) -> None:
     else:
         out(f"RESULT: PASS. The Safe transaction(s) above pay exactly the {len(rows_by_address)} wallets of "
             f"{args.sheet.name}; none of them was paid by the Safe before, is in another queued transaction, "
-            "or is an exchange wallet" + (", or is on the --exclude lists" if excluded else "") + ". Before signing, "
+            "or is an exchange wallet" + (f" other than {named}'s own" if own else "")
+            + (", or is on the --exclude lists" if excluded else "") + ". Before signing, "
             "check that the Safe web app and your wallet show the same hashes.")
     (args.out_dir / "report.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
     if failed_sections:
@@ -2061,6 +2084,10 @@ def main(argv: list[str] | None = None) -> None:
                         "amount) in ONE; amounts rounded by a spreadsheet are compared at the decimals shown")
     c.add_argument("--exchange-wallets", required=True, type=Path,
                    help="harmony-migration's exchanges/wallets-standardized, as the folder or a .zip of it")
+    c.add_argument("--exchange", action="append",
+                   help="the exchange this payment delivers to, when it is delivered at its own wallets "
+                        "(destination_mode same_address in summary.json), e.g. crypto-com: its wallets may be paid; "
+                        "every other exchange wallet and delivery address still fails (repeatable)")
     c.add_argument("--exclude", type=Path, action="append",
                    help="another list of addresses that must not be paid, e.g. a hold.txt (CSV with an address "
                         "column, or one address per line); repeatable")
