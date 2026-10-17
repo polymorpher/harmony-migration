@@ -15,5 +15,10 @@ runs/
 # Transaction logs written by `forge script --broadcast`. Published together with the run.
 broadcast/
 
+# Review output of `show` and `crosscheck` run from here: address-level amounts.
+queued*.csv
+queued*.json
+crosscheck/
+
 __pycache__/
 *.pyc
