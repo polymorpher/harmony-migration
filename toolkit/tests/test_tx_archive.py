@@ -1,3 +1,4 @@
+import argparse
 import csv
 import importlib.util
 import json
@@ -23,6 +24,8 @@ def load_script(name):
 
 SCAN = load_script("scan-blocks.py")
 TRACE = load_script("trace-internal.py")
+CALLDATA = load_script("fetch-calldata.py")
+NAMES = load_script("resolve-method-names.py")
 
 ALICE = "0x" + "01" * 20
 BOB = "0x" + "02" * 20
@@ -115,7 +118,7 @@ def signed_tx(index, block, to, value, nonce, to_shard=0, data="0x"):
           "from": lib.crl.hex_to_bech32(ALICE), "to": lib.crl.hex_to_bech32(to), "value": value, "input": data,
           "nonce": nonce, "gasPrice": 10 ** 11, "gas": 21000, "shardID": 0, "toShardID": to_shard,
           "v": "0x25", "r": "0x" + "11" * 32, "s": "0x" + "22" * 32, "ethHash": ""}
-    fields = [nonce, 10 ** 11, 21000, 0, to_shard, bytes.fromhex(to[2:]), value, b"", 0x25,
+    fields = [nonce, 10 ** 11, 21000, 0, to_shard, bytes.fromhex(to[2:]), value, bytes.fromhex(data[2:]), 0x25,
               int("11" * 32, 16), int("22" * 32, 16)]
     tx["hash"] = "0x" + lib.crl.keccak256(lib.rlp_encode(fields)).hex()
     return tx
@@ -133,6 +136,7 @@ class ImportExportTest(unittest.TestCase):
         early = signed_tx(0, blocks[0], BOB, 7 * ONE, 1)
         transfer = signed_tx(0, blocks[1], BOB, 3 * ONE, 2)
         native = signed_tx(1, blocks[1], BOB, 5 * ONE, 3, to_shard=1)
+        call = signed_tx(0, blocks[2], POOL, 2 * ONE, 4, data="0xd0e30db0")
         if wrong_value:
             transfer["value"] += 1
         rewards = {"type": "CollectRewards", "hash": "0x" + "ee" * 32, "from": lib.crl.hex_to_bech32(ALICE),
@@ -140,10 +144,11 @@ class ImportExportTest(unittest.TestCase):
                    "blockHash": blocks[2]["hash"], "blockNumber": 103}
         blocks[0]["transactions"] = [early]
         blocks[1]["transactions"] = [transfer, native]
+        blocks[2]["transactions"] = [call]
         blocks[2]["stakingTransactions"] = [rewards]
         (directory / "blocks_101_103.json").write_text(json.dumps({"jsonrpc": "2.0", "id": 1, "result": blocks}))
         receipts = [{"transactionHash": tx["hash"], "blockHash": tx["blockHash"], "status": 1, "gasUsed": 21000,
-                     "logs": []} for tx in (early, transfer, native)]
+                     "logs": []} for tx in (early, transfer, native, call)]
         receipts.append({"transactionHash": rewards["hash"], "blockHash": blocks[2]["hash"], "status": 1,
                          "gasUsed": 30000, "logs": [{"topics": [lib.COLLECT_REWARDS_TOPIC], "data": hex(4 * ONE)}]})
         (directory / "receipts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in receipts))
@@ -151,7 +156,7 @@ class ImportExportTest(unittest.TestCase):
                  for p in sorted(directory.iterdir())]
         (directory / "source_manifest.json").write_text(json.dumps({
             "blockRange": {"start": 101, "end": 103, "firstHash": hashes[1], "lastHash": hashes[3]},
-            "counts": {"regularTransactions": 3, "stakingTransactions": 1, "receipts": 4},
+            "counts": {"regularTransactions": 4, "stakingTransactions": 1, "receipts": 5},
             "files": files, "source": "Harmony shard-0 JSON-RPC"}))
         if tamper:
             with open(directory / tamper, "a") as handle:
@@ -173,7 +178,13 @@ class ImportExportTest(unittest.TestCase):
             run = root / "run"
             txs = lib.read_csv(run / "transactions.csv")
             self.assertEqual([(r["block_number"], r["kind"], r["value_atto"]) for r in txs],
-                             [("102", "transfer", str(3 * ONE)), ("102", "xshard_native", str(5 * ONE))])
+                             [("102", "transfer", str(3 * ONE)), ("102", "xshard_native", str(5 * ONE)),
+                              ("103", "call", str(2 * ONE))])
+            calldata = lib.read_csv(run / "calldata" / "calldata.csv")
+            self.assertEqual([r["input"] for r in calldata], ["0xd0e30db0"])
+            calldata_stage = json.loads((run / "calldata" / "stage.json").read_text())
+            self.assertEqual(calldata_stage["identity"]["transactions_sha256"],
+                             lib.file_sha256(run / "transactions.csv"))
             staking = lib.read_csv(run / "staking.csv")
             self.assertEqual([(r["type"], r["amount_atto"]) for r in staking], [("CollectRewards", str(4 * ONE))])
             receipts = lib.read_csv(run / "receipts" / "outgoing-receipts.csv")
@@ -183,7 +194,7 @@ class ImportExportTest(unittest.TestCase):
             self.assertEqual({a["block"]: a["hash"] for a in stage["identity"]["anchors"]},
                              {100: self.FORK, 101: hashes[1]})
             self.assertEqual(stage["boundaries"]["start"]["parent_hash"], hashes[1])
-            self.assertEqual(stage["counters"]["tx_ge_min_signature_verified"], 2)
+            self.assertEqual(stage["counters"]["tx_ge_min_signature_verified"], 3)
             self.assertTrue(stage["internal_unavailable"])
 
     def test_rejects_tampered_files_and_unsigned_values(self):
@@ -203,6 +214,61 @@ class ImportExportTest(unittest.TestCase):
                                      "--fork", "100:0x" + "bb" * 32, "--out", str(root / "run")],
                                     capture_output=True, text=True)
             self.assertIn("does not follow", result.stderr)
+
+
+class CalldataAndNamesTest(unittest.TestCase):
+    def test_fetched_input_must_match_the_scan(self):
+        row = {"tx_hash": "0xh", "input_bytes": "4", "input_selector": "0xd0e30db0"}
+        self.assertEqual(CALLDATA.check_row(row, {"hash": "0xH", "input": "0xd0e30db0"}), "0xd0e30db0")
+        for tx in ({"hash": "0xother", "input": "0xd0e30db0"}, {"hash": "0xh", "input": "0xd0e30db000"},
+                   {"hash": "0xh", "input": "0xa9059cbb"}):
+            with self.assertRaises(SystemExit):
+                CALLDATA.check_row(row, tx)
+
+    def test_prefers_signatures_from_verified_contracts(self):
+        responses = {"result": {"function": {
+            "0x7ff36ab5": [{"name": "join_tg_spam(bool,address)", "filtered": False, "hasVerifiedContract": False},
+                           {"name": "swapExactETHForTokens(uint256,address[],address,uint256)", "filtered": False,
+                            "hasVerifiedContract": True}],
+            "0x5120a321": [{"name": "update(string,string,uint8,string,string[],bool)", "filtered": False,
+                            "hasVerifiedContract": False}],
+            "0x12345678": [{"name": "junk()", "filtered": True, "hasVerifiedContract": False}]}}}
+        original = NAMES.get_json
+        NAMES.get_json = lambda url: responses
+        try:
+            found = NAMES.openchain(["0x7ff36ab5", "0x5120a321", "0x12345678"])
+        finally:
+            NAMES.get_json = original
+        self.assertEqual(found["0x7ff36ab5"]["signature"], "swapExactETHForTokens(uint256,address[],address,uint256)")
+        self.assertEqual((found["0x7ff36ab5"]["verified"], found["0x7ff36ab5"]["candidates"]), (1, 2))
+        self.assertEqual(found["0x5120a321"]["verified"], 0)
+        self.assertNotIn("0x12345678", found)
+        NAMES.get_json = lambda url: {"results": [{"id": 9, "text_signature": "b()"}, {"id": 3, "text_signature": "a()"}]}
+        try:
+            self.assertEqual(NAMES.fourbyte("0xabcdef01")["signature"], "a()")
+        finally:
+            NAMES.get_json = original
+
+    def test_names_call_selectors_only(self):
+        looked_up = []
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp)
+            lib.write_csv(archive / "transactions.csv", ["kind", "method"],
+                          [{"kind": "call", "method": "0xd0e30db0"}, {"kind": "create", "method": "0x60806040"},
+                           {"kind": "call", "method": "0x31"}])
+            lib.write_json(archive / "manifest.json", {"files": {}})
+            saved = NAMES.parse_args, NAMES.openchain, NAMES.fourbyte
+            NAMES.parse_args = lambda: argparse.Namespace(archive=tmp, batch=50)
+            NAMES.openchain = lambda selectors: looked_up.extend(selectors) or {
+                "0xd0e30db0": {"signature": "deposit()", "verified": 1, "candidates": 1, "source": "openchain"}}
+            NAMES.fourbyte = lambda selector: None
+            try:
+                NAMES.main()
+            finally:
+                NAMES.parse_args, NAMES.openchain, NAMES.fourbyte = saved
+            entry = lib.load_json(archive / "manifest.json")["files"]["method_names.csv"]
+        self.assertEqual(looked_up, ["0xd0e30db0"])
+        self.assertEqual((entry["rows"], entry["selectors"], entry["unnamed"]), (1, 1, 0))
 
 
 class InternalTransferTest(unittest.TestCase):
@@ -511,6 +577,27 @@ class BuildArchiveTest(unittest.TestCase):
                               parent_hash="0xother", internal_unavailable="the export has no traces")
             result, _ = self.build([first, broken])
             self.assertIn("do not link", result.stderr)
+
+    def test_joins_calldata_and_requires_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            call = {**tx_row("0xc", 11, 3 * ONE, kind="call"), "input_selector": "0xd0e30db0", "input_bytes": 4}
+            run = make_run(root, "a", 0, "canonical", 10, 20, txs=[call, tx_row("0xt", 12, 2 * ONE)])
+            result, _ = self.build([run])
+            self.assertIn("no calldata for 0xc", result.stderr)
+            identity = json.loads((run / "stage.json").read_text())["identity"]
+            lib.write_calldata_stage(run / "calldata", {**identity, "start": 9},
+                                     lib.file_sha256(run / "transactions.csv"),
+                                     [{"tx_hash": "0xc", "input": "0xd0e30db0"}], {"rows": 1})
+            result, _ = self.build([run])
+            self.assertIn("different scan", result.stderr)
+            lib.write_calldata_stage(run / "calldata", identity, lib.file_sha256(run / "transactions.csv"),
+                                     [{"tx_hash": "0xc", "input": "0xd0e30db0"}], {"rows": 1})
+            result, tables = self.build([run])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual({r["tx_hash"]: r["input"] for r in tables["transactions.csv"]},
+                         {"0xc": "0xd0e30db0", "0xt": ""})
+        self.assertEqual(tables["manifest"]["runs"][0]["calldata"], {"rows": 1})
 
     def test_rejects_mixed_minimums(self):
         with tempfile.TemporaryDirectory() as tmp:
