@@ -23,8 +23,9 @@ Checks before anything is written:
     gateway that passes numbers through floating point rounds large values).
 
 Writes the scan-blocks.py files (transactions.csv, staking.csv, trace-blocks.csv,
-xshard-blocks.csv, segments.csv, stage.json) for blocks --start..--end, and
-receipts/ with the transaction-level cross-shard sends. The export has no traces
+xshard-blocks.csv, segments.csv, stage.json) for blocks --start..--end,
+receipts/ with the transaction-level cross-shard sends, and calldata/ with the
+signed calldata of every imported transaction (as fetch-calldata.py would). The export has no traces
 and no receipt roots, so internal transfers are recorded as unavailable and a
 precompile call made inside a contract cannot be seen.
 
@@ -331,6 +332,11 @@ def main():
     lib.write_csv(out / "trace-blocks.csv", lib.TRACE_BLOCK_FIELDS, rows["trace"])
     lib.write_csv(out / "xshard-blocks.csv", lib.XSHARD_BLOCK_FIELDS, rows["xshard"])
     lib.write_csv(out / "segments.csv", lib.SEGMENT_FIELDS, imported.segments)
+    calldata = sorted(({"tx_hash": r["tx_hash"], "input": imported.signed[r["tx_hash"]]["input"]}
+                       for r in rows["tx"] if r["input_bytes"] > 0), key=lambda r: r["tx_hash"])
+    lib.write_calldata_stage(out / "calldata", identity, lib.file_sha256(out / "transactions.csv"), calldata, {
+        "rows": len(calldata), "bytes": sum((len(r["input"]) - 2) // 2 for r in calldata),
+        "signature_verified": len(calldata)})
     lib.write_csv(out / "receipts" / "outgoing-receipts.csv", lib.RECEIPT_FIELDS, rows["receipts"])
     lib.write_json(out / "receipts" / "outgoing-receipts-summary.json", {
         "stage": "attribute-receipts", "scan": identity, "source": "transaction-level sends in the export",
