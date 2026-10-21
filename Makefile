@@ -158,6 +158,7 @@ tx-archive: check-python
 		$(if $(ARCHIVE_NOTES),--notes-file $(ARCHIVE_NOTES)) \
 		--out $(ARCHIVE_OUT) \
 		--replace
+	python3 toolkit/scripts/archive/resolve-method-names.py --archive $(ARCHIVE_OUT)
 	python3 toolkit/scripts/archive/summarize-archive.py \
 		--archive $(ARCHIVE_OUT) \
 		--output-json $(ARCHIVE_OUT)/summary.json \
