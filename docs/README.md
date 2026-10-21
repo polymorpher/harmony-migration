@@ -9,7 +9,8 @@ Start with:
 5. [`claim-routing.md`](claim-routing.md)
 6. [`contract-account-review.md`](contract-account-review.md)
 7. [`bridge-allocations.md`](bridge-allocations.md)
-8. [`numerical-embargo.md`](numerical-embargo.md)
+8. [`tx-archive.md`](tx-archive.md)
+9. [`numerical-embargo.md`](numerical-embargo.md)
 
 Explicit routing CSV schema and examples:
 

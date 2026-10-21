@@ -44,6 +44,9 @@ SnapDB. `-allow-incomplete-history` produces a marked diagnostic result.
 - `scripts/forensics/` — historical exploit and supply investigation
 - `scripts/bridge/` — bridge-collateral snapshots, message adjustments,
   allocations, and custody plan
+- `scripts/archive/` — transaction archive that replaces the explorer:
+  transactions, internal transfers, cross-shard receipts, and staking of at
+  least 1 ONE on both shards and both branches (see `../docs/tx-archive.md`)
 
 All Python pipeline scripts use the standard library.
 

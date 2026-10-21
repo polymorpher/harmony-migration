@@ -241,6 +241,33 @@ See `docs/bridge-allocations.md`.
 - `toolkit/scripts/bridge/fetch-prices.py` — CoinMarketCap USD price snapshot,
   matched to each pool's escrowed contract
 
+## Transaction archive
+
+- `toolkit/scripts/archive/archive_lib.py` — Harmony RPC client, stage
+  schemas, transaction and trace classification, cross-shard receipt
+  attribution
+- `toolkit/scripts/archive/scan-blocks.py` — one shard and branch over a block
+  range: transactions and staking of at least the minimum, trace candidates,
+  cross-shard receipt flags, and parent-hash continuity
+- `toolkit/scripts/archive/find-abandoned-blocks.py` — list the rolled-back
+  blocks a reverted node still stores, through its per-address index and a
+  parent-hash walk to the fork block
+- `toolkit/scripts/archive/import-rpc-export.py` — import a verified export of
+  a node's block and receipt RPC responses as a run, checking file hashes,
+  parent links, receipts, signed values, and agreement with an overlapping run
+- `toolkit/scripts/archive/trace-internal.py` — internal transfers from
+  `trace_block` (or `debug_traceBlockByHash` for listed blocks), with revert
+  propagation and interleaved, resumable tracing
+- `toolkit/scripts/archive/attribute-receipts.py` — explain every outgoing
+  receipt root (native, precompile, reverted-constructor, and
+  replay-incompatible delegatecall receipts)
+- `toolkit/scripts/archive/map-receipt-destinations.py` — destination credit
+  of each receipt and coverage of the destination's incoming receipt roots
+- `toolkit/scripts/archive/build-archive.py` — merge runs into the archive
+  tables and manifest
+- `toolkit/scripts/archive/summarize-archive.py` — counts, distribution,
+  addresses, and compressed sizes
+
 ## Embargo and publication tooling
 
 - `scripts/check-python-version.py` — enforces the supported Python 3.12+

@@ -1,4 +1,4 @@
-.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage exchange-native-report bridge-allocations manifest private-manifest check-public
+.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage exchange-native-report bridge-allocations tx-archive manifest private-manifest check-public
 
 SUPPLY_AUDIT_REPO ?= ../harmony-supply-audit
 BRIDGE_CONFIG ?= bridge/local/config.json
@@ -6,6 +6,10 @@ BRIDGE_OUT ?=
 BRIDGE_EXCLUSIONS ?=
 BRIDGE_OVERRIDES ?=
 BRIDGE_CONTRACT_REVIEW_POLICY ?= artifacts/contract-review-20260911/out/contract-review-policy.csv
+ARCHIVE_OUT ?=
+ARCHIVE_RUNS ?=
+ARCHIVE_DESTINATIONS ?=
+ARCHIVE_NOTES ?=
 
 setup:
 	./scripts/setup-harmony-dependencies.sh
@@ -30,6 +34,7 @@ test-python: check-python
 		toolkit/scripts/routing/*.py \
 		toolkit/scripts/forensics/*.py \
 		toolkit/scripts/bridge/*.py \
+		toolkit/scripts/archive/*.py \
 		scripts/*.py
 
 verify: check-python
@@ -142,6 +147,21 @@ bridge-allocations: check-python
 		--allocations-dir $(BRIDGE_OUT)/allocations \
 		$(if $(wildcard $(BRIDGE_OUT)/prices.json),--prices $(BRIDGE_OUT)/prices.json) \
 		--output $(BRIDGE_OUT)/allocations/BRIDGE_ALLOCATION_SUMMARY.md \
+		--replace
+
+tx-archive: check-python
+	@test -n "$(ARCHIVE_OUT)" || (echo "set ARCHIVE_OUT to the archive output directory" && exit 2)
+	@test -n "$(ARCHIVE_RUNS)" || (echo "set ARCHIVE_RUNS to the completed scan directories" && exit 2)
+	python3 toolkit/scripts/archive/build-archive.py \
+		$(foreach run,$(ARCHIVE_RUNS),--run $(run)) \
+		$(foreach file,$(ARCHIVE_DESTINATIONS),--destinations $(file)) \
+		$(if $(ARCHIVE_NOTES),--notes-file $(ARCHIVE_NOTES)) \
+		--out $(ARCHIVE_OUT) \
+		--replace
+	python3 toolkit/scripts/archive/summarize-archive.py \
+		--archive $(ARCHIVE_OUT) \
+		--output-json $(ARCHIVE_OUT)/summary.json \
+		--output-md $(ARCHIVE_OUT)/SUMMARY.md \
 		--replace
 
 manifest: check-python
