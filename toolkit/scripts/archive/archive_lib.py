@@ -24,6 +24,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "contract-review"))
 import contract_review_lib as crl  # noqa: E402
 
+# Calldata columns can exceed the csv module's default 128 KiB field limit.
+csv.field_size_limit(2 ** 31 - 1)
+
 ONE = 10 ** 18
 EMPTY_ROOT = "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
 XSHARD_PRECOMPILE = "0x00000000000000000000000000000000000000f9"
@@ -554,6 +557,23 @@ def finish_stage(directory, state, extra):
     state = {**state, **extra, "complete": True, "finished_utc": utc(time.time())}
     write_json(Path(directory) / "stage.json", state)
     return state
+
+
+CALLDATA_FIELDS = ["tx_hash", "input"]
+
+
+def write_calldata_stage(out, identity, transactions_sha256, rows, counters):
+    """<run>/calldata: calldata.csv (tx_hash, input) and a stage.json tied to the run's transactions.csv."""
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    count, digest = write_csv(out / "calldata.csv", CALLDATA_FIELDS, rows)
+    write_json(out / "stage.json", {
+        "identity": {"stage": "fetch-calldata", "scan": identity, "transactions_sha256": transactions_sha256},
+        "complete": True, "finished_utc": utc(time.time()),
+        "counters": dict(sorted(counters.items())),
+        "files": {"calldata.csv": {"rows": count, "sha256": digest, "bytes": (out / "calldata.csv").stat().st_size}},
+    })
+    return count
 
 
 def read_done(path):
