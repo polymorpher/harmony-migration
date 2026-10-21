@@ -30,7 +30,7 @@ import archive_lib as lib  # noqa: E402
 
 TRANSACTIONS = ["shard", "branch", "kind", "block_number", "block_hash", "timestamp", "tx_index",
                 "tx_hash", "eth_hash", "from", "to", "value_atto", "fee_atto", "status", "to_shard",
-                "method"]
+                "method", "input"]
 INTERNAL = ["shard", "branch", "block_number", "block_hash", "timestamp", "tx_index", "tx_hash",
             "eth_hash", "trace_address", "type", "from", "to", "value_atto", "effective"]
 CROSS_SHARD = ["branch", "from_shard", "to_shard", "mechanism", "block_number", "block_hash",
@@ -51,6 +51,8 @@ def parse_args():
     parser.add_argument("--notes-file", help="file with one coverage note per line")
     parser.add_argument("--allow-missing-internal", action="store_true",
                         help="accept runs without a completed internal/ stage (recorded in the manifest)")
+    parser.add_argument("--allow-missing-calldata", action="store_true",
+                        help="accept runs without a calldata/ stage (fetch-calldata.py); input is left empty")
     parser.add_argument("--out", required=True)
     parser.add_argument("--replace", action="store_true")
     return parser.parse_args()
@@ -83,7 +85,13 @@ def load_run(path, allow_missing_internal):
         pins = {anchor["block"] for anchor in identity["anchors"]}
         if identity["start"] - 1 not in pins:
             raise SystemExit(f"{path}: rolled_back run lacks --expect {identity['start'] - 1}:<canonical hash>")
-    return {"path": path, "scan": scan, "identity": identity, "internal": internal, "receipts": receipts}
+    calldata_path = path / "calldata" / "stage.json"
+    calldata = lib.load_json(calldata_path) if calldata_path.exists() else None
+    if calldata and (calldata["identity"]["scan"] != identity
+                     or calldata["identity"]["transactions_sha256"] != lib.file_sha256(path / "transactions.csv")):
+        raise SystemExit(f"{path}: calldata/ was fetched for a different scan or transactions.csv")
+    return {"path": path, "scan": scan, "identity": identity, "internal": internal, "receipts": receipts,
+            "calldata": calldata}
 
 
 def check_overlaps(runs):
@@ -139,7 +147,11 @@ def main():
     for run in runs:
         shard, branch = run["identity"]["shard"], run["identity"]["branch"]
         group = f"shard{shard}/{branch}"
+        inputs = ({row["tx_hash"]: row["input"] for row in lib.iter_csv(run["path"] / "calldata" / "calldata.csv")}
+                  if run["calldata"] else {})
         for row in lib.iter_csv(run["path"] / "transactions.csv"):
+            if int(row["input_bytes"] or 0) > 0 and row["tx_hash"] not in inputs and not args.allow_missing_calldata:
+                raise SystemExit(f"{run['path']}: no calldata for {row['tx_hash']} (run fetch-calldata.py)")
             add("transactions.csv", (shard, branch, row["tx_hash"]), {
                 "shard": shard, "branch": branch, "kind": row["kind"],
                 "block_number": row["block_number"], "block_hash": row["block_hash"],
@@ -148,6 +160,7 @@ def main():
                 "value_atto": row["value_atto"],
                 "fee_atto": int(row["gas_used"] or 0) * int(row["gas_price"] or 0),
                 "status": row["status"], "to_shard": row["to_shard_id"], "method": row["input_selector"],
+                "input": inputs.get(row["tx_hash"], ""),
             }, group)
         if run["internal"]:
             for row in lib.iter_csv(run["path"] / "internal" / "internal.csv"):
@@ -198,6 +211,7 @@ def main():
             "internal": (run["internal"]["counters"] if run["internal"]
                          else "unavailable: " + run["scan"].get("internal_unavailable", "not traced")),
             "receipts": run["receipts"]["counters"],
+            "calldata": run["calldata"]["counters"] if run["calldata"] else "not fetched",
         } for run in runs],
         "destinations": [os.path.basename(path) for path in args.destinations],
         "notes": args.note,
