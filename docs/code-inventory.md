@@ -206,6 +206,41 @@ See `docs/contract-account-review.md`.
   validator-vault plans without deferred or next-stage allocations
 - `routing/` — public schema/examples plus ignored real routing files
 
+## Bridge collateral allocations
+
+See `docs/bridge-allocations.md`.
+
+- `bridge/routes.json` — registry of every LayerZero bridge pool and system
+  address
+- `toolkit/scripts/bridge/resolve-snapshot-blocks.py` — rollback and cutoff
+  blocks on every chain
+- `toolkit/scripts/bridge/fetch-bridge-state.py` — collateral, supplies,
+  endpoint nonces, owners, ONE destinations, remote trusted-peer history, and
+  custody Safes at pinned blocks
+- `toolkit/scripts/bridge/check-harmony-peers.py` — every remote adapter a
+  registered Harmony proxy ever trusted must be registered
+- `toolkit/scripts/bridge/build-snapshot-plan.py` — rollback-orphaned delivery
+  detection from nonces and the holder snapshot block for every pool
+- `toolkit/scripts/bridge/scan-bridge-messages.py` — nonce-assigned bridge
+  messages turned into signed per-address adjustments
+- `toolkit/cmd/token-holders` — ERC-20 holders at a pinned block on any EVM
+  chain, reconciled to `totalSupply()` and spot-checked with `balanceOf()`
+- `toolkit/scripts/bridge/run-holder-snapshots.py` and
+  `import-holder-snapshot.py` — run or import every planned holder snapshot
+- `toolkit/scripts/bridge/classify-holders.py` — key-controlled, multisig,
+  1wallet, and contract holders at each snapshot block
+- `toolkit/scripts/bridge/build-bridge-allocations.py` — pool scaling,
+  allocation statuses, per-chain claim lists, custody and ONE funding plan
+- `toolkit/scripts/bridge/verify-bridge-allocations.py` — independent
+  recomputation and conservation checks
+- `toolkit/scripts/bridge/build-summary-report.py` — per-chain and per-pool
+  allocation overview from the verified outputs, with optional USD values
+- `toolkit/scripts/bridge/build-migration-exclusions.py` — bridge exclusions
+  from the migration's full non-issuance decisions, plus partial and uncovered
+  deductions for review
+- `toolkit/scripts/bridge/fetch-prices.py` — CoinMarketCap USD price snapshot,
+  matched to each pool's escrowed contract
+
 ## Embargo and publication tooling
 
 - `scripts/check-python-version.py` — enforces the supported Python 3.12+

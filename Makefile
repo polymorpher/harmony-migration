@@ -1,6 +1,11 @@
-.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage exchange-native-report manifest private-manifest check-public
+.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage exchange-native-report bridge-allocations manifest private-manifest check-public
 
 SUPPLY_AUDIT_REPO ?= ../harmony-supply-audit
+BRIDGE_CONFIG ?= bridge/local/config.json
+BRIDGE_OUT ?=
+BRIDGE_EXCLUSIONS ?=
+BRIDGE_OVERRIDES ?=
+BRIDGE_CONTRACT_REVIEW_POLICY ?= artifacts/contract-review-20260911/out/contract-review-policy.csv
 
 setup:
 	./scripts/setup-harmony-dependencies.sh
@@ -24,6 +29,7 @@ test-python: check-python
 		toolkit/scripts/exchanges/*.py \
 		toolkit/scripts/routing/*.py \
 		toolkit/scripts/forensics/*.py \
+		toolkit/scripts/bridge/*.py \
 		scripts/*.py
 
 verify: check-python
@@ -101,6 +107,41 @@ exchange-native-report: check-python
 		--output-dir artifacts/exchange-accounting-20260917 \
 		--summary artifacts/exchange-accounting-20260917/exchange-native-summary.json \
 		--report artifacts/exchange-accounting-20260917/EXCHANGE_MANUAL_DELIVERY_2026-09-22.md \
+		--replace
+
+bridge-allocations: check-python
+	@test -n "$(BRIDGE_OUT)" || (echo "set BRIDGE_OUT to the bridge run directory" && exit 2)
+	python3 toolkit/scripts/bridge/build-bridge-allocations.py \
+		--routes bridge/routes.json \
+		--config $(BRIDGE_CONFIG) \
+		--state $(BRIDGE_OUT)/bridge-state.json \
+		--plan $(BRIDGE_OUT)/snapshot-plan.json \
+		--messages $(BRIDGE_OUT)/bridge-messages.csv \
+		--messages-summary $(BRIDGE_OUT)/bridge-messages-summary.json \
+		--holders-dir $(BRIDGE_OUT)/holders \
+		--classes $(BRIDGE_OUT)/holder-classes.csv \
+		$(if $(BRIDGE_EXCLUSIONS),--exclusions $(BRIDGE_EXCLUSIONS)) \
+		$(if $(BRIDGE_OVERRIDES),--overrides $(BRIDGE_OVERRIDES)) \
+		$(if $(wildcard $(BRIDGE_CONTRACT_REVIEW_POLICY)),--contract-review-policy $(BRIDGE_CONTRACT_REVIEW_POLICY)) \
+		--output-dir $(BRIDGE_OUT)/allocations \
+		--replace
+	python3 toolkit/scripts/bridge/verify-bridge-allocations.py \
+		--routes bridge/routes.json \
+		--config $(BRIDGE_CONFIG) \
+		--state $(BRIDGE_OUT)/bridge-state.json \
+		--plan $(BRIDGE_OUT)/snapshot-plan.json \
+		--messages $(BRIDGE_OUT)/bridge-messages.csv \
+		--holders-dir $(BRIDGE_OUT)/holders \
+		--allocations-dir $(BRIDGE_OUT)/allocations \
+		--output $(BRIDGE_OUT)/allocations-verify.json \
+		--replace
+	python3 toolkit/scripts/bridge/build-summary-report.py \
+		--routes bridge/routes.json \
+		--plan $(BRIDGE_OUT)/snapshot-plan.json \
+		--messages-summary $(BRIDGE_OUT)/bridge-messages-summary.json \
+		--allocations-dir $(BRIDGE_OUT)/allocations \
+		$(if $(wildcard $(BRIDGE_OUT)/prices.json),--prices $(BRIDGE_OUT)/prices.json) \
+		--output $(BRIDGE_OUT)/allocations/BRIDGE_ALLOCATION_SUMMARY.md \
 		--replace
 
 manifest: check-python

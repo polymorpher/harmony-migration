@@ -140,6 +140,9 @@ reproduction.
 - `results/2026-09-11/` — ignored compact result package during the embargo
 - `artifacts/` — ignored claim-accounting, contract-review, and evidence files
 - `routing/` — public schema/examples and ignored real destination routes
+- `bridge/` — LayerZero bridge pool registry and configuration for the
+  bridge-collateral allocations (see
+  [`docs/bridge-allocations.md`](docs/bridge-allocations.md))
 - `exchanges/` — ignored private exchange policy, raw submissions, normalized
   inventories, destinations, and operator notes
 - `repro/as-run/` — ignored exact operator scripts retained locally

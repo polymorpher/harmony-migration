@@ -262,6 +262,10 @@ blocks. The `layerzero-nativeoft-reconciliation` release gate remains pending
 only for destination readiness and settlement evidence; it does not return the
 two contracts to the initial stage or make them ineligible.
 
+[`bridge-allocations.md`](bridge-allocations.md) produces that evidence: the
+remote holder snapshots, message adjustments, and the Ethereum custody
+multisig proposed as the `layerzero-nativeoft-custody` destination.
+
 ## Reproduction and evidence
 
 The public classifier and evidence schema are documented in:

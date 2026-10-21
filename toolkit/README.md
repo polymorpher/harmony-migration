@@ -17,6 +17,7 @@
 - `address-match-apply` — apply verified address mappings to a CSV
 - `migration-claims-verify` — verify total-claim, wallet-airdrop, and
   staked-to-vault fields
+- `token-holders` — ERC-20 holder snapshot at a pinned block on any EVM chain
 - `cutoff-final-verifier` — ignored until result publication because it embeds
   exact expected artifact identities
 
@@ -41,6 +42,8 @@ SnapDB. `-allow-incomplete-history` produces a marked diagnostic result.
   routes and emit sparse wallet/share and validator-governor exceptions
 - `scripts/cutoff/` — interval, difference, receipt, RPC, and reconciliation checks
 - `scripts/forensics/` — historical exploit and supply investigation
+- `scripts/bridge/` — bridge-collateral snapshots, message adjustments,
+  allocations, and custody plan
 
 All Python pipeline scripts use the standard library.
 
