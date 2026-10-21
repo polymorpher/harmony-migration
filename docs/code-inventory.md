@@ -261,10 +261,14 @@ See `docs/bridge-allocations.md`.
 - `toolkit/scripts/archive/attribute-receipts.py` — explain every outgoing
   receipt root (native, precompile, reverted-constructor, and
   replay-incompatible delegatecall receipts)
+- `toolkit/scripts/archive/fetch-calldata.py` — full calldata of a run's
+  exported transactions, each proven by its signed hash
 - `toolkit/scripts/archive/map-receipt-destinations.py` — destination credit
   of each receipt and coverage of the destination's incoming receipt roots
 - `toolkit/scripts/archive/build-archive.py` — merge runs into the archive
   tables and manifest
+- `toolkit/scripts/archive/resolve-method-names.py` — function-signature
+  labels for the archive's call selectors from public signature databases
 - `toolkit/scripts/archive/summarize-archive.py` — counts, distribution,
   addresses, and compressed sizes
 

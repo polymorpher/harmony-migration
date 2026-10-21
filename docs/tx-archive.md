@@ -34,7 +34,7 @@ Four record types:
 ## Runs
 
 A run is one shard and one branch over one block range, read from one node.
-Each run directory is produced by three stages:
+Each run directory is produced by four stages:
 
 ```sh
 export HARMONY_RPC=<node JSON-RPC>             # e.g. http://127.0.0.1:9500
@@ -46,10 +46,11 @@ python3 $S/scan-blocks.py --shard 0 --branch canonical \
   --expect <block>:<hash>                     # pin known block hashes (repeatable)
 python3 $S/trace-internal.py --scan runs/s0-canonical
 python3 $S/attribute-receipts.py --scan runs/s0-canonical
+python3 $S/fetch-calldata.py --scan runs/s0-canonical
 ```
 
-All three stages are resumable (`--resume`) and record their arguments in a
-`stage.json`; resuming with different arguments is refused.
+The first three stages are resumable (`--resume`), and all four record their
+arguments in a `stage.json`; resuming with different arguments is refused.
 
 - `scan-blocks.py` reads 1,000 blocks per call with `hmyv2_getBlocks`, reads
   the cross-shard receipt roots with `hmyv2_getFullHeader`, and fetches the
@@ -68,6 +69,12 @@ All three stages are resumable (`--resume`) and record their arguments in a
 - `attribute-receipts.py` explains every block whose header carries a
   non-empty outgoing receipt root (see below). An unexplained block fails the
   stage.
+- `fetch-calldata.py` reads the full input of every exported transaction that
+  has calldata (`hmyv2_getTransactionByHash`, or the transaction's block by
+  hash when the node has no lookup entry). The input must have the length and
+  selector the scan recorded, and the transaction must reproduce its own
+  signed hash, which proves the calldata is exactly what was signed. The stage
+  is tied to the SHA-256 of the run's `transactions.csv`.
 
 To find the 2025-01-01 boundary of a shard, binary-search block timestamps
 (`first_block_at_or_after` in `archive_lib.py`).
@@ -109,6 +116,7 @@ python3 $S/scan-blocks.py --shard 0 --branch rolled_back \
   --expect <rollback block>:<canonical hash> --step 100 --out runs/s0-rolled_back
 python3 $S/trace-internal.py --scan runs/s0-rolled_back
 python3 $S/attribute-receipts.py --scan runs/s0-rolled_back
+python3 $S/fetch-calldata.py --scan runs/s0-rolled_back
 ```
 
 In `--block-list` mode the scan reads blocks with `hmyv2_getBlockByHash`,
@@ -129,7 +137,8 @@ copy exported from its RPC can be imported as a run instead.
 `import-rpc-export.py` reads export directories, each holding
 `source_manifest.json`, the `hmyv2_getBlocks` responses (`blocks_*.json`), and
 `receipts.jsonl`. It writes the same files as `scan-blocks.py`, plus a
-`receipts/` stage of transaction-level cross-shard sends:
+`receipts/` stage of transaction-level cross-shard sends and a `calldata/`
+stage taken from the export itself:
 
 ```sh
 python3 $S/import-rpc-export.py --shard 0 --branch rolled_back \
@@ -219,10 +228,22 @@ make tx-archive ARCHIVE_OUT=<dir> \
 
 `build-archive.py` requires completed stages, the same minimum for every run,
 no overlapping runs per shard and branch, and the rollback pin on rolled-back
-runs. It removes duplicate rows left by an interrupted stage, sorts each
+runs. It joins each run's `calldata/` stage into `transactions.csv` and
+refuses a run without one unless `--allow-missing-calldata` is passed. It
+removes duplicate rows left by an interrupted stage, sorts each
 table, and writes `manifest.json`: every run's range, boundary hashes, node
 host (no path or credentials), stage counters, coverage notes, and each
-table's row count and SHA-256. `summarize-archive.py` writes `summary.json` and
+table's row count and SHA-256.
+
+`resolve-method-names.py` names the distinct call selectors (not the leading
+bytes of contract-creation code) from the OpenChain signature database, with
+4byte.directory as fallback, and writes `method_names.csv`
+(`selector, signature, verified, candidates, source`) into the archive and its
+manifest. A selector can match several signatures; one seen in a verified
+contract is preferred, and `verified = 0` marks a name no verified contract
+uses. The name is a label, not a decoding proof.
+
+`summarize-archive.py` writes `summary.json` and
 `SUMMARY.md` with row counts per shard and branch, monthly counts, the value
 distribution, distinct addresses, and CSV, gzip and zstd sizes.
 
@@ -233,11 +254,12 @@ timestamps are Unix seconds (UTC).
 
 - `transactions.csv`: `shard, branch, kind, block_number, block_hash,
   timestamp, tx_index, tx_hash, eth_hash, from, to, value_atto, fee_atto,
-  status, to_shard, method`. `kind` is `transfer`, `call`, `create`,
+  status, to_shard, method, input`. `kind` is `transfer`, `call`, `create`,
   `xshard_native` or `xshard_precompile`. For a precompile call, `to` and
   `to_shard` are the decoded recipient and shard. `method` is the 4-byte
-  selector. `eth_hash` is the Ethereum-style hash that wallets such as
-  MetaMask show.
+  selector (shorter only when the calldata is) and `input` the full calldata,
+  or for `create` the creation code. `eth_hash` is the Ethereum-style hash
+  that wallets such as MetaMask show.
 - `internal_transfers.csv`: `shard, branch, block_number, block_hash,
   timestamp, tx_index, tx_hash, eth_hash, trace_address, type, from, to,
   value_atto, effective`. `tx_hash` and `eth_hash` identify the parent
