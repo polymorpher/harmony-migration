@@ -23,6 +23,7 @@ for command in \
   account-snapshot \
   account-activity \
   wone-holders \
+  token-holders \
   account-preimage-resolve \
   actual-supply \
   staking-claims \
