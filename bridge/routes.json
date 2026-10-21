@@ -1,0 +1,1469 @@
+{
+  "schema_version": 1,
+  "description": "Harmony LayerZero bridge pools: one entry per remote bridge contract and remote asset. remote_escrow pools lock the asset on the remote chain and mint a wrapped token on Harmony; harmony_origin pools lock the asset on Harmony and mint a wrapped token on the remote chain.",
+  "sources": [
+    {
+      "name": "harmony-one/layerzero-bridge.appengine src/services/tokens/config.ts",
+      "commit": "757b05096e7dda24b87d3cb17a31e0d806cac52a",
+      "url": "https://github.com/harmony-one/layerzero-bridge.appengine/blob/757b05096e7dda24b87d3cb17a31e0d806cac52a/src/services/tokens/config.ts",
+      "rows": 53
+    },
+    {
+      "name": "harmony-one/solidity-examples contracts/token/oft/extension/README.md",
+      "note": "earlier ONE adapters and Horizon bridge managers and multisigs"
+    },
+    {
+      "name": "linea-usdc legacy Harmony proxy",
+      "note": "commented out in the frontend configuration; token() returns the legacy wrapper"
+    },
+    {
+      "name": "kind",
+      "note": "harmony_origin when the Harmony bridge contract holds the Harmony-side asset; verified by fetch-bridge-state.py"
+    },
+    {
+      "name": "historical Harmony peers",
+      "note": "every Harmony address a remote adapter ever trusted (SetTrustedRemote history); same-token or message-carrying peers are pool paths, the rest are ignored_peers"
+    },
+    {
+      "name": "historical remote peers",
+      "note": "every remote adapter a registered Harmony proxy ever trusted (check-harmony-peers.py); same-asset adapters are previous_remote_adapters, the rest are ignored_remote_peers"
+    }
+  ],
+  "harmony": {
+    "chain": "harmony",
+    "chain_id": 1666600000,
+    "layerzero_chain_id": 116,
+    "endpoint": "0x9740ff91f1985d8d2b71494ae1a2f723bb3ed9e4",
+    "wone": "0xcf664087a5bb0237a0bad6742852ec6c8d69a27a"
+  },
+  "chains": {
+    "ethereum": {
+      "chain_id": 1,
+      "layerzero_chain_id": 101
+    },
+    "bsc": {
+      "chain_id": 56,
+      "layerzero_chain_id": 102
+    },
+    "arbitrum": {
+      "chain_id": 42161,
+      "layerzero_chain_id": 110
+    },
+    "base": {
+      "chain_id": 8453,
+      "layerzero_chain_id": 184
+    },
+    "linea": {
+      "chain_id": 59144,
+      "layerzero_chain_id": 183
+    }
+  },
+  "system_addresses": [
+    {
+      "chain": "*",
+      "address": "0x0000000000000000000000000000000000000000",
+      "role": "zero address"
+    },
+    {
+      "chain": "*",
+      "address": "0x000000000000000000000000000000000000dead",
+      "role": "burn sink"
+    },
+    {
+      "chain": "*",
+      "address": "0xac0248e9c78774ba0ef9e71b1ce1393a10c17e3c",
+      "role": "bridge deployer and LINK test mint"
+    },
+    {
+      "chain": "harmony",
+      "address": "0x9740ff91f1985d8d2b71494ae1a2f723bb3ed9e4",
+      "role": "LayerZero endpoint"
+    },
+    {
+      "chain": "harmony",
+      "address": "0x4d73adb72bc3dd368966edd0f0b2148401a178e2",
+      "role": "LayerZero UltraLightNodeV2"
+    },
+    {
+      "chain": "harmony",
+      "address": "0x0c1310bbd93c6977fde20dc813cff8236ba1f0dd",
+      "role": "Horizon bridge multisig"
+    },
+    {
+      "chain": "harmony",
+      "address": "0x2fbbcef71544c461edfc311f42e3583d5f9675d1",
+      "role": "Horizon ERC20 bridge manager"
+    },
+    {
+      "chain": "harmony",
+      "address": "0x38092d17d3641b6fa49668775948af71b430765e",
+      "role": "Horizon HRC20 bridge manager"
+    },
+    {
+      "chain": "harmony",
+      "address": "0x0de8e70e94f4761dc5baf5833d0f13eb9fd93620",
+      "role": "Horizon BSC bridge manager"
+    },
+    {
+      "chain": "harmony",
+      "address": "0xc0c7b147910ef11f6454dc1918ecde9a2b64a3a8",
+      "role": "Horizon LINK inventory manager"
+    },
+    {
+      "chain": "harmony",
+      "address": "0xef81ab52721abbdae90862ee1ac10c20d3af2d0a",
+      "role": "Horizon ERC20 sub-manager"
+    },
+    {
+      "chain": "harmony",
+      "address": "0x05d11b7082d5634e0318d818a2f0cd381b371ea5",
+      "role": "Horizon BUSD manager"
+    },
+    {
+      "chain": "harmony",
+      "address": "0xce3110e4ab757672b0535a9c1410fed80647b693",
+      "role": "Horizon deposit manager"
+    },
+    {
+      "chain": "harmony",
+      "address": "0x39ec213272dda1f46424726bb20d82c3861568c0",
+      "role": "Horizon ERC721 manager"
+    },
+    {
+      "chain": "ethereum",
+      "address": "0x715cdda5e9ad30a0ced14940f9997ee611496de6",
+      "role": "Horizon bridge multisig"
+    },
+    {
+      "chain": "ethereum",
+      "address": "0x4d34e61caf7a3622759d69e48ccdeb8dee5021e8",
+      "role": "Horizon HRC20 bridge manager"
+    },
+    {
+      "chain": "bsc",
+      "address": "0x715cdda5e9ad30a0ced14940f9997ee611496de6",
+      "role": "Horizon bridge multisig"
+    },
+    {
+      "chain": "bsc",
+      "address": "0xfd53b1b4af84d59b20bf2c20ca89a6beeaa2c628",
+      "role": "Horizon BSC bridge manager"
+    }
+  ],
+  "pools": [
+    {
+      "pool_id": "bsc-one",
+      "kind": "harmony_origin",
+      "chain": "bsc",
+      "symbol": "ONE",
+      "name": "Harmony ONE",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x2332137ae0386783ffbcf40d9f17e50890917e15",
+      "remote_token": "0x03ff0ff224f904be3118461335064bb48df47938",
+      "harmony": [
+        {
+          "proxy": "0x5b18a4e73f9a4fe337a072516b317863ad3046aa",
+          "token": "native",
+          "legacy": false,
+          "config_index": 0
+        }
+      ],
+      "claim_asset": "one",
+      "previous_remote_adapters": [
+        "0x55b9b75f2d456d010e6b8c6f62544c6efc1c101d"
+      ]
+    },
+    {
+      "pool_id": "ethereum-one",
+      "kind": "harmony_origin",
+      "chain": "ethereum",
+      "symbol": "ONE",
+      "name": "Harmony ONE",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x234784ec001db36c9c22785cad902221fd831352",
+      "remote_token": "0xd5cd84d6f044abe314ee7e414d37cae8773ef9d3",
+      "harmony": [
+        {
+          "proxy": "0x905582f21fb9855c809d5b8933272a292dfbb138",
+          "token": "native",
+          "legacy": false,
+          "config_index": 1
+        }
+      ],
+      "claim_asset": "one",
+      "previous_remote_adapters": [
+        "0x768fa1abbc38054f9fb2218e97778cc7b110c779"
+      ]
+    },
+    {
+      "pool_id": "bsc-bnb",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "BNB",
+      "name": "Binance Coin",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x128aedc7f41ffb82131215e1722d8366faad0cd4",
+      "remote_token": "native",
+      "harmony": [
+        {
+          "proxy": "0x7ffd57563ef54c464f23b5497dd1f54481e4c008",
+          "token": "0xdc60ccf6ae05f898f4255ef580e731b4011100ec",
+          "legacy": false,
+          "config_index": 2
+        },
+        {
+          "proxy": "0x2c99fb3da8c9308991c428f56d9f269f007bd843",
+          "token": "0xdc60ccf6ae05f898f4255ef580e731b4011100ec",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow",
+      "previous_remote_adapters": [
+        "0xb80ec3a4e89dc6ead8ffea9d3a54112c245d852b",
+        "0x4b52490e57317471a724de8ab9b52fc01438a2e9"
+      ]
+    },
+    {
+      "pool_id": "ethereum-eth",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "ETH",
+      "name": "Ethereum Coin",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x1edb8bded80e1b87ed19ee7d97ee80b4fdb615c1",
+      "remote_token": "native",
+      "harmony": [
+        {
+          "proxy": "0xa17426d430bcadb09b0d42992c5be186f485a4da",
+          "token": "0x4cc435d7b9557d54d6ef02d69bbf72634905bf11",
+          "legacy": false,
+          "config_index": 3
+        },
+        {
+          "proxy": "0x8d1ebcda83fd905b597bf6d3294766b64ecf2aa7",
+          "token": "0x4cc435d7b9557d54d6ef02d69bbf72634905bf11",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow",
+      "previous_remote_adapters": [
+        "0xab89d3c2207c97a8b6823421149a389fc04ebcab",
+        "0x2290d0aefe3b86255392e02e974942f299607b7a"
+      ],
+      "ignored_remote_peers": [
+        {
+          "address": "0xab29422593a2044daa02150c9bb145d587cf4fdb",
+          "reason": "the ethereum-aave escrow, trusted briefly by the ETH proxy"
+        }
+      ]
+    },
+    {
+      "pool_id": "ethereum-wbtc",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "WBTC",
+      "name": "Wrapped BTC",
+      "decimals": 8,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0xab6ebe9472e2e4b6fe720dad16701f32ab905cc6",
+      "remote_token": "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+      "harmony": [
+        {
+          "proxy": "0x116c8344f79c334eb6cd0d55ec603b6ba36f67a2",
+          "token": "0x118f50d23810c5e09ebffb42d7d3328dbf75c2c2",
+          "legacy": false,
+          "config_index": 4
+        }
+      ],
+      "claim_asset": "escrow",
+      "ignored_remote_peers": [
+        {
+          "address": "0x7a49bede3363304d69a0e09548b8b4c5efd84ba4",
+          "reason": "a WETH adapter, not WBTC; holds a test amount of WETH"
+        }
+      ]
+    },
+    {
+      "pool_id": "ethereum-link",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "LINK",
+      "name": "ChainLink Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0xee381e476b4335b8584a2026f3e845edac2c69de",
+      "remote_token": "0x514910771af9ca656af840dff83e8264ecf986ca",
+      "harmony": [
+        {
+          "proxy": "0x6bee6e5cf8e02833550b228d9cc6ad19dae3743e",
+          "token": "0x218532a12a389a4a92fc0c5fb22901d1c19198aa",
+          "legacy": false,
+          "config_index": 5
+        },
+        {
+          "proxy": "0x26303199e53e3f9dad2872f2a2ae0c638cbfe304",
+          "token": "0x218532a12a389a4a92fc0c5fb22901d1c19198aa",
+          "legacy": true,
+          "historical_peer": true
+        },
+        {
+          "proxy": "0x395332bcfd19e51b427ba6cf22688696a50eb100",
+          "token": "0x218532a12a389a4a92fc0c5fb22901d1c19198aa",
+          "legacy": true,
+          "historical_peer": true
+        },
+        {
+          "proxy": "0xab29422593a2044daa02150c9bb145d587cf4fdb",
+          "token": "0x218532a12a389a4a92fc0c5fb22901d1c19198aa",
+          "legacy": true,
+          "historical_peer": true
+        },
+        {
+          "proxy": "0xb583512fdfb6d277a5fac7a66446f65bd35d1e52",
+          "token": "0x218532a12a389a4a92fc0c5fb22901d1c19198aa",
+          "legacy": true,
+          "historical_peer": true
+        },
+        {
+          "proxy": "0xd682e2b843803acc86e8b9c058f2bc4afd363948",
+          "token": "0x218532a12a389a4a92fc0c5fb22901d1c19198aa",
+          "legacy": true,
+          "historical_peer": true
+        },
+        {
+          "proxy": "0xfea5511fdcda7798755278c4f0d3b05797e2e3a6",
+          "token": "0x218532a12a389a4a92fc0c5fb22901d1c19198aa",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-usdc",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "USDC",
+      "name": "USD Coin",
+      "decimals": 6,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x4f52b41a778761bd2eea5b7b7ed8cbdaa02cef3e",
+      "remote_token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "harmony": [
+        {
+          "proxy": "0xb2238ca2e9704128ee24490ee774820735b57caa",
+          "token": "0xbc594cabd205bd993e7ffa6f3e9cea75c1110da5",
+          "legacy": false,
+          "config_index": 6
+        },
+        {
+          "proxy": "0x12252857ed26e5d4e011e20f450c8110f302da62",
+          "token": "0xbc594cabd205bd993e7ffa6f3e9cea75c1110da5",
+          "legacy": true,
+          "historical_peer": true
+        },
+        {
+          "proxy": "0xfb5a2461d49d83348c557a5ad7aa938dcf444d7f",
+          "token": "0xbc594cabd205bd993e7ffa6f3e9cea75c1110da5",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow",
+      "ignored_remote_peers": [
+        {
+          "address": "0xb2238ca2e9704128ee24490ee774820735b57caa",
+          "reason": "the Harmony proxy's own address set as its remote"
+        }
+      ]
+    },
+    {
+      "pool_id": "ethereum-usdt",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "USDT",
+      "name": "Tether USD",
+      "decimals": 6,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0xf6a097b278383ef0a800abd7d700b29b159b19b5",
+      "remote_token": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+      "harmony": [
+        {
+          "proxy": "0xacf6d3052bbe774187e3364a0e76d0f586131766",
+          "token": "0xf2732e8048f1a411c63e2df51d08f4f52e598005",
+          "legacy": false,
+          "config_index": 7
+        },
+        {
+          "proxy": "0x9e61d6a7b4746922e68d710d9454d3558bc8df1c",
+          "token": "0xf2732e8048f1a411c63e2df51d08f4f52e598005",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-dai",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "DAI",
+      "name": "Dai Stablecoin",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x85db5268403700e901285e8b8fb0cadf4212b95e",
+      "remote_token": "0x6b175474e89094c44da98b954eedeac495271d0f",
+      "harmony": [
+        {
+          "proxy": "0xb1fdeec683beba148aa9fedcf9eeb6d44215a62e",
+          "token": "0xd068722e4e1387e4958300d1e625d2878f784125",
+          "legacy": false,
+          "config_index": 8
+        },
+        {
+          "proxy": "0x664491fd329a1b98d83cf585cc2e54af5ab11cbd",
+          "token": "0xd068722e4e1387e4958300d1e625d2878f784125",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow",
+      "ignored_peers": [
+        {
+          "address": "0xb7a17528b0ceb48b41a54550faaeeab310607583",
+          "reason": "trusted at some point but wraps a different token and exchanged no messages"
+        }
+      ]
+    },
+    {
+      "pool_id": "ethereum-busd",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "BUSD",
+      "name": "Binance USD",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0xad7514b8b1eadfad8b1ff0873dba52e304c87446",
+      "remote_token": "0x4fabb145d64652a948d72533023f6e7a623c7c53",
+      "harmony": [
+        {
+          "proxy": "0xadc724a6d7a77d28ed2f707317444a5e10df3a7a",
+          "token": "0xfeee03bfbaa49dc8d11ddaab8592546018dfb709",
+          "legacy": false,
+          "config_index": 9
+        },
+        {
+          "proxy": "0xadc74a8d0a066519252ef2c61776552e7bd2ab8c",
+          "token": "0xfeee03bfbaa49dc8d11ddaab8592546018dfb709",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-busd",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "BUSD",
+      "name": "Binance BUSD",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x98e871ab1cc7e3073b6cc1b661be7ca678a33f7f",
+      "remote_token": "0xe9e7cea3dedca5984780bafc599bd69add087d56",
+      "harmony": [
+        {
+          "proxy": "0xd39574a84abe014f41e5e4eb77d74a370ed9ad07",
+          "token": "0x1aa1f7815103c0700b98f24138581b88d4cf9769",
+          "legacy": false,
+          "config_index": 10
+        },
+        {
+          "proxy": "0x10681e186c5a9565230badd8c9422bf26c2d8b21",
+          "token": "0x1aa1f7815103c0700b98f24138581b88d4cf9769",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-aag",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "AAG",
+      "name": "AAG",
+      "decimals": 18,
+      "major": false,
+      "horizon": false,
+      "remote_adapter": "0x128aedc7f41ffb82131215e1722d8366faad0cd4",
+      "remote_token": "0x5ba19d656b65f1684cfea4af428c23b9f3628f97",
+      "harmony": [
+        {
+          "proxy": "0x83e54c21fe3e5b2e19c76b5f4dfbc389844faf1d",
+          "token": "0xae0609a062a4eaed49de28c5f6a193261e0150ea",
+          "legacy": false,
+          "config_index": 11
+        },
+        {
+          "proxy": "0x3a220588a9c76cc928a10cda5d59162a4b328c51",
+          "token": "0xae0609a062a4eaed49de28c5f6a193261e0150ea",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-frax",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "FRAX",
+      "name": "Frax",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x0486d2c4e7be28c8b45459dcb23de077c03b299d",
+      "remote_token": "0x853d955acef822db058eb8505911ed77f175b99e",
+      "harmony": [
+        {
+          "proxy": "0x78bdf1655108156729409a40b904209e716f35fa",
+          "token": "0xd9e290c1cb1caf57ca12a4f03fc3ee5689bf2d83",
+          "legacy": false,
+          "config_index": 12
+        },
+        {
+          "proxy": "0x869860b1086103077780657788871eb5d510985a",
+          "token": "0xd9e290c1cb1caf57ca12a4f03fc3ee5689bf2d83",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-fxs",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "FXS",
+      "name": "Frax Share",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x3e843802863904cb57c8f0f810e430a49c841d02",
+      "remote_token": "0x3432b6a60d23ca0dfca7761b7ab56459d9c964d0",
+      "harmony": [
+        {
+          "proxy": "0x8b2ef8236f4418d0e9c3cb650780a14168c6c28e",
+          "token": "0xbea6830380dfb0283a699b0e085309215a24d9cc",
+          "legacy": false,
+          "config_index": 13
+        },
+        {
+          "proxy": "0xf689cd65c3d981dc68545ec1e8e666c243cea028",
+          "token": "0xbea6830380dfb0283a699b0e085309215a24d9cc",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-sushi",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "SUSHI",
+      "name": "SushiToken",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x7b0c1ddbef7ce61911208f84cfc0bcd1184236d0",
+      "remote_token": "0x6b3595068778dd592e39a122f4f5a5cf09c90fe2",
+      "harmony": [
+        {
+          "proxy": "0x97bdaaefbfacb6ad152279d95e59a2789fe1be8c",
+          "token": "0x41b7199da8276dbded449d717baffab8c43a6a10",
+          "legacy": false,
+          "config_index": 14
+        },
+        {
+          "proxy": "0x7e46c325ca5119f379d9911edf11f57df94144f4",
+          "token": "0x41b7199da8276dbded449d717baffab8c43a6a10",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-xsushi",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "xSUSHI",
+      "name": "SushiBar",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x85ba92e2ade9ef7857850c7c0e6f7ac441fa6e57",
+      "remote_token": "0x8798249c2e607446efb7ad49ec89dd1865ff4272",
+      "harmony": [
+        {
+          "proxy": "0xde06e6976e54f459a42c3b056e591c1bd8f12090",
+          "token": "0x4cac2771ab80107a5035bfec0ab7e745ed598d8d",
+          "legacy": false,
+          "config_index": 15
+        },
+        {
+          "proxy": "0x2d69dd6489345f87326cf97e14a8bd65a51b8d59",
+          "token": "0x4cac2771ab80107a5035bfec0ab7e745ed598d8d",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-aave",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "AAVE",
+      "name": "Aave Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0xab29422593a2044daa02150c9bb145d587cf4fdb",
+      "remote_token": "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9",
+      "harmony": [
+        {
+          "proxy": "0xa9038ca84e96c9e47dc96dd31a66d8f4a2bfeaf3",
+          "token": "0x8fd86715c0939138ff8d268b3fbf23043856a52e",
+          "legacy": false,
+          "config_index": 16
+        },
+        {
+          "proxy": "0x5085d983c015e06d73111dab1b1ff7b3912e5bc6",
+          "token": "0x8fd86715c0939138ff8d268b3fbf23043856a52e",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow",
+      "ignored_peers": [
+        {
+          "address": "0x8d1ebcda83fd905b597bf6d3294766b64ecf2aa7",
+          "reason": "trusted at some point but wraps a different token and exchanged no messages"
+        }
+      ]
+    },
+    {
+      "pool_id": "bsc-dai",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "DAI",
+      "name": "Dai Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0xfb5a2461d49d83348c557a5ad7aa938dcf444d7f",
+      "remote_token": "0x1af3f329e8be154074d8769d1ffa4ee058b1dbc3",
+      "harmony": [
+        {
+          "proxy": "0x9c34f9699d536f306435ce2aae0065c92f75f603",
+          "token": "0x1d374ed0700a0ad3cd4945d66a5b1e08e5db20a8",
+          "legacy": false,
+          "config_index": 17
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-usdc",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "USDC",
+      "name": "USD Coin",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x8d1ebcda83fd905b597bf6d3294766b64ecf2aa7",
+      "remote_token": "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d",
+      "harmony": [
+        {
+          "proxy": "0xce59e51645de8f8ff24229f89e105cadeb96ea57",
+          "token": "0x44ced87b9f1492bf2dcf5c16004832569f7f6cba",
+          "legacy": false,
+          "config_index": 18
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-usdt",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "USDT",
+      "name": "Tether USD",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x0551ca9e33bada0355dfce34685ad3b73cf3ad70",
+      "remote_token": "0x55d398326f99059ff775485246999027b3197955",
+      "harmony": [
+        {
+          "proxy": "0x8bab2dde26ce3f948b9b3e146760b66b60810fc7",
+          "token": "0x9a89d0e1b051640c6704dde4df881f73adfef39a",
+          "legacy": false,
+          "config_index": 19
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-cake",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "CAKE",
+      "name": "PancakeSwap Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x9876993e7e1750cc375a569731ca0583d0849f65",
+      "remote_token": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "harmony": [
+        {
+          "proxy": "0xbf44dc386670629590c2b3c30096e8f0471ca869",
+          "token": "0x3e9d32580b0bf3ae72afcbebc68710d2fd9a18f0",
+          "legacy": false,
+          "config_index": 20
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-eth",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "ETH",
+      "name": "Ethereum Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x664491fd329a1b98d83cf585cc2e54af5ab11cbd",
+      "remote_token": "0x2170ed0880ac9a755fd29b2688956bd959f933f8",
+      "harmony": [
+        {
+          "proxy": "0xcc7fb91ec8db666433d29b9c65ada1a09576feba",
+          "token": "0x783ee3e955832a3d52ca4050c4c251731c156020",
+          "legacy": false,
+          "config_index": 21
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-ada",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "ADA",
+      "name": "Cardano Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x1edb8bded80e1b87ed19ee7d97ee80b4fdb615c1",
+      "remote_token": "0x3ee2200efb3400fabb9aacf31297cbdd1d435d47",
+      "harmony": [
+        {
+          "proxy": "0xf4d83e35874bee7cb363d37d45ca2adf8c6c26d7",
+          "token": "0x582617bd8ca80d22d4432e63fda52d74dcdcee4c",
+          "legacy": false,
+          "config_index": 22
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-wnd",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "WND",
+      "name": "WND",
+      "decimals": 18,
+      "major": false,
+      "horizon": true,
+      "remote_adapter": "0x23e058c2f736d0c98ecbf800a164dd68ed28d983",
+      "remote_token": "0xb2aa453b56b495cb95bc9fa72e7706b84e41ee54",
+      "harmony": [
+        {
+          "proxy": "0x16023d2619d82507da834c65be9a42e98e847c4b",
+          "token": "0xf038b9e5c54ffeebd8a6f0cf15cfe0e9ddd0afd8",
+          "legacy": false,
+          "config_index": 23
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-matic",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "MATIC",
+      "name": "Matic Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0xb5d4d94b82722eafe067887a2fb596bb37b3aad2",
+      "remote_token": "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0",
+      "harmony": [
+        {
+          "proxy": "0x40ee4524accfd4d86f84ef3fd558487cc027db46",
+          "token": "0x301259f392b551ca8c592c9f676fcd2f9a0a84c5",
+          "legacy": false,
+          "config_index": 24
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-crv",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "CRV",
+      "name": "Curve DAO Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x07b6eb9d3be334098e5af77185344bb3a34e0017",
+      "remote_token": "0xd533a949740bb3306d119cc777fa900ba034cd52",
+      "harmony": [
+        {
+          "proxy": "0xfff849e581cddafa6b3bc187ea280aefb3fcdefe",
+          "token": "0x352cd428efd6f31b5cae636928b7b84149cf369f",
+          "legacy": false,
+          "config_index": 25
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-dsla",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "DSLA",
+      "name": "DSLA",
+      "decimals": 18,
+      "major": false,
+      "horizon": true,
+      "remote_adapter": "0x95320729c908dbf314550fcb77cb9859d0ebbd3a",
+      "remote_token": "0x3affcca64c2a6f4e3b6bd9c64cd2c969efd1ecbe",
+      "harmony": [
+        {
+          "proxy": "0xeab445e417fcdf6aee4d7fad7e24e1e188894357",
+          "token": "0x34704c70e9ec9fb9a921da6daad7d3e19f43c734",
+          "legacy": false,
+          "config_index": 26
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-uni",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "UNI",
+      "name": "Uniswap",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x242d6e16653b30c830c1918b5cc23d27253b2d26",
+      "remote_token": "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+      "harmony": [
+        {
+          "proxy": "0xfc5c32724a4303ab350ced1f1128ae96239f7dbf",
+          "token": "0x90d81749da8867962c760414c1c25ec926e889b6",
+          "legacy": false,
+          "config_index": 27
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-superbid",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "SUPERBID",
+      "name": "SuperBid",
+      "decimals": 18,
+      "major": false,
+      "horizon": true,
+      "remote_adapter": "0x36d74506e4dfdc4e6ceae0effa3a5333bd72ddcb",
+      "remote_token": "0x0563dce613d559a47877ffd1593549fb9d3510d6",
+      "harmony": [
+        {
+          "proxy": "0x91f1bcb64bfda870cde4f772e1c26af4d7d53d2c",
+          "token": "0x17fdedda058d43ff1615cdb72a40ce8704c2479a",
+          "legacy": false,
+          "config_index": 28
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-wise",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "WISE",
+      "name": "Wise Token",
+      "decimals": 18,
+      "major": false,
+      "horizon": true,
+      "remote_adapter": "0x905582f21fb9855c809d5b8933272a292dfbb138",
+      "remote_token": "0x66a0f676479cee1d7373f3dc2e2952778bff5bd6",
+      "harmony": [
+        {
+          "proxy": "0xb42f9dfd87871ee058119399e9d31ccc3bdb6a43",
+          "token": "0xe7e3c4d1cfc722b45a428736845b6aff862842a1",
+          "legacy": false,
+          "config_index": 29
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-use",
+      "kind": "harmony_origin",
+      "chain": "bsc",
+      "symbol": "USE",
+      "name": "Useless",
+      "decimals": 18,
+      "major": false,
+      "horizon": true,
+      "remote_adapter": "0xbdd7b6370ca647299af8b02e49ef59e5113088ce",
+      "remote_token": "0x60d66a5152612f7d550796910d022cb2c77b09de",
+      "harmony": [
+        {
+          "proxy": "0x1a2567000db62b0bb4a652c59bda6897fe7e7e76",
+          "token": "0xc079d0385492ac2d0e89ca079c186dd71ef49b1e",
+          "legacy": false,
+          "config_index": 30
+        },
+        {
+          "proxy": "0x712c055a81cf2e0513130bd1af3ccc3987e8dfcc",
+          "token": "0xc079d0385492ac2d0e89ca079c186dd71ef49b1e",
+          "legacy": true,
+          "historical_peer": true
+        },
+        {
+          "proxy": "0xad2896ed85841c27f2618b85a5b4c34a5c54b5c8",
+          "token": "0xc079d0385492ac2d0e89ca079c186dd71ef49b1e",
+          "legacy": true,
+          "historical_peer": true
+        },
+        {
+          "proxy": "0xf46bdbc0daed419505ec20b6add048ca63d5eca3",
+          "token": "0xc079d0385492ac2d0e89ca079c186dd71ef49b1e",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "unsupported"
+    },
+    {
+      "pool_id": "ethereum-axs",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "AXS",
+      "name": "AXS",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x06b448fb849927fcec43fac01a23d16aff6c8ae6",
+      "remote_token": "0xbb0e17ef65f82ab018d8edd776e8dd940327b28b",
+      "harmony": [
+        {
+          "proxy": "0xe4095e1996ca8b7f695412706d4ed9a27417ea61",
+          "token": "0x14a7b318fed66ffdcc80c1517c172c13852865de",
+          "legacy": false,
+          "config_index": 31
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-paxg",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "PAXG",
+      "name": "PAXG",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x50ed722744d883a54e36dca49ba3cebcb1da1957",
+      "remote_token": "0x45804880de22913dafe09f4980848ece6ecbaf78",
+      "harmony": [
+        {
+          "proxy": "0xd4464dcbd31ba4391c01a2a10aa37e049e55db21",
+          "token": "0x7afb0e2eba6dc938945fe0f42484d3b8f442d0ac",
+          "legacy": false,
+          "config_index": 32
+        }
+      ],
+      "claim_asset": "escrow",
+      "previous_remote_adapters": [
+        "0x931d537d465b9bc8ae07f3c37dd660402260f047",
+        "0xecd19aadf33213a298875da0cc15d80f155b7391"
+      ]
+    },
+    {
+      "pool_id": "ethereum-ygg",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "YGG",
+      "name": "Yield Guild Games Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x81220d913b8cf1d725f35baf888b3ce65fb693ef",
+      "remote_token": "0x25f8087ead173b73d6e8b84329989a8eea16cf73",
+      "harmony": [
+        {
+          "proxy": "0x679476083e4380a3bfc95fc956af3b467468ca33",
+          "token": "0x63cf309500d8be0b9fdb8f1fb66c821236c0438c",
+          "legacy": false,
+          "config_index": 33
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-ftm",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "FTM",
+      "name": "Fantom Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x16e86206d3fb0bfd96803f8cf78354ba6d46515d",
+      "remote_token": "0x4e15361fd6b4bb609fa63c81a2be19d873717870",
+      "harmony": [
+        {
+          "proxy": "0x1b0afbf1a7ef7db80f79e540dce52fc259b4b65f",
+          "token": "0x39ab439897380ed10558666c4377facb0322ad48",
+          "legacy": false,
+          "config_index": 34
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-1inch",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "1INCH",
+      "name": "1INCH Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x7de593d01d2e9eac1611ed822f823097b12cc5c3",
+      "remote_token": "0x111111111117dc0aa78b770fa6a738034120c302",
+      "harmony": [
+        {
+          "proxy": "0xae41d93368777fba352c8f2ed569afef07a27e41",
+          "token": "0x58f1b044d8308812881a1433d9bbeff99975e70c",
+          "legacy": false,
+          "config_index": 35
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-bal",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "BAL",
+      "name": "Balancer",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x069481db4f4d03d83d63c743836359ba868fa600",
+      "remote_token": "0xba100000625a3754423978a60c9317c58a424e3d",
+      "harmony": [
+        {
+          "proxy": "0x9e3ed2f246fd00cb5d94695c3dbe9f167aee1fe0",
+          "token": "0xdc5f76104d0b8d2bf2c2bbe06cdfe17004e9010f",
+          "legacy": false,
+          "config_index": 36
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-doge",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "DOGE",
+      "name": "Dogecoin",
+      "decimals": 8,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0xf634c6d62e480837321d753b9189cceae2170789",
+      "remote_token": "0xba2ae424d960c26247dd6c32edc70b295c744c43",
+      "harmony": [
+        {
+          "proxy": "0x04146de37b996d89a635c1ba724d6f4da7cc85aa",
+          "token": "0xf155e1a57db0ca820ae37ab4050e0e4c7cfcecd0",
+          "legacy": false,
+          "config_index": 37
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-matic",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "MATIC",
+      "name": "Matic Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x8b97b6ac20721c1536465d4d77a867749b3831f4",
+      "remote_token": "0xcc42724c6683b7e57334c4e856f4c9965ed682bd",
+      "harmony": [
+        {
+          "proxy": "0x378dbac9944ff07a7a197c7b90f522f34490706a",
+          "token": "0x6e7be5b9b4c9953434cd83950d61408f1ccc3bee",
+          "legacy": false,
+          "config_index": 38
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-atom",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "ATOM",
+      "name": "Cosmos Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0xa2ba7aa169e5c77eb37a5330f2695fee8d1216ac",
+      "remote_token": "0x0eb3a705fc54725037cc9e008bdede697f62f335",
+      "harmony": [
+        {
+          "proxy": "0xae77bbf27db792178550f114ba4409f448faa897",
+          "token": "0xd6bad903e550822d51073afb79581bf5aae9243f",
+          "legacy": false,
+          "config_index": 39
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-dot",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "DOT",
+      "name": "Polkadot Token",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x8da02bedf802976a69627dd8ae081493d8fdf0f0",
+      "remote_token": "0x7083609fce4d1d8dc0c979aab8c869ea2c873402",
+      "harmony": [
+        {
+          "proxy": "0x6eb05ef293bd937479ad018295fb3037f9c2404c",
+          "token": "0x08cb2917245bbe75c8c9c6dc4a7b3765dae02b31",
+          "legacy": false,
+          "config_index": 40
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-zil",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "ZIL",
+      "name": "Zilliqa",
+      "decimals": 12,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0xc7a2261237ea89df231d8f71108822a03eedbc51",
+      "remote_token": "0xb86abcb37c3a4b64f74f59301aff131a1becc787",
+      "harmony": [
+        {
+          "proxy": "0x243169cf4a787b18f3f43142202f5c902ff40881",
+          "token": "0x0341d02c0fd5439576742750e6f2a2c0993a520b",
+          "legacy": false,
+          "config_index": 41
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-xvs",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "XVS",
+      "name": "Venus",
+      "decimals": 18,
+      "major": true,
+      "horizon": true,
+      "remote_adapter": "0x00795a3fd0d895a3507d43316da07376c7cb36d0",
+      "remote_token": "0xcf6bb5389c92bdda8a3747ddb454cb7a64626c63",
+      "harmony": [
+        {
+          "proxy": "0xbfaba9b2a66a542e7550bad7df1dfa9f91a76b1b",
+          "token": "0x04f308c988ec1c5a4e4a99d3d2a5b8f4287260bd",
+          "legacy": false,
+          "config_index": 42
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "bsc-mm",
+      "kind": "remote_escrow",
+      "chain": "bsc",
+      "symbol": "MM",
+      "name": "Million",
+      "decimals": 18,
+      "major": false,
+      "horizon": true,
+      "remote_adapter": "0x02eb13cd5fd557bbc425a736f02c1cfe31efae1b",
+      "remote_token": "0xbf05279f9bf1ce69bbfed670813b7e431142afa4",
+      "harmony": [
+        {
+          "proxy": "0xf7f132e7b172ed7f8759f64ab710407dc292c005",
+          "token": "0x9af8d47422ae16ddd500e80ed42c4f24a5feffc3",
+          "legacy": false,
+          "config_index": 43
+        }
+      ],
+      "claim_asset": "escrow",
+      "ignored_peers": [
+        {
+          "address": "0x9740ff91f1985d8d2b71494ae1a2f723bb3ed9e4",
+          "reason": "trusted at some point but is not a bridge proxy and exchanged no messages"
+        }
+      ]
+    },
+    {
+      "pool_id": "arbitrum-usdt",
+      "kind": "remote_escrow",
+      "chain": "arbitrum",
+      "symbol": "USDT",
+      "name": "Tether USD",
+      "decimals": 6,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x297f0b9a452d34c9b1c15b36b173a9a0b0f0e10b",
+      "remote_token": "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
+      "harmony": [
+        {
+          "proxy": "0xe7cf1a353cdd4fb8cc8df4e80b2f7d27552ca711",
+          "token": "0x2da729ba5231d2c79290aba4a8b85a5c94da4724",
+          "legacy": false,
+          "config_index": 44
+        },
+        {
+          "proxy": "0xc0708214d72e805926dbc7e128a48b8304abe128",
+          "token": "0x2da729ba5231d2c79290aba4a8b85a5c94da4724",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "arbitrum-usdc",
+      "kind": "remote_escrow",
+      "chain": "arbitrum",
+      "symbol": "USDC",
+      "name": "USD Coin (Arb1)",
+      "decimals": 6,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x1c3979c2bb4f0e6dcb75daf22ad0741cf7d5f160",
+      "remote_token": "0xff970a61a04b1ca14834a43f5de4533ebddb5cc8",
+      "harmony": [
+        {
+          "proxy": "0x11c4e687b865c1e8e17437748ab3d1faed7444ff",
+          "token": "0x9b5fae311a4a4b9d838f301c9c27b55d19baa4fb",
+          "legacy": false,
+          "config_index": 45
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "arbitrum-dai",
+      "kind": "remote_escrow",
+      "chain": "arbitrum",
+      "symbol": "DAI",
+      "name": "Dai Stablecoin",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x7a967b050200aacc8e5dd0c033e791bf8580d04a",
+      "remote_token": "0xda10009cbd5d07dd0cecc66161fc93d7c9000da1",
+      "harmony": [
+        {
+          "proxy": "0x3fb1e315ba2ea5acc62539fcd9fb9de483edc1f8",
+          "token": "0x7c07d01c9dab5abb09ce2b42242a7570f25fc2cc",
+          "legacy": false,
+          "config_index": 46
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "linea-usdc",
+      "kind": "remote_escrow",
+      "chain": "linea",
+      "symbol": "USDC",
+      "name": "USD Coin (Linea)",
+      "decimals": 6,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x8a0167fc1ef2e9492a1eb978a9da9137ba25bb1b",
+      "remote_token": "0x176211869ca2b568f2a7d4ee941e073a821ee1ff",
+      "harmony": [
+        {
+          "proxy": "0x07faf189c899e4ae36cb3dc698dd1f9c0823308b",
+          "token": "0x9c5c877db2a5a37733fe1a0bdcae8411cdc8c5b3",
+          "legacy": true,
+          "config_index": 47
+        },
+        {
+          "proxy": "0x7cd384a427736367d3854640bd892702343f1644",
+          "token": "0x211c4b7e1be2f73f11b0039927154311fc38991d",
+          "legacy": false,
+          "config_index": 49
+        },
+        {
+          "proxy": "0x857736f8c7906d34470540dc4ebbaa6b9d26bdb8",
+          "token": "0x211c4b7e1be2f73f11b0039927154311fc38991d",
+          "legacy": true,
+          "historical_peer": true
+        },
+        {
+          "proxy": "0xba21f99d1067b8ae09f4f162e0528cb3fdb4fed2",
+          "token": "0x9c5c877db2a5a37733fe1a0bdcae8411cdc8c5b3",
+          "legacy": true,
+          "historical_peer": true
+        }
+      ],
+      "claim_asset": "escrow",
+      "ignored_peers": [
+        {
+          "address": "0x81262d16644ff23a1a689cef7da78b0dfe9b1b4c",
+          "reason": "trusted at some point but wraps a different token and exchanged no messages"
+        }
+      ]
+    },
+    {
+      "pool_id": "linea-usdt",
+      "kind": "remote_escrow",
+      "chain": "linea",
+      "symbol": "USDT",
+      "name": "USDT (Linea)",
+      "decimals": 6,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x0da4c7a0bbe943a8e685056d033d10995e36fc6e",
+      "remote_token": "0xa219439258ca9da29e9cc4ce5596924745e12b93",
+      "harmony": [
+        {
+          "proxy": "0x9cf76612257cff660a351860fc16e55f2aead831",
+          "token": "0xcf3e3622f749764ceabf259a1aced1be43a49e2f",
+          "legacy": false,
+          "config_index": 48
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "base-usdc",
+      "kind": "remote_escrow",
+      "chain": "base",
+      "symbol": "USDC",
+      "name": "USD Coin (Base)",
+      "decimals": 6,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0x1de24694e5cea815b4a4f1fec2116a3d7e390b99",
+      "remote_token": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "harmony": [
+        {
+          "proxy": "0x3dbba0ee173f5893a85d57d186287fbc1e7c91a5",
+          "token": "0xc8468c26345dcc4dae328befa0e8cf4dd968bea9",
+          "legacy": false,
+          "config_index": 50
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "base-sbmoodeng",
+      "kind": "remote_escrow",
+      "chain": "base",
+      "symbol": "sbMOODENG",
+      "name": "Moo Deng",
+      "decimals": 6,
+      "major": false,
+      "horizon": false,
+      "remote_adapter": "0xff1e856b3a77f2b30fd14d5b39730684068260c6",
+      "remote_token": "0x81893b6d44151716ceeec730d8d89114c959a079",
+      "harmony": [
+        {
+          "proxy": "0x4b0436571886330f39c684265ca2d539a5dbe74c",
+          "token": "0x5391dcb4356381ac05099f5048aba50ce1e406cb",
+          "legacy": false,
+          "config_index": 51
+        }
+      ],
+      "claim_asset": "escrow"
+    },
+    {
+      "pool_id": "ethereum-sdai",
+      "kind": "remote_escrow",
+      "chain": "ethereum",
+      "symbol": "sDAI",
+      "name": "Savings Dai",
+      "decimals": 18,
+      "major": true,
+      "horizon": false,
+      "remote_adapter": "0xfbfcf61f7153547f79c79f0ad1f4a1b93c6fb59c",
+      "remote_token": "0x83f20f44975d03b1b09e64809b757c47f942beea",
+      "harmony": [
+        {
+          "proxy": "0x5114b76b0c8934c1e23fd071722fc5de400b94d8",
+          "token": "0xedeb95d51dbc4116039435379bd58472a2c09b1f",
+          "legacy": false,
+          "config_index": 52
+        }
+      ],
+      "claim_asset": "escrow"
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "times": {
+    "rollback": "2026-08-11T23:25:37Z",
+    "cutoff": "2026-09-10T14:00:00Z"
+  },
+  "chains": {
+    "harmony": {
+      "rpc_env": "HARMONY_RPC",
+      "chain_id": 1666600000,
+      "pinned_blocks": {
+        "rollback": {
+          "number": 92730034,
+          "hash": "0x30c35d2f2291e4b27debe7862956cf7a0cc7abefc044273d6823567335086d8d"
+        },
+        "cutoff": {
+          "number": 93623067,
+          "hash": "0x23572e11f6ef9afe4c27ab3102f15b99fd7277ae5f685ccaef0ae571fe7ee0b6"
+        }
+      }
+    },
+    "ethereum": {
+      "rpc_env": "ETHEREUM_RPC",
+      "chain_id": 1,
+      "custody_multisig": "0x19565f4771843467aad632d6b56c75396785b06c"
+    },
+    "bsc": {
+      "rpc_env": "BSC_RPC",
+      "chain_id": 56,
+      "custody_multisig": "0xe3364cc2c65995c924db6d1f467d9be275e65e35"
+    },
+    "arbitrum": {
+      "rpc_env": "ARBITRUM_RPC",
+      "chain_id": 42161,
+      "custody_multisig": null
+    },
+    "base": {
+      "rpc_env": "BASE_RPC",
+      "chain_id": 8453,
+      "custody_multisig": null
+    },
+    "linea": {
+      "rpc_env": "LINEA_RPC",
+      "chain_id": 59144,
+      "custody_multisig": null
+    }
+  },
+  "custody_requirements": {
+    "owner_count": 4,
+    "threshold": 2
+  },
+  "one_claims": {
+    "claim_chain": "ethereum",
+    "claim_token": "0xff74317e948695297acb79cb2de06111f5cc16b3",
+    "reserve_safe": "0xf868743be6bbda38929c03616234684e6d3ded20",
+    "custody_multisig": null,
+    "routing_destination_id": "layerzero-nativeoft-custody"
+  },
+  "snapshot_policy": {
+    "remote_holder_overrides": {}
+  },
+  "allocation_policy": {
+    "minimum_claim_raw": "0",
+    "orphaned_payouts": "debit_recipient"
+  },
+  "pricing": {
+    "stablecoins": [
+      "USDC",
+      "USDT",
+      "DAI",
+      "BUSD"
+    ],
+    "cmc_ids": {
+      "ethereum-fxs": {
+        "id": 6953,
+        "note": "FXS renamed FRAX on CoinMarketCap (same contract)"
+      },
+      "ethereum-matic": {
+        "id": 28321,
+        "note": "MATIC upgrades 1:1 to POL; CoinMarketCap lists POL as Polygon (prev. MATIC)"
+      },
+      "bsc-matic": {
+        "id": 28321,
+        "note": "MATIC upgrades 1:1 to POL; CoinMarketCap lists POL as Polygon (prev. MATIC)"
+      }
+    }
+  }
+}
