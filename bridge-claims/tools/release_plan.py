@@ -26,8 +26,9 @@ LayerZero verifier, executor, relayer, or fee:
                      it read before, so only the balance changes.
 
 Safe-owned escrows get one Transaction Builder batch per chain and owner (atomic); EOA-owned escrows
-get raw calldata to send in order. Balances, configs, nonces, and Safe nonces are read live. The
-Harmony path (chain 116) is never touched. Nothing is sent.
+get raw calldata to send in order, and each key holder gets `handoff/<key>/` with their files,
+`tools/send_calldata.py`, and step-by-step instructions. Balances, configs, nonces, and Safe nonces
+are read live. The Harmony path (chain 116) is never touched. Nothing is sent.
 
 `test/EscrowRelease.t.sol` replays every generated file on a fork of each chain.
 """
@@ -35,6 +36,7 @@ Harmony path (chain 116) is never touched. Nothing is sent.
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
 from decimal import Decimal
@@ -516,6 +518,356 @@ def write_safe_batch(path, chain_id, safe, calls, name, version, nonce):
     return record
 
 
+NATIVE = {"bsc": "BNB"}  # every other chain pays gas in ETH
+EOA_TX_GAS = 100_000  # bound; the largest EOA release transaction measured on the forks is 93,000
+
+
+def balance_check(e):
+    """The `cast call` that prints what the escrow still holds (0 once released)."""
+    if e["kind"] == "native":
+        return f'cast call {e["escrow"]} "balanceOf(address)(uint256)" {e["escrow"]} --rpc-url "$RPC"'
+    return f'cast call {e["token"]} "balanceOf(address)(uint256)" {e["escrow"]} --rpc-url "$RPC"'
+
+
+def handoff_readme(owner, files, by_escrow, config, safe, hashes, gas, built):
+    chains = [b["chain"] for b in files]
+    total = sum(len(b["escrows"]) for b in files)
+    lines = [
+        f"# Bridge escrow release: instructions for `{owner}`",
+        "",
+        f"Built {built} with the release plan. Use only the package you were sent for this build.",
+        "",
+        f"You hold the key `{owner}`. It owns {total} bridge escrow{'s' if total != 1 else ''} on "
+        f"{', '.join(chains)}. These steps release each of them, on its own chain, to the custody Safe",
+        f"`{safe}`. Nothing crosses chains and no funds pass through your key: you only pay gas. For",
+        "the whole picture, read `bridge-claims/docs/RELEASE.md` in the repository.",
+        "",
+        "## Your files",
+        "",
+        "| Chain | Chain id | File | Escrows | Transactions |",
+        "|---|---:|---|---|---:|",
+    ]
+    for b in files:
+        released = [by_escrow[(b["chain"], a)] for a in b["escrows"]]
+        assets = "; ".join(f"{e['symbol']} {units(e['locked_raw'], e['decimals'])} (`{e['escrow']}`)" for e in released)
+        lines.append(f"| {b['chain']} | {config['chains'][b['chain']]['chain_id']} | "
+                     f"`{os.path.basename(b['file'])}` | {assets} | {b['calls']} |")
+    lines += [
+        "",
+        "Each escrow takes 10 transactions, always in this order:",
+        "",
+        "1. Your key becomes the only verifier for messages from the custody Safe on this chain.",
+        "2. Your key becomes the only party allowed to deliver them.",
+        "3. The escrow is pinned to the receive library LayerZero uses today.",
+        "4. The escrow trusts the custody Safe on this chain.",
+        "5. Your key attests one message that credits the escrow's whole balance to the custody Safe.",
+        "6. Your key delivers it, and the escrow pays the custody Safe. Only this one moves funds.",
+        "7. to 10. The escrow's previous settings are put back.",
+        "",
+        "Each transaction in the files carries a `note` saying which of these it is.",
+        "",
+        "## Before you start",
+        "",
+        "1. Install Foundry, which provides `cast` (https://getfoundry.sh), and have Python 3.",
+        "2. Check that the files arrived unchanged: `shasum -a 256 *` in this folder must print",
+        "",
+        "   | File | SHA-256 |",
+        "   |---|---|",
+    ]
+    lines += [f"   | `{name}` | `{digest}` |" for name, digest in hashes.items()]
+    lines += [
+        "",
+        "3. Have an RPC URL for each chain from your own provider, and enough native coin for gas. Each",
+        f"   transaction stays under {EOA_TX_GAS:,} gas. At the gas price when this package was built:",
+        "",
+        "   | Chain | Transactions | Gas cost at most | Your balance then |",
+        "   |---|---:|---:|---:|",
+    ]
+    for b in files:
+        price, balance = gas[b["chain"]]
+        coin = NATIVE.get(b["chain"], "ETH")
+        need = b["calls"] * EOA_TX_GAS * price
+        lines.append(f"   | {b['chain']} | {b['calls']} | {units(need, 18, 8)} {coin} | {units(balance, 18, 8)} {coin} |")
+    lines += [
+        "",
+        "   Gas prices move, on Ethereum by 10x or more within a day; keep a wide margin.",
+        "4. Start only when the person who sent you this package says it is current.",
+        "",
+        "## Send",
+        "",
+        "One file at a time, in any order. In this folder, with `RPC` set to that file's chain:",
+        "",
+        "```sh",
+        f'python3 send_calldata.py {os.path.basename(files[0]["file"])} --rpc-url "$RPC" --dry-run -- --ledger',
+        f'python3 send_calldata.py {os.path.basename(files[0]["file"])} --rpc-url "$RPC" -- --ledger',
+        "```",
+        "",
+        "Replace `--ledger` with how you sign: `--trezor`, or `--account <name>` for a Foundry keystore.",
+        "A keystore asks for its password at every transaction unless you add `--password-file <file>`.",
+        "",
+        "The dry run lists the transactions and simulates the first one without sending anything. The",
+        "real run first checks that the RPC is on the file's chain and that your key has no pending",
+        f"transactions. It refuses a wallet that is not `{owner}`. Then, for each transaction, it",
+        "simulates the call, sends it only if the simulation succeeds, and waits until it is mined",
+        "successfully before the next. With a hardware wallet, check on the device that each transaction",
+        "goes to the address the script prints for it.",
+        "",
+        "Each confirmed transaction is written to `<file>.sent.json`. Do not delete those logs.",
+        "",
+        "## Check",
+        "",
+        "After a file is done, each of its escrows must hold 0:",
+        "",
+        "```sh",
+    ]
+    for b in files:
+        lines.append(f"# {b['chain']}")
+        lines += [balance_check(by_escrow[(b["chain"], a)]) for a in b["escrows"]]
+    lines += [
+        "```",
+        "",
+        "## If something goes wrong",
+        "",
+        "- **A simulation fails.** Nothing was sent for that transaction. Send the output to whoever sent",
+        "  you this package.",
+        "- **The run stops or is interrupted.** Run the same command again; it resumes after the last",
+        "  confirmed transaction. If it says your key sent something after the last logged transaction,",
+        "  stop and report it.",
+        "- **A transaction reverts on chain.** The script stops. Report it.",
+        "- Never edit, skip, or reorder the transactions. Don't send anything else from this key on that",
+        "  chain while a file is in progress.",
+        "",
+        "Once an escrow's first transaction is mined, only your key can complete or undo it, so a pause is",
+        "safe. Finish it from the same file, not from a newer package.",
+        "",
+        "## When you are done",
+        "",
+        "Send back every `*.sent.json` file. They list each transaction hash for the release record.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def write_handoff(out, owner, files, by_escrow, config, safe, replace):
+    """`handoff/<owner>/`: everything one key holder needs, in one folder they can be sent."""
+    folder = os.path.join(out, "handoff", owner[:10])
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "send_calldata.py")
+    sources = [(os.path.join(out, b["file"]), os.path.basename(b["file"])) for b in files]
+    sources.append((script, "send_calldata.py"))
+    readme = os.path.join(folder, "README.md")
+    lib.prepare_outputs([os.path.join(folder, name) for _, name in sources] + [readme], replace)
+    for source, name in sources:
+        shutil.copyfile(source, os.path.join(folder, name))
+    hashes = {name: lib.file_sha256(os.path.join(folder, name)) for _, name in sources}
+    gas = {}
+    for b in files:
+        rpc = rpc_for(config, b["chain"])
+        gas[b["chain"]] = (int(rpc.call("eth_gasPrice", []), 16),
+                           int(rpc.call("eth_getBalance", [owner, "latest"]), 16))
+    built = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+    lib.write_text(readme, handoff_readme(owner, files, by_escrow, config, safe, hashes, gas, built))
+    return [os.path.relpath(p, out) for p in [os.path.join(folder, name) for _, name in sources] + [readme]]
+
+
+def describe_header(h):
+    nonce, src, dst = int.from_bytes(h[1:9], "big"), int.from_bytes(h[9:13], "big"), int.from_bytes(h[45:49], "big")
+    return (f"message {nonce} from `0x{h[25:45].hex()}` on chain {src} to `0x{h[61:81].hex()}` on chain {dst}")
+
+
+def describe_message(m):
+    """The OFT payload's recipient and raw amount (4-tuple packet-type form or legacy 2-tuple)."""
+    first = int.from_bytes(m[:32], "big")
+    if first == PT_SEND:
+        to_at, amount = int.from_bytes(m[64:96], "big"), int.from_bytes(m[96:128], "big")
+    else:
+        to_at, amount = first, int.from_bytes(m[32:64], "big")
+    return f"`0x{m[to_at + 32:to_at + 52].hex()}`", amount
+
+
+def decode_call(data):
+    """What a planned call does, read back from its calldata alone."""
+    sel, body = data[:4], data[4:]
+
+    def word(i):
+        return int.from_bytes(body[32 * i:32 * i + 32], "big")
+
+    def dyn(i):
+        at = word(i)
+        return body[at + 32:at + 32 + int.from_bytes(body[at:at + 32], "big")]
+
+    if sel == SEL["setConfig(uint16,uint16,uint256,bytes)"]:
+        version, eid, kind, config = word(0), word(1), word(2), dyn(3)
+        head = f"`setConfig({version}, {eid}, {kind}, …)`"
+        if kind == CONFIG_TYPE_EXECUTOR:
+            ex = config[12:32].hex()
+            return head + (f": executor for chain {eid} = `0x{ex}`" if int(ex, 16) else
+                           f": executor for chain {eid} = unset (LayerZero's default)")
+        w = [int.from_bytes(config[i:i + 32], "big") for i in range(0, len(config), 32)]
+        confirmations, required, optional = w[1], w[2], w[3]
+        if (confirmations, required, optional, w[4]) == (0, 0, 0, 0):
+            return head + f": verifier config for chain {eid} = unset (LayerZero's default)"
+        at = 1 + w[5] // 32
+        dvns = ", ".join(f"`0x{x:040x}`" for x in w[at + 1:at + 1 + w[at]])
+        extra = "none" if optional == NIL_DVN_COUNT else str(optional)
+        return head + (f": verifiers for chain {eid} = required [{dvns}], optional {extra}, "
+                       f"{confirmations} confirmation{'s' if confirmations != 1 else ''}")
+    if sel == SEL["setReceiveVersion(uint16)"]:
+        v = word(0)
+        return f"`setReceiveVersion({v})`: " + ("follow LayerZero's default receive library" if v == 0
+                                                 else f"pin receive library version {v}")
+    if sel == SEL["setTrustedRemote(uint16,bytes)"]:
+        eid, path = word(0), dyn(1)
+        if not path:
+            return f"`setTrustedRemote({eid}, 0x)`: trust no sender on chain {eid}"
+        return f"`setTrustedRemote({eid}, …)`: trust sender `0x{path[:20].hex()}` on chain {eid}"
+    if sel == SEL["verify(bytes,bytes32,uint64)"]:
+        return (f"`verify(header, payloadHash, {word(2)})`: attest {describe_header(dyn(0))}, "
+                f"payload hash `0x{body[32:64].hex()}`")
+    if sel == SEL["commitVerification(bytes,uint256)"]:
+        full = dyn(0)
+        to, amount = describe_message(full[113:])
+        return (f"`commitVerification(packet, {word(1)})`: deliver {describe_header(full[:81])}; "
+                f"the escrow pays {amount} raw units to {to}")
+    if sel == SEL["addOwnerWithThreshold(address,uint256)"]:
+        return f"`addOwnerWithThreshold(0x{body[12:32].hex()}, {word(1)})`"
+    if sel == SEL["transfer(address,uint256)"]:
+        return f"`transfer(0x{body[12:32].hex()}, {word(1)})`"
+    return f"selector `0x{sel.hex()}`"
+
+
+def example_release(batches, safe):
+    """The release batch to decode for the signers: the custody Safe's own, else the first."""
+    releases = [b for b in batches if b["sender_is_safe"] and b["step"] == "1-release"]
+    return next((b for b in releases if b["sender"] == safe), releases[0] if releases else None)
+
+
+def signers_readme(safe, batches, by_escrow, safe_states, hashes, gas, built, descriptions, release, release_txs):
+    safe_batches = [b for b in batches if b["sender_is_safe"]]
+    lines = [
+        "# Bridge escrow release: Safe signing package",
+        "",
+        f"Built {built} with the release plan. Sign only from the package you were sent for this build.",
+        "",
+        "- `README.md`: this guide, for the owners who sign the Safe transactions.",
+        "- `PLAN.md`: the full release plan: every file, escrow, amount, and Safe hash.",
+        "- `DESIGN.md`: why the release works this way (`bridge-claims/docs/RELEASE.md`).",
+        "- `0-safe-owners/`, `0-one-reserve/`, `1-release/`: the Safe Transaction Builder batches.",
+        "",
+        "Escrows owned by a single key are released by that key from its own package; they appear in",
+        "`PLAN.md` but need no Safe signature.",
+        "",
+        "## The Safe transactions",
+        "",
+        "| Step | Chain | Safe | Signers | Calls | Nonce | Gas cost at most | File |",
+        "|---|---|---|---|---:|---:|---:|---|",
+    ]
+    for b in safe_batches:
+        info = safe_states.get((b["chain"], b["sender"])) or {}
+        owners = ", ".join(f"`{o}`" for o in info.get("owners") or [])
+        price = gas[b["chain"]]
+        bound = (len(b["escrows"]) * GAS_PER_ESCROW) if b["escrows"] else 200_000
+        lines.append(
+            f"| {b['step']} | {b['chain']} | `{b['sender']}` | {info.get('threshold')} of {owners} | {b['calls']} | "
+            f"{b['planned_nonce']} | {units(bound * price, 18, 8)} {NATIVE.get(b['chain'], 'ETH')} | `{b['file']}` |")
+    lines += ["", "What each one does:", ""]
+    lines += [f"- **`{b['file']}`**: {descriptions[b['file']]}" for b in safe_batches]
+    lines += [
+        "",
+        "The gas cost is paid by the owner who executes, at the gas price when this package was built.",
+        "",
+        "## Order",
+        "",
+        "1. `0-safe-owners/` (optional): until a chain's batch runs, its initial owner alone controls the",
+        "   custody Safe there. Run it before any release pays into the custody Safe on that chain.",
+        "2. `0-one-reserve/`: any time.",
+        "3. `1-release/`: the batches are independent; any order.",
+        "4. Afterwards, the claim contracts are deployed and the approvals signed (`RUNBOOK.md` steps 4 and",
+        "   5). Their Safe hashes depend on the nonce, so they are rebuilt after these batches run.",
+        "",
+        "## How to sign a batch",
+        "",
+        "1. Open the Safe in the Safe web app, on the batch's chain.",
+        "2. Open Apps, then Transaction Builder, and drag the batch file in. The number of transactions",
+        "   must match the table above.",
+        "3. Create the batch and send it to the Safe queue. Its nonce must be the planned nonce. If it is",
+        "   not, stop: the plan must be rebuilt.",
+        "4. Before signing, compare the Safe transaction hash with the table below. A hardware wallet",
+        "   shows the domain hash and message hash instead; compare those.",
+        "5. When enough owners have signed, one owner executes and pays the gas.",
+        "",
+        "| File | Nonce | Safe tx hash | Domain hash | Message hash |",
+        "|---|---:|---|---|---|",
+    ]
+    lines += [f"| `{b['file']}` | {b['planned_nonce']} | `{b['safe_tx_hash']}` | `{b['domain_hash']}` | "
+              f"`{b['message_hash']}` |" for b in safe_batches]
+    if release:
+        at, example = 0, None
+        for a in release["escrows"]:
+            e = by_escrow[(release["chain"], a)]
+            n = len(release_calls(e, safe))
+            if e["previous_trusted_remote"] == "0x" and example is None:
+                example = (e, release_txs[at:at + n])
+            at += n
+        e, calls = example
+        lines += [
+            "",
+            "## What a release batch contains: one escrow, decoded",
+            "",
+            f"Every escrow in a release batch gets the same calls. These are the {len(calls)} for {e['pool_id']}",
+            f"(`{e['escrow']}`, {units(e['locked_raw'], e['decimals'])} {e['symbol']}) in `{release['file']}`,",
+            "decoded from the file's own calldata. The Safe app's decoding of the same transactions should",
+            "say the same.",
+            "",
+        ]
+        lines += [f"{i}. To `{c['to']}`: {decode_call(ct.unhex(c['data']))}" for i, c in enumerate(calls, 1)]
+        unusual = [x for x in by_escrow.values() if x["previous_trusted_remote"] != "0x"]
+        lines += [
+            "",
+            "Calls 1 to 4 make the escrow's owner its only verifier and executor for messages from the",
+            "custody Safe on this chain, pin the library, and trust that sender. Call 5 attests the one",
+            "release message, call 6 delivers it (the escrow pays the custody Safe), and calls 7 to 10 put",
+            "every setting back. The other escrows differ only in address and amount"
+            + (", and in call 7 for " + ", ".join(f"{x['pool_id']} (`{x['escrow']}`), which gets its earlier "
+                                                  f"trusted remote `{x['previous_trusted_remote']}` back"
+                                                  for x in unusual) if unusual else "") + ".",
+        ]
+    lines += [
+        "",
+        "## File hashes",
+        "",
+        "`shasum -a 256 0-*/* 1-*/*` in this folder must print:",
+        "",
+        "| File | SHA-256 |",
+        "|---|---|",
+    ]
+    lines += [f"| `{name}` | `{digest}` |" for name, digest in sorted(hashes.items())]
+    return "\n".join(lines) + "\n"
+
+
+def write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path, descriptions, replace):
+    """`handoff/safe-signers/`: every Safe batch, the plan, the design note, and a signing guide."""
+    folder = os.path.join(out, "handoff", "safe-signers")
+    design = os.path.join(ct.PROJECT, "docs", "RELEASE.md")
+    sources = [(os.path.join(out, b["file"]), b["file"]) for b in batches if b["sender_is_safe"]]
+    sources += [(sheet_path, "PLAN.md"), (design, "DESIGN.md")]
+    readme = os.path.join(folder, "README.md")
+    targets = [os.path.join(folder, name) for _, name in sources] + [readme]
+    lib.prepare_outputs(targets, replace)
+    for source, name in sources:
+        shutil.copyfile(source, os.path.join(folder, name))
+    hashes = {name: lib.file_sha256(os.path.join(folder, name)) for _, name in sources[:-2]}
+    gas = {b["chain"]: int(rpc_for(config, b["chain"]).call("eth_gasPrice", []), 16)
+           for b in batches if b["sender_is_safe"]}
+    release = example_release(batches, safe)
+    release_txs = []
+    if release:
+        with open(os.path.join(out, release["file"])) as source:
+            release_txs = json.load(source)["transactions"]
+    built = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+    lib.write_text(readme, signers_readme(safe, batches, by_escrow, safe_states, hashes, gas, built, descriptions,
+                                          release, release_txs))
+    return [os.path.relpath(p, out) for p in targets]
+
+
 def calldata_record(chain, chain_id, owner, calls):
     return {
         "chain": chain, "chain_id": chain_id, "from": owner,
@@ -595,10 +947,19 @@ def main():
         emit("0-one-reserve", one_funding["chain"], one_funding["from"], one_funding["calls"], True)
     for r in releases:
         emit("1-release", r["chain"], r["owner"], r["calls"], r["owner_is_safe"], r["part"], r["escrows"])
+    by_escrow = {(e["chain"], e["escrow"]): e for e in escrows}
+    for owner in sorted({b["sender"] for b in batches if not b["sender_is_safe"]}):
+        files = [b for b in batches if b["sender"] == owner and not b["sender_is_safe"]]
+        written += write_handoff(out, owner, files, by_escrow, config, safe, args.replace)
 
     summary_path = os.path.join(out, "release-plan.json")
     sheet_path = os.path.join(out, "RELEASE.md")
     lib.prepare_outputs([summary_path, sheet_path], args.replace)
+    lib.write_text(sheet_path, sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batches))
+    descriptions = {b["file"]: file_description(b, safe, by_escrow, custody_safes, owner_setup, one_funding)
+                    for b in batches}
+    written += write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path, descriptions,
+                             args.replace)
     one_summary = (
         {k: v for k, v in one_funding.items() if k != "calls"}
         if one_funding else None
@@ -615,18 +976,17 @@ def main():
         "batches": batches,
         "files": sorted(written),
     })
-    lib.write_text(sheet_path, sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batches))
     eoa_txs = sum(b["calls"] for b in batches if b["step"] == "1-release" and not b["sender_is_safe"])
     safe_batches = sum(1 for b in batches if b["step"] == "1-release" and b["sender_is_safe"])
     print(f"{len(escrows)} escrows to release, {len(skipped)} skipped; wrote {len(written)} files in {out}")
     print(f"  release: {safe_batches} Safe batches, {eoa_txs} EOA transactions; no LayerZero fees")
 
 
-def units(raw, decimals):
-    """A raw token amount for people: thousands separators, at most four decimals."""
+def units(raw, decimals, places=4):
+    """A raw token amount for people: thousands separators, at most `places` decimals."""
     if decimals is None:
         return f"{raw} raw"
-    text = f"{Decimal(int(raw)).scaleb(-decimals):,.4f}"
+    text = f"{Decimal(int(raw)).scaleb(-decimals):,.{places}f}"
     return text.rstrip("0").rstrip(".")
 
 
@@ -695,10 +1055,14 @@ def sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batch
         "",
         "- A `*-safe.json` file is a Safe Transaction Builder batch: one atomic transaction at the planned",
         "  nonce. Check its Safe transaction hash against the table below before signing. If the Safe",
-        "  executes anything else first, the hash no longer applies; rebuild.",
+        "  executes anything else first, the hash no longer applies; rebuild. Send the Safe owners",
+        "  `handoff/safe-signers/`: every Safe batch, this plan, the design note, and a signing guide with",
+        "  the hashes and one escrow's calls decoded from the batch.",
         "- A `*-eoa.json` file lists transactions for the key in `from`: send each entry's `to`, `value`",
         "  (0), and `data` in file order. If one fails, resend it, and finish a started escrow from the same",
-        "  file (the planner refuses to plan over a half-finished release).",
+        "  file (the planner refuses to plan over a half-finished release). Send each key holder their",
+        "  `handoff/<key>/` folder: their files, `send_calldata.py` (which sends them one by one, simulating",
+        "  each first and logging each receipt), and step-by-step instructions.",
         "- Gas is paid by the account that executes; no Safe needs native coin for this step.",
         "- Rebuild right before signing or sending: each packet carries the exact locked balance and path",
         "  nonce read when the plan was built.",
