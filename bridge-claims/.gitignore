@@ -1,0 +1,13 @@
+# Compiler output.
+cache/
+out/
+
+# Generated claim lists, trees, manifests, and Safe batches: address-level amounts under the
+# numerical embargo. Published as release assets when claims open.
+runs/
+
+# Transaction logs written by `forge script --broadcast`; published with the deployment record.
+broadcast/
+
+__pycache__/
+*.pyc

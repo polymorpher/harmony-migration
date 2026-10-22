@@ -1,0 +1,34 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["../airdrop/lib"]
+script = "script"
+test = "test"
+remappings = ["forge-std/=../airdrop/lib/forge-std/src/"]
+
+# Pin the compiler and drop the metadata hash so the bytecode, and therefore the CREATE2 address
+# of every deployment, can be rebuilt byte for byte. One target for all five chains: Ethereum,
+# BNB Chain, Arbitrum, Base, and Linea all execute Cancun opcodes (Arbitrum lacks BLOBBASEFEE,
+# which this contract never uses).
+solc_version = "0.8.36"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 20000
+via_ir = false
+bytecode_hash = "none"
+cbor_metadata = false
+
+# Tests read the Python-built fixture; the deploy script and the fork test read a run's manifest
+# and samples.
+fs_permissions = [
+    { access = "read", path = "./test/fixtures" },
+    { access = "read", path = "./runs" },
+]
+
+[fmt]
+line_length = 110
+tab_width = 4
+
+[lint]
+# `1 << (i & 0xff)` is the standard bitmap idiom; the linter's heuristic misreads it.
+exclude_lints = ["incorrect-shift"]
