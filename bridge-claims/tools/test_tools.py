@@ -23,6 +23,7 @@ import build_claims as build  # noqa: E402
 import proof  # noqa: E402
 import release_plan as release  # noqa: E402
 import safe_batch  # noqa: E402
+import send_calldata as send  # noqa: E402
 
 common = ct.common
 FUNDER = "0x" + "f1" * 20
@@ -416,6 +417,52 @@ class ReleaseTest(unittest.TestCase):
                         answers(executor=bytes(12) + bytes.fromhex(owner[2:]))):
             with self.assertRaises(SystemExit):
                 release.receive_state(FakeRpc(started), esc, owner, 101, safe)
+
+    def test_sender_log_belongs_to_one_file_version(self):
+        plan = {"chain": "arbitrum", "chain_id": 42161, "from": account(2), "transactions": []}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "f.json.sent.json")
+            fresh = send.load_log(path, "aa", plan)
+            self.assertEqual((fresh["sent"], fresh["from"]), ([], account(2)))
+            send.save_log(path, fresh | {"sent": [{"index": 0, "tx_hash": "0x01", "nonce": 7}]})
+            self.assertEqual(len(send.load_log(path, "aa", plan)["sent"]), 1)
+            with self.assertRaises(SystemExit):
+                send.load_log(path, "bb", plan)
+
+    def test_handoff_readme_lists_hashes_gas_and_checks(self):
+        safe = "0x19565f4771843467aad632d6b56c75396785b06c"
+        native = self.escrow(0) | {"escrow": account(5), "kind": "native", "token": None, "symbol": "ETH",
+                                   "decimals": 18, "locked_raw": str(10**17)}
+        proxy = self.escrow(0) | {"kind": "proxy", "token": DAI, "symbol": "DAI", "decimals": 18}
+        files = [{"chain": "ethereum", "file": "1-release/ethereum-0x0-eoa.json", "calls": 20,
+                  "escrows": [native["escrow"], proxy["escrow"]]}]
+        by_escrow = {("ethereum", e["escrow"]): e for e in (native, proxy)}
+        text = release.handoff_readme(account(2), files, by_escrow, {"chains": {"ethereum": {"chain_id": 1}}},
+                                      safe, {"ethereum-0x0-eoa.json": "ab" * 32}, {"ethereum": (10**9, 5 * 10**15)},
+                                      "2026-10-22 00:00 UTC")
+        self.assertIn("ab" * 32, text)
+        self.assertIn("ETH 0.1", text)
+        self.assertIn("| ethereum | 20 | 0.002 ETH | 0.005 ETH |", text)
+        self.assertIn(f'cast call {native["escrow"]} "balanceOf(address)(uint256)" {native["escrow"]}', text)
+        self.assertIn(f'cast call {DAI} "balanceOf(address)(uint256)" {proxy["escrow"]}', text)
+
+    def test_decode_call_reads_back_each_release_call(self):
+        safe = "0x19565f4771843467aad632d6b56c75396785b06c"
+        e = self.escrow(0)
+        esc, owner = e["escrow"], e["owner"]
+        text = [release.decode_call(c["data"]) for c in release.release_calls(e, safe)]
+        self.assertIn(f"required [`{owner}`], optional none, 1 confirmation", text[0])
+        self.assertIn(f"executor for chain 101 = `{owner}`", text[1])
+        self.assertIn("pin receive library version 5", text[2])
+        self.assertIn(f"trust sender `{safe}` on chain 101", text[3])
+        self.assertIn(f"attest message 1 from `{safe}` on chain 101 to `{esc}` on chain 101", text[4])
+        self.assertIn(f"the escrow pays 1000 raw units to `{safe}`", text[5])
+        self.assertIn("trust no sender on chain 101", text[6])
+        self.assertIn("follow LayerZero's default receive library", text[7])
+        self.assertIn("executor for chain 101 = unset", text[8])
+        self.assertIn("verifier config for chain 101 = unset", text[9])
+        legacy = release.release_calls(e | {"payload_format": "oft_v1_legacy"}, safe)[5]
+        self.assertIn(f"pays 1000 raw units to `{safe}`", release.decode_call(legacy["data"]))
 
     def test_legacy_escrow_gets_the_two_tuple_payload(self):
         safe = "0x19565f4771843467aad632d6b56c75396785b06c"
