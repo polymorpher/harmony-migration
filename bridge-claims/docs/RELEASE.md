@@ -136,9 +136,28 @@ The two kinds of file:
   Builder. Check that the Safe transaction hash matches `RELEASE.md`, then sign with the required
   owners and execute. It is one transaction at the planned nonce. If the Safe executes anything
   else first, that hash no longer applies; rebuild.
+
+  The plan also writes `handoff/safe-signers/`, the folder to send the Safe owners. It holds every
+  Safe batch, a copy of the plan (`PLAN.md`) and of this note (`DESIGN.md`), and a `README.md`
+  with:
+  - who signs which batch, the order, and the gas cost;
+  - the Safe app steps, and each batch's Safe transaction, domain, and message hashes;
+  - one escrow's calls decoded from the batch's own calldata, to compare with the Safe app's
+    decoding.
 - **`*-eoa.json`** lists transactions for the key in `from`. Send each entry's `to`, `value` (0),
   and `data` as its own transaction, in file order. If one fails, resend it, and finish a started
   escrow from the same file instead of rebuilding.
+
+  For each key, the plan also writes `handoff/<key>/`, the folder to send its holder. It contains
+  that key's `*-eoa.json` files, a copy of `tools/send_calldata.py`, and a `README.md` with
+  step-by-step instructions, file hashes, gas needed per chain, and balance checks.
+  `send_calldata.py` sends a file with Foundry's `cast` from the holder's own wallet (Ledger,
+  Trezor, or keystore):
+  - it refuses a wallet that isn't `from`, an RPC on another chain, or pending transactions;
+  - it simulates each transaction before sending it, and waits for a successful receipt before
+    the next;
+  - it logs every confirmed transaction to `<file>.sent.json`, so a rerun resumes after the last
+    one, and it stops if the key sent anything else in between.
 
 Gas is paid by the account that executes each transaction. No Safe needs native coin for this
 step.

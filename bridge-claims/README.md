@@ -45,7 +45,9 @@ tools/approve_claims.py      Safe Transaction Builder batches (approve and revok
 tools/proof.py               one payee's rows and proofs, and a claimMany command
 tools/release_plan.py        the owner transactions that release each escrow on its own chain to
                              the custody Safe, with no cross-chain message (Safe batches, EOA
-                             calldata)
+                             calldata, and a handoff folder per key holder)
+tools/send_calldata.py       sends one EOA calldata file with `cast`, simulating each transaction
+                             first and logging each receipt so a rerun resumes
 tools/build_fixture.py       regenerates test/fixtures/claim-tree.json
 tools/test_tools.py          tests of the tools
 runs/                        generated runs (ignored: address-level amounts)
