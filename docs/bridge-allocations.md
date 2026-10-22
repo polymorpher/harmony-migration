@@ -215,9 +215,11 @@ it is the bridge admin Safe that already owns the escrows on that chain;
 `custody_requirements` (owner count and threshold) must hold for it to be
 ready. A chain without a qualifying multisig is reported as missing. The
 custody plan lists, per chain, each escrow's balance to move, its current
-owner, and whether that owner is the custody Safe. Moving an escrow uses the
-owner-controlled LayerZero settlement procedure, which must be fork-tested per
-contract type before any live transaction.
+owner, and whether that owner is the custody Safe. The escrows have no
+withdrawal: each escrow's owner releases it on its own chain by delivering one
+LayerZero packet it attests itself, with no cross-chain message and no
+LayerZero service or fee. See
+[`bridge-claims/docs/RELEASE.md`](../bridge-claims/docs/RELEASE.md).
 
 The ONE funding entry sends the total ONE collateral from the reserve Safe to
 the Ethereum custody multisig and includes the ERC-20 `transfer` calldata for
@@ -233,7 +235,8 @@ a Safe transaction. Its destination is the proposed
 - `allocations.csv` — one row per pool and account with the holding,
   adjustment, class, status, payee, and allocation;
 - `claims/<chain>.csv` — claimable allocations summed per payee and claim
-  token, the input for the later claim contracts;
+  token, the input for the claim contracts in
+  [`bridge-claims/`](../bridge-claims/README.md);
 - `custody-plan.json` — escrow transfers, custody readiness, and ONE funding;
 - `summary.json` and `BRIDGE_ALLOCATIONS.md`.
 
@@ -269,8 +272,16 @@ reporting; allocations are always in token units and never depend on them.
   whose mint transaction was submitted but never executed there are not yet
   detected.
 - LP positions and other contract holders are held, not looked through.
-- The custody plan describes transfers; it does not produce settlement
-  transactions for the escrows.
+- The custody plan lists what each escrow holds; the release transactions
+  themselves come from `bridge-claims/tools/release_plan.py`.
+
+## Claims
+
+Each chain's claim list becomes one immutable `BridgeClaims` contract that
+pays every asset of that chain from the custody multisig's exact approvals;
+held positions are not in the lists and stay in custody. See
+[`bridge-claims/docs/DESIGN.md`](../bridge-claims/docs/DESIGN.md) and
+[`bridge-claims/docs/RUNBOOK.md`](../bridge-claims/docs/RUNBOOK.md).
 
 ## Running it
 

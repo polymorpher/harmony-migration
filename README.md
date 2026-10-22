@@ -131,6 +131,9 @@ reproduction.
 
 - `airdrop/` — the Ethereum contract, scripts, and tools that deliver a
   finished distribution list (see [`airdrop/README.md`](airdrop/README.md))
+- `bridge-claims/` — the per-chain claim contract, scripts, and tools that pay
+  the bridge collateral allocations (see
+  [`bridge-claims/README.md`](bridge-claims/README.md))
 - `toolkit/cmd/` — Go state scanners, preimage recovery, and verifiers
 - `toolkit/scripts/` — deterministic CSV pipelines and RPC audits
 - `scripts/` — dependency and build helpers

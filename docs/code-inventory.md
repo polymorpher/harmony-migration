@@ -241,6 +241,25 @@ See `docs/bridge-allocations.md`.
 - `toolkit/scripts/bridge/fetch-prices.py` — CoinMarketCap USD price snapshot,
   matched to each pool's escrowed contract
 
+## Bridge claim contracts
+
+See `bridge-claims/README.md` and `bridge-claims/docs/DESIGN.md`.
+
+- `bridge-claims/src/BridgeClaims.sol` — one immutable claim contract per
+  chain that pays every asset's rows from the custody multisig's approvals
+- `bridge-claims/tools/build_claims.py` — published list, Merkle tree,
+  samples, and CREATE2 deployment manifest per contract from the claim lists
+- `bridge-claims/tools/approve_claims.py` — Safe Transaction Builder approve
+  and revoke batches, Safe transaction hashes, and live funder checks
+- `bridge-claims/tools/proof.py` — one payee's rows, proofs, and a
+  `claimMany` command
+- `bridge-claims/tools/release_plan.py` — the owner transactions that
+  release each LayerZero escrow on its own chain to the custody Safe, with no
+  cross-chain message or LayerZero service (Safe batches and EOA calldata)
+- `bridge-claims/script/Deploy.s.sol` — CREATE2 deployment from a manifest
+- `bridge-claims/test/` — unit, fuzz, Python cross-check, claim and
+  escrow-release fork tests
+
 ## Transaction archive
 
 - `toolkit/scripts/archive/archive_lib.py` — Harmony RPC client, stage

@@ -176,3 +176,9 @@ Pass `BRIDGE_EXCLUSIONS` and
 Rerun `fetch-bridge-state.py` with the post-transfer blocks pinned as
 `--state-block` into a separate file and compare each custody multisig's
 balances in `custody` with `custody-plan.json`.
+
+## Claims
+
+The claim contracts, their Merkle lists, and the Safe approval batches are
+built from the verified claim lists in [`bridge-claims/`](../bridge-claims/README.md)
+(`make bridge-claims BRIDGE_OUT=... BRIDGE_CLAIMS_RUN=...`).

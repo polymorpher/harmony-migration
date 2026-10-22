@@ -1,4 +1,4 @@
-.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage exchange-native-report bridge-allocations tx-archive manifest private-manifest check-public
+.PHONY: setup build check-python test test-python verify verify-private migration-policy initial-stage exchange-native-report bridge-allocations bridge-claims-test bridge-claims bridge-claims-release tx-archive manifest private-manifest check-public
 
 SUPPLY_AUDIT_REPO ?= ../harmony-supply-audit
 BRIDGE_CONFIG ?= bridge/local/config.json
@@ -6,6 +6,9 @@ BRIDGE_OUT ?=
 BRIDGE_EXCLUSIONS ?=
 BRIDGE_OVERRIDES ?=
 BRIDGE_CONTRACT_REVIEW_POLICY ?= artifacts/contract-review-20260911/out/contract-review-policy.csv
+BRIDGE_CLAIMS_RUN ?=
+BRIDGE_CLAIMS_RPC ?=
+BRIDGE_RELEASE_SKIP ?=
 ARCHIVE_OUT ?=
 ARCHIVE_RUNS ?=
 ARCHIVE_DESTINATIONS ?=
@@ -35,6 +38,7 @@ test-python: check-python
 		toolkit/scripts/forensics/*.py \
 		toolkit/scripts/bridge/*.py \
 		toolkit/scripts/archive/*.py \
+		bridge-claims/tools/*.py \
 		scripts/*.py
 
 verify: check-python
@@ -147,6 +151,35 @@ bridge-allocations: check-python
 		--allocations-dir $(BRIDGE_OUT)/allocations \
 		$(if $(wildcard $(BRIDGE_OUT)/prices.json),--prices $(BRIDGE_OUT)/prices.json) \
 		--output $(BRIDGE_OUT)/allocations/BRIDGE_ALLOCATION_SUMMARY.md \
+		--replace
+
+bridge-claims-test: check-python
+	cd bridge-claims && forge build && forge test
+	cd bridge-claims && python3 tools/test_tools.py
+
+bridge-claims: check-python
+	@test -n "$(BRIDGE_OUT)" || (echo "BRIDGE_OUT=<bridge allocation run directory> is required" && exit 1)
+	@test -n "$(BRIDGE_CLAIMS_RUN)" || (echo "BRIDGE_CLAIMS_RUN=<name under bridge-claims/runs> is required" && exit 1)
+	cd bridge-claims && forge build
+	cd bridge-claims && python3 tools/build_claims.py \
+		--config ../$(BRIDGE_CONFIG) \
+		--allocations-dir $(abspath $(BRIDGE_OUT))/allocations \
+		--output-dir runs/$(BRIDGE_CLAIMS_RUN) \
+		--replace
+	cd bridge-claims && python3 tools/approve_claims.py \
+		--config ../$(BRIDGE_CONFIG) \
+		--claims-dir runs/$(BRIDGE_CLAIMS_RUN) \
+		$(if $(BRIDGE_CLAIMS_RPC),--rpc) \
+		--replace
+
+bridge-claims-release: check-python
+	@test -n "$(BRIDGE_OUT)" || (echo "BRIDGE_OUT=<bridge allocation run directory> is required" && exit 1)
+	@test -n "$(BRIDGE_CLAIMS_RUN)" || (echo "BRIDGE_CLAIMS_RUN=<name under bridge-claims/runs> is required" && exit 1)
+	cd bridge-claims && python3 tools/release_plan.py \
+		--config ../$(BRIDGE_CONFIG) \
+		--allocations-dir $(abspath $(BRIDGE_OUT))/allocations \
+		--output-dir runs/$(BRIDGE_CLAIMS_RUN)/release \
+		$(if $(BRIDGE_RELEASE_SKIP),--skip $(BRIDGE_RELEASE_SKIP)) \
 		--replace
 
 tx-archive: check-python
