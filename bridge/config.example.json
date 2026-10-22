@@ -27,22 +27,22 @@
     "bsc": {
       "rpc_env": "BSC_RPC",
       "chain_id": 56,
-      "custody_multisig": "0xe3364cc2c65995c924db6d1f467d9be275e65e35"
+      "custody_multisig": "0x19565f4771843467aad632d6b56c75396785b06c"
     },
     "arbitrum": {
       "rpc_env": "ARBITRUM_RPC",
       "chain_id": 42161,
-      "custody_multisig": null
+      "custody_multisig": "0x19565f4771843467aad632d6b56c75396785b06c"
     },
     "base": {
       "rpc_env": "BASE_RPC",
       "chain_id": 8453,
-      "custody_multisig": null
+      "custody_multisig": "0x19565f4771843467aad632d6b56c75396785b06c"
     },
     "linea": {
       "rpc_env": "LINEA_RPC",
       "chain_id": 59144,
-      "custody_multisig": null
+      "custody_multisig": "0x19565f4771843467aad632d6b56c75396785b06c"
     }
   },
   "custody_requirements": {
