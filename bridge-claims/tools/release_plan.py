@@ -740,8 +740,21 @@ def example_release(batches, safe):
     return next((b for b in releases if b["sender"] == safe), releases[0] if releases else None)
 
 
+STEP_ORDER_NOTE = {
+    "0-safe-owners": " (optional): until a chain's batch runs, its initial owner alone controls the custody Safe "
+                     "there. Run it before any release pays into the custody Safe on that chain.",
+    "0-one-reserve": ": any time.",
+    "1-release": ": the batches are independent; any order.",
+}
+
+
+def steps_of(batches):
+    return list(dict.fromkeys(b["step"] for b in batches))
+
+
 def signers_readme(safe, batches, by_escrow, safe_states, hashes, gas, built, descriptions, release, release_txs):
     safe_batches = [b for b in batches if b["sender_is_safe"]]
+    steps = steps_of(safe_batches)
     lines = [
         "# Bridge escrow release: Safe signing package",
         "",
@@ -750,7 +763,7 @@ def signers_readme(safe, batches, by_escrow, safe_states, hashes, gas, built, de
         "- `README.md`: this guide, for the owners who sign the Safe transactions.",
         "- `PLAN.md`: the full release plan: every file, escrow, amount, and Safe hash.",
         "- `DESIGN.md`: why the release works this way (`bridge-claims/docs/RELEASE.md`).",
-        "- `0-safe-owners/`, `0-one-reserve/`, `1-release/`: the Safe Transaction Builder batches.",
+        f"- {', '.join(f'`{s}/`' for s in steps)}: the Safe Transaction Builder batches.",
         "",
         "Escrows owned by a single key are released by that key from its own package; they appear in",
         "`PLAN.md` but need no Safe signature.",
@@ -776,12 +789,11 @@ def signers_readme(safe, batches, by_escrow, safe_states, hashes, gas, built, de
         "",
         "## Order",
         "",
-        "1. `0-safe-owners/` (optional): until a chain's batch runs, its initial owner alone controls the",
-        "   custody Safe there. Run it before any release pays into the custody Safe on that chain.",
-        "2. `0-one-reserve/`: any time.",
-        "3. `1-release/`: the batches are independent; any order.",
-        "4. Afterwards, the claim contracts are deployed and the approvals signed (`RUNBOOK.md` steps 4 and",
-        "   5). Their Safe hashes depend on the nonce, so they are rebuilt after these batches run.",
+    ]
+    lines += [f"{i}. `{s}/`{STEP_ORDER_NOTE[s]}" for i, s in enumerate(steps, 1)]
+    lines += [
+        f"{len(steps) + 1}. Afterwards, the claim contracts are deployed and the approvals signed (`RUNBOOK.md`",
+        "   steps 4 and 5). Their Safe hashes depend on the nonce, so they are rebuilt after these batches run.",
         "",
         "## How to sign a batch",
         "",
@@ -1030,7 +1042,8 @@ def sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batch
         "Every escrow is released on its own chain by its own owner. No message crosses chains, and no",
         "LayerZero verifier, executor, or fee is involved. Why this works, and what each call encodes, is",
         "in `bridge-claims/docs/RELEASE.md`. Run the steps in order, confirming each on chain before the",
-        "next: `0-safe-owners/` (optional) and `0-one-reserve/`, then `1-release/`.",
+        "next: " + ", then ".join(f"`{s}/`" + (" (optional)" if s == "0-safe-owners" else "")
+                                  for s in steps_of(batches)) + ".",
         "",
         "## What each file does",
         "",
