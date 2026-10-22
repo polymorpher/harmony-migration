@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "create2_deployer": "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+  "salt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "chains": {
+    "ethereum": {
+      "chain_id": 1,
+      "wrapped_native": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+      "approve_reset_tokens": ["0xdac17f958d2ee523a2206206994597c13d831ec7"]
+    },
+    "bsc": {
+      "chain_id": 56,
+      "wrapped_native": "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+      "approve_reset_tokens": []
+    },
+    "arbitrum": {
+      "chain_id": 42161,
+      "wrapped_native": null,
+      "approve_reset_tokens": []
+    },
+    "base": {
+      "chain_id": 8453,
+      "wrapped_native": null,
+      "approve_reset_tokens": []
+    },
+    "linea": {
+      "chain_id": 59144,
+      "wrapped_native": null,
+      "approve_reset_tokens": []
+    }
+  }
+}
