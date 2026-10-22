@@ -71,7 +71,7 @@ b5a9e35e8c325704d0d3e22faf3dc4326acd7ceb5f07756980012cc82d59d8a1  20106  bridge-
 d6fe920a8d01403073c53f6dafc7735704db12b015ba0dbd97edeb412c0bfe9d  2332  bridge-claims/tools/build_fixture.py
 4e39b24528c3390004b54e1f2ca4fb40392f3e57b6e0265ba1e4cda00e0008fe  6517  bridge-claims/tools/claim_tree.py
 3b4fcd249c785cf3671cac373d4ab6453351b5b58bad86ae12f344eb94b42528  4045  bridge-claims/tools/proof.py
-c8e7ba56686b875d5df1e8b6b2d2c3c7baea4847c4fd567c14f54ae8fe6eb0f3  57352  bridge-claims/tools/release_plan.py
+2ec7c06f08278dff8adcddfea17ac595e4c0a3442ef6300a7b4c5988132ba222  57673  bridge-claims/tools/release_plan.py
 1d924d4e6be5992339e8ceecd363fe4d917d0b5a2eb6d6d6796ac87698285d21  7432  bridge-claims/tools/send_calldata.py
 e1db2ea8b65af9d89001b4a350805163432aba89e3cbfb61b6b15ccb814ef73a  26354  bridge-claims/tools/test_tools.py
 7d666c54d8efe5e59b5b16dfe770e163e6f2bcf3010962eedebf4e2231360572  8852  bridge/README.md
