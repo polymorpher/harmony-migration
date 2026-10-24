@@ -69,11 +69,13 @@ interface ISafe {
 ///           transfer fee), the local path must advance by exactly one nonce, and every setting the
 ///           release touches (trusted remotes, receive version, verifier and executor configs for
 ///           the local and the Harmony path) must read the same as before;
-///         - every batch must stay under the 16,777,216 per-transaction gas cap (EIP-7825);
+///         - every transaction must stay under the 16,777,216 per-transaction gas cap (EIP-7825). Its
+///           gas is measured the way a mainnet receipt counts it: every contract involved is made
+///           cold first, and the base cost and calldata cost (with the EIP-7623 floor) are added;
 ///         - after wrapping the native coin, the Safe must hold every approval in the manifest.
 ///
 ///     CLAIMS_DIR=runs/<run>/<label> RELEASE_DIR=runs/<run>/release FORK_RPC_URL=<archive RPC> \
-///       forge test --match-contract EscrowRelease -vv
+///       [FORK_BLOCK=<block>] forge test --match-contract EscrowRelease -vv
 ///
 /// No LayerZero verifier, executor, or cross-chain message is involved, so the fork covers the whole
 /// path.
@@ -82,6 +84,9 @@ contract EscrowReleaseTest is Test {
     uint256 internal constant TX_GAS_CAP = 16_777_216;
     /// Safe storage slot of `threshold` (Safe 1.3.0 and 1.4.1).
     bytes32 internal constant THRESHOLD_SLOT = bytes32(uint256(4));
+    /// What one real ECDSA owner signature costs `execTransaction` beyond the approved-hash
+    /// signature the test uses (ecrecover and its checks).
+    uint256 internal constant SIGNATURE_GAS = 6_000;
 
     struct Escrow {
         address escrow;
@@ -101,6 +106,7 @@ contract EscrowReleaseTest is Test {
     address internal wrapped;
     uint16 internal localEid;
     uint256 internal failures;
+    address[] internal touched;
 
     function setUp() public {
         string memory dir = vm.envOr("CLAIMS_DIR", string(""));
@@ -112,7 +118,9 @@ contract EscrowReleaseTest is Test {
         }
         manifest = vm.readFile(string.concat(dir, "/manifest.json"));
         plan = vm.readFile(string.concat(releaseDir, "/release-plan.json"));
-        vm.createSelectFork(rpc);
+        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(rpc);
+        else vm.createSelectFork(rpc, forkBlock);
         assertEq(block.chainid, vm.parseJsonUint(manifest, ".chain_id"), "fork is another chain");
         chain = vm.parseJsonString(manifest, ".chain");
         safe = vm.parseJsonAddress(manifest, ".funder");
@@ -259,6 +267,79 @@ contract EscrowReleaseTest is Test {
         );
     }
 
+    function _touch(Escrow memory e) internal {
+        IEndpointV1 endpoint = IEndpointV1(IEscrow(e.escrow).lzEndpoint());
+        touched.push(e.escrow);
+        touched.push(address(endpoint));
+        touched.push(endpoint.getReceiveLibraryAddress(e.escrow));
+        if (!e.native) touched.push(e.asset);
+    }
+
+    /// @dev Make every contract a transaction will touch cold, as it is at the start of a real
+    ///      transaction (`to` and the sender are warm on mainnet; cooling them overstates slightly).
+    function _coolAll(address to, address sender) internal {
+        for (uint256 i = 0; i < touched.length; i++) {
+            vm.cool(touched[i]);
+        }
+        vm.cool(to);
+        vm.cool(sender);
+        vm.cool(safe);
+    }
+
+    /// @dev Gas a receipt would show: base cost plus calldata (4 per zero byte, 16 per other byte)
+    ///      plus execution, or the EIP-7623 calldata floor if that is higher.
+    function _txGas(bytes memory data, uint256 execution) internal pure returns (uint256) {
+        uint256 zeros;
+        for (uint256 i = 0; i < data.length; i++) {
+            if (data[i] == 0) zeros++;
+        }
+        uint256 tokens = zeros + 4 * (data.length - zeros);
+        uint256 standard = 21_000 + 4 * tokens + execution;
+        uint256 floor = 21_000 + 10 * tokens;
+        return standard > floor ? standard : floor;
+    }
+
+    struct SafeCall {
+        address to;
+        uint256 value;
+        bytes data;
+        uint8 operation;
+    }
+
+    /// @dev The single Safe transaction the Safe app builds from a Transaction Builder file.
+    function _safeCall(string memory key, string memory file) internal view returns (SafeCall memory c) {
+        uint256 n = _count(file, ".transactions");
+        if (n == 1) {
+            (c.to, c.value, c.data) = _parseCall(file, ".transactions[0]");
+            return c;
+        }
+        bytes memory calls;
+        for (uint256 i = 0; i < n; i++) {
+            (address t, uint256 v, bytes memory d) =
+                _parseCall(file, string.concat(".transactions[", vm.toString(i), "]"));
+            calls = abi.encodePacked(calls, uint8(0), t, v, d.length, d);
+        }
+        c.to = vm.parseJsonAddress(plan, string.concat(key, ".to"));
+        c.data = abi.encodeWithSignature("multiSend(bytes)", calls);
+        c.operation = 1;
+    }
+
+    /// @dev Execute through the real Safe; returns the execution gas with real signatures.
+    function _execThroughSafe(address sender, SafeCall memory c) internal returns (uint256 execution) {
+        uint256 threshold = ISafe(sender).getThreshold();
+        if (threshold > 1) vm.store(sender, THRESHOLD_SLOT, bytes32(uint256(1)));
+        address signer = ISafe(sender).getOwners()[0];
+        bytes memory signature = abi.encodePacked(uint256(uint160(signer)), uint256(0), uint8(1));
+        _coolAll(sender, signer);
+        vm.prank(signer);
+        uint256 before = gasleft();
+        bool ok = ISafe(sender)
+            .execTransaction(c.to, c.value, c.data, c.operation, 0, 0, 0, address(0), payable(0), signature);
+        execution = before - gasleft() + threshold * SIGNATURE_GAS;
+        if (threshold > 1) vm.store(sender, THRESHOLD_SLOT, bytes32(threshold));
+        assertTrue(ok, "Safe batch failed");
+    }
+
     function _execSafeBatch(string memory key, string memory file, address sender)
         internal
         returns (uint256 gas)
@@ -266,42 +347,27 @@ contract EscrowReleaseTest is Test {
         assertEq(
             vm.parseJsonAddress(file, ".meta.createdFromSafeAddress"), sender, "batch is for another Safe"
         );
-        uint256 n = _count(file, ".transactions");
-        address to;
-        uint256 value;
-        bytes memory data;
-        uint8 operation;
-        if (n == 1) {
-            (to, value, data) = _parseCall(file, ".transactions[0]");
-        } else {
-            bytes memory calls;
-            for (uint256 i = 0; i < n; i++) {
-                (address t, uint256 v, bytes memory d) =
-                    _parseCall(file, string.concat(".transactions[", vm.toString(i), "]"));
-                calls = abi.encodePacked(calls, uint8(0), t, v, d.length, d);
-            }
-            to = vm.parseJsonAddress(plan, string.concat(key, ".to"));
-            data = abi.encodeWithSignature("multiSend(bytes)", calls);
-            operation = 1;
-        }
-        assertEq(operation, vm.parseJsonUint(plan, string.concat(key, ".operation")), "operation");
+        SafeCall memory c = _safeCall(key, file);
+        assertEq(c.operation, vm.parseJsonUint(plan, string.concat(key, ".operation")), "operation");
         uint256 nonce = vm.parseJsonUint(plan, string.concat(key, ".planned_nonce"));
         assertEq(ISafe(sender).nonce(), nonce, "the Safe's nonce moved since the plan was built");
         bytes32 hash = ISafe(sender)
-            .getTransactionHash(to, value, data, operation, 0, 0, 0, address(0), address(0), nonce);
+            .getTransactionHash(c.to, c.value, c.data, c.operation, 0, 0, 0, address(0), address(0), nonce);
         assertEq(hash, vm.parseJsonBytes32(plan, string.concat(key, ".safe_tx_hash")), "Safe tx hash");
 
         uint256 threshold = ISafe(sender).getThreshold();
-        if (threshold > 1) vm.store(sender, THRESHOLD_SLOT, bytes32(uint256(1)));
-        address signer = ISafe(sender).getOwners()[0];
-        bytes memory signature = abi.encodePacked(uint256(uint160(signer)), uint256(0), uint8(1));
-        vm.prank(signer);
-        gas = gasleft();
-        bool ok = ISafe(sender)
-            .execTransaction(to, value, data, operation, 0, 0, 0, address(0), payable(0), signature);
-        gas -= gasleft();
-        if (threshold > 1) vm.store(sender, THRESHOLD_SLOT, bytes32(threshold));
-        assertTrue(ok, "Safe batch failed");
+        uint256 execution = _execThroughSafe(sender, c);
+        bytes memory signatures = new bytes(65 * threshold);
+        for (uint256 i = 0; i < signatures.length; i++) {
+            signatures[i] = 0xff;
+        }
+        gas = _txGas(
+            abi.encodeCall(
+                ISafe.execTransaction,
+                (c.to, c.value, c.data, c.operation, 0, 0, 0, address(0), payable(0), signatures)
+            ),
+            execution
+        );
     }
 
     function _sendEoaFile(string memory file, address sender) internal returns (uint256 gas) {
@@ -310,10 +376,12 @@ contract EscrowReleaseTest is Test {
         for (uint256 i = 0; i < n; i++) {
             (address to, uint256 value, bytes memory data) =
                 _parseCall(file, string.concat(".transactions[", vm.toString(i), "]"));
+            _coolAll(to, sender);
             vm.prank(sender);
             uint256 before = gasleft();
             (bool ok, bytes memory ret) = to.call{value: value}(data);
-            uint256 used = before - gasleft();
+            uint256 used = _txGas(data, before - gasleft());
+            console.log("    transaction", i, used);
             if (used > gas) gas = used;
             if (!ok) {
                 failures++;
@@ -330,24 +398,26 @@ contract EscrowReleaseTest is Test {
         for (uint256 i = 0; i < total; i++) {
             string memory key = string.concat(".escrows[", vm.toString(i), "]");
             if (_same(vm.parseJsonString(plan, string.concat(key, ".chain")), chain)) {
-                escrows[m++] = _snapshot(key);
+                escrows[m] = _snapshot(key);
+                _touch(escrows[m++]);
             }
         }
-        assertGt(m, 0, "no escrows on this chain");
-
         uint256 batches = _count(plan, ".batches");
+        uint256 replayed;
         for (uint256 i = 0; i < batches; i++) {
             string memory key = string.concat(".batches[", vm.toString(i), "]");
             if (!_same(vm.parseJsonString(plan, string.concat(key, ".chain")), chain)) continue;
+            replayed++;
             string memory name = vm.parseJsonString(plan, string.concat(key, ".file"));
             string memory file = vm.readFile(string.concat(releaseDir, "/", name));
             address sender = vm.parseJsonAddress(plan, string.concat(key, ".sender"));
             uint256 gas = vm.parseJsonBool(plan, string.concat(key, ".sender_is_safe"))
                 ? _execSafeBatch(key, file, sender)
                 : _sendEoaFile(file, sender);
-            console.log(name, gas < TX_GAS_CAP ? "gas" : "OVER GAS CAP", gas);
+            console.log(name, gas < TX_GAS_CAP ? "max gas per transaction" : "OVER GAS CAP", gas);
             if (gas >= TX_GAS_CAP) failures++;
         }
+        assertGt(m + replayed, 0, "nothing in the plan for this chain");
 
         for (uint256 j = 0; j < m; j++) {
             _check(escrows[j]);
