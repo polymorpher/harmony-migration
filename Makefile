@@ -9,6 +9,7 @@ BRIDGE_CONTRACT_REVIEW_POLICY ?= artifacts/contract-review-20260911/out/contract
 BRIDGE_CLAIMS_RUN ?=
 BRIDGE_CLAIMS_RPC ?=
 BRIDGE_RELEASE_SKIP ?=
+BRIDGE_ONE_REST ?=
 ARCHIVE_OUT ?=
 ARCHIVE_RUNS ?=
 ARCHIVE_DESTINATIONS ?=
@@ -180,6 +181,7 @@ bridge-claims-release: check-python
 		--allocations-dir $(abspath $(BRIDGE_OUT))/allocations \
 		--output-dir runs/$(BRIDGE_CLAIMS_RUN)/release \
 		$(if $(BRIDGE_RELEASE_SKIP),--skip $(BRIDGE_RELEASE_SKIP)) \
+		$(if $(BRIDGE_ONE_REST),--one-rest $(BRIDGE_ONE_REST)) \
 		--replace
 
 tx-archive: check-python
