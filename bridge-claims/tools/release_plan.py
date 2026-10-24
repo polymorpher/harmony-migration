@@ -12,8 +12,8 @@ LayerZero verifier, executor, relayer, or fee:
 
 0a. safe-owners  on any chain where the custody Safe is still 1-of-1, add the remaining three
                  owners and raise the threshold to 2-of-4 (`addOwnerWithThreshold`);
-0b. one-reserve  on Ethereum, the Reserve Safe transfers the bridged ONE collateral to the custody
-                 Safe (`ERC20.transfer`);
+0b. one-reserve  stage 1 of the ONE funding: on Ethereum, the Reserve Safe transfers exactly the
+                 claimable ONE (what the claim lists pay) to the custody Safe (`ERC20.transfer`);
 1.  release      for each escrow, its owner:
                    pins the escrow's receive library (`setReceiveVersion`), so a later change of
                      LayerZero's default cannot reach it;
@@ -24,6 +24,9 @@ LayerZero verifier, executor, relayer, or fee:
                      the escrow credits its whole locked balance to the custody Safe;
                    writes back the trusted remote, executor, verifier config, and receive version
                      it read before, so only the balance changes.
+2.  one-rest     stage 2 of the ONE funding, only with `--one-rest`: the Reserve Safe transfers some
+                 or all of the held ONE (contracts and multisigs, which may become partly claimable)
+                 and the retained ONE (not issued). Without it, that ONE stays in the Reserve Safe.
 
 Safe-owned escrows get one Transaction Builder batch per chain and owner (atomic); EOA-owned escrows
 get raw calldata to send in order, and each key holder gets `handoff/<key>/` with their files,
@@ -34,8 +37,10 @@ are read live. The Harmony path (chain 116) is never touched. Nothing is sent.
 """
 
 import argparse
+import csv
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -60,7 +65,7 @@ CONFIG_TYPE_EXECUTOR = 1
 CONFIG_TYPE_ULN = 2
 NIL_DVN_COUNT = 255  # "no optional verifiers", so no default can add any
 CONFIRMATIONS = 1
-GAS_PER_ESCROW = 400_000  # bound; forks of all five chains measured 350,000 to 375,000
+GAS_PER_ESCROW = 450_000  # bound; forks measured up to 420,000 with cold state and calldata counted
 DEFAULT_MAX_ESCROWS_PER_BATCH = 30
 
 SEL = {s: common.selector(s) for s in (
@@ -333,6 +338,29 @@ def one_reserve_call(token, to, amount, note):
     }
 
 
+ONE_PARTS = ("claimable_raw", "held_raw", "below_minimum_raw", "retained_raw")
+
+
+def one_split(allocations_dir, funding_cfg):
+    """Per ONE pool, from the allocation run's `pools.csv`: the collateral the Reserve Safe funds,
+    split into what the claim lists pay (claimable) and the rest: held (contracts and multisigs, not
+    in the lists), below the claim minimum, and retained (excluded accounts and collateral above all
+    holdings, not issued). The parts must add up to the collateral the custody plan funds."""
+    with open(os.path.join(allocations_dir, "pools.csv"), newline="") as source:
+        rows = {r["pool_id"]: r for r in csv.DictReader(source)}
+    split = {}
+    for pool, amount in (funding_cfg.get("pools") or {}).items():
+        row = rows.get(pool)
+        if row is None:
+            raise SystemExit(f"{pool}: in the ONE funding but not in pools.csv")
+        parts = {k: int(row[k] or 0) for k in ONE_PARTS}
+        if int(row["collateral_raw"]) != int(amount) or sum(parts.values()) != int(amount):
+            raise SystemExit(f"{pool}: claimable, held, below-minimum and retained do not add up to the "
+                             f"funded collateral {amount}")
+        split[pool] = {"collateral_raw": int(amount), **parts}
+    return split
+
+
 def release_packet(e, safe):
     """The one packet that releases escrow `e`: from the Safe on the escrow's own chain, at the
     path's next nonce, crediting the whole locked balance to the Safe."""
@@ -425,14 +453,20 @@ def plan(args, config, custody_plan, safe):
         else:
             info["status"] = "unexpected_owners"
 
-    # Inspect the ONE Reserve Safe on Ethereum and build the ONE transfer batch.
+    # Inspect the ONE Reserve Safe on Ethereum and build the ONE transfer batches: stage 1 moves the
+    # claimable total; stage 2 (the held and retained rest) is built only when asked for.
     one_funding = None
     funding_cfg = custody_plan.get("one_funding")
     if funding_cfg and int(funding_cfg.get("amount_raw") or 0) > 0:
         one_chain = funding_cfg["chain"]
         reserve = lib.address(funding_cfg["from"])
         token = lib.address(funding_cfg["token"])
-        amount = int(funding_cfg["amount_raw"])
+        pools = one_split(args.allocations_dir, funding_cfg)
+        claimable = sum(p["claimable_raw"] for p in pools.values())
+        rest = int(funding_cfg["amount_raw"]) - claimable
+        stage2 = rest if args.one_rest == "all" else int(args.one_rest) if args.one_rest else 0
+        if not 0 <= stage2 <= rest:
+            raise SystemExit(f"--one-rest {args.one_rest}: the held and retained rest is {rest} raw")
         reserve_info = read_safe_info(rpc(one_chain), reserve)
         bal = read_uint(rpc(one_chain), token, SEL["balanceOf(address)"] + ct.unhex(lib.address_word(reserve))) or 0
         one_funding = {
@@ -440,11 +474,19 @@ def plan(args, config, custody_plan, safe):
             "from": reserve,
             "to": safe,
             "token": token,
-            "amount_raw": str(amount),
+            "collateral_raw": str(funding_cfg["amount_raw"]),
+            "amount_raw": str(claimable),
+            "rest_raw": str(rest),
+            "stage2_raw": str(stage2),
+            "pools": {pool: {k: str(v) for k, v in p.items()} for pool, p in pools.items()},
             "reserve_balance_raw": str(bal),
-            "reserve_sufficient": bal >= amount,
+            "reserve_sufficient": bal >= claimable + stage2,
             "safe": reserve_info,
-            "calls": [one_reserve_call(token, safe, amount, f"transfer {amount} ONE to custody Safe {safe}")],
+            "calls": [one_reserve_call(token, safe, claimable,
+                                       f"stage 1: transfer the claimable {claimable} ONE to custody Safe {safe}")],
+            "stage2_calls": [one_reserve_call(token, safe, stage2,
+                                              f"stage 2: transfer {stage2} of the held and retained ONE")]
+            if stage2 else [],
         }
 
     escrows, skipped = [], []
@@ -519,7 +561,7 @@ def write_safe_batch(path, chain_id, safe, calls, name, version, nonce):
 
 
 NATIVE = {"bsc": "BNB"}  # every other chain pays gas in ETH
-EOA_TX_GAS = 100_000  # bound; the largest EOA release transaction measured on the forks is 93,000
+EOA_TX_GAS = 200_000  # bound; the largest EOA release transaction used 145,510 gas on Linea mainnet
 
 
 def balance_check(e):
@@ -590,7 +632,8 @@ def handoff_readme(owner, files, by_escrow, config, safe, hashes, gas, built):
         lines.append(f"   | {b['chain']} | {b['calls']} | {units(need, 18, 8)} {coin} | {units(balance, 18, 8)} {coin} |")
     lines += [
         "",
-        "   Gas prices move, on Ethereum by 10x or more within a day; keep a wide margin.",
+        "   Gas prices move, on Ethereum by 10x or more within a day; keep a wide margin. Arbitrum and Base",
+        "   also charge a small L1 data fee per transaction, which this table leaves out.",
         "4. Start only when the person who sent you this package says it is current.",
         "",
         "## Send",
@@ -743,8 +786,10 @@ def example_release(batches, safe):
 STEP_ORDER_NOTE = {
     "0-safe-owners": " (optional): until a chain's batch runs, its initial owner alone controls the custody Safe "
                      "there. Run it before any release pays into the custody Safe on that chain.",
-    "0-one-reserve": ": any time.",
+    "0-one-reserve": " (stage 1 of the ONE funding, the claimable total): any time.",
     "1-release": ": the batches are independent; any order.",
+    "2-one-rest": " (stage 2 of the ONE funding): only once it is decided how much of the held and retained "
+                  "ONE is issued.",
 }
 
 
@@ -880,6 +925,28 @@ def write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path
     return [os.path.relpath(p, out) for p in targets]
 
 
+GENERATED = re.compile(
+    r"^(?:handoff/[^/]+/)?[0-9]-[a-z-]+/[^/]+-(?:safe|eoa)\.json$"
+    r"|^handoff/[^/]+/(?:[^/]+-eoa\.json|README\.md|PLAN\.md|DESIGN\.md|send_calldata\.py)$"
+)
+
+
+def remove_stale(out, written):
+    """Delete files an earlier build generated that this plan no longer contains (an escrow released
+    since, a Safe already set up), so no package offers them again. Logs and other files stay."""
+    keep, removed = set(written), []
+    for root, _, names in os.walk(out):
+        for name in names:
+            rel = os.path.relpath(os.path.join(root, name), out)
+            if rel not in keep and GENERATED.match(rel):
+                os.remove(os.path.join(root, name))
+                removed.append(rel)
+    for root, dirs, names in sorted(os.walk(out), key=lambda w: -w[0].count(os.sep)):
+        if root != out and not dirs and not names:
+            os.rmdir(root)
+    return sorted(removed)
+
+
 def calldata_record(chain, chain_id, owner, calls):
     return {
         "chain": chain, "chain_id": chain_id, "from": owner,
@@ -899,6 +966,9 @@ def main():
     parser.add_argument("--skip", nargs="*", default=[], help="escrow addresses to leave out")
     parser.add_argument("--max-escrows-per-batch", type=int, default=DEFAULT_MAX_ESCROWS_PER_BATCH,
                         help="escrows per Safe release batch (keeps each under the 16,777,216 gas cap)")
+    parser.add_argument("--one-rest", metavar="RAW|all",
+                        help="also build stage 2 of the ONE funding (`2-one-rest/`): this many raw units of "
+                             "the held and retained ONE, or all of it; by default it stays in the Reserve Safe")
     parser.add_argument("--safe-version", default="1.3.0")
     parser.add_argument("--replace", action="store_true")
     args = parser.parse_args()
@@ -959,6 +1029,8 @@ def main():
         emit("0-one-reserve", one_funding["chain"], one_funding["from"], one_funding["calls"], True)
     for r in releases:
         emit("1-release", r["chain"], r["owner"], r["calls"], r["owner_is_safe"], r["part"], r["escrows"])
+    if one_funding and one_funding["stage2_calls"]:
+        emit("2-one-rest", one_funding["chain"], one_funding["from"], one_funding["stage2_calls"], True)
     by_escrow = {(e["chain"], e["escrow"]): e for e in escrows}
     for owner in sorted({b["sender"] for b in batches if not b["sender_is_safe"]}):
         files = [b for b in batches if b["sender"] == owner and not b["sender_is_safe"]]
@@ -973,7 +1045,7 @@ def main():
     written += write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path, descriptions,
                              args.replace)
     one_summary = (
-        {k: v for k, v in one_funding.items() if k != "calls"}
+        {k: v for k, v in one_funding.items() if k not in ("calls", "stage2_calls")}
         if one_funding else None
     )
     lib.write_json(summary_path, {
@@ -988,6 +1060,8 @@ def main():
         "batches": batches,
         "files": sorted(written),
     })
+    for rel in remove_stale(out, written):
+        print(f"  removed {rel}: not in this plan")
     eoa_txs = sum(b["calls"] for b in batches if b["step"] == "1-release" and not b["sender_is_safe"])
     safe_batches = sum(1 for b in batches if b["step"] == "1-release" and b["sender_is_safe"])
     print(f"{len(escrows)} escrows to release, {len(skipped)} skipped; wrote {len(written)} files in {out}")
@@ -1013,8 +1087,14 @@ def file_description(b, safe, by_escrow, custody_safes, owner_setup, one_funding
                 f"{b['planned_nonce']}. Optional for the release itself, but until it runs `{signer}` alone "
                 "controls this Safe and everything the release delivers to it.")
     if b["step"] == "0-one-reserve":
-        return (f"on {chain}, the Reserve Safe `{sender}` transfers {units(one_funding['amount_raw'], 18)} ONE "
-                f"to the custody Safe; 1 call at nonce {b['planned_nonce']}.")
+        return (f"stage 1 of the ONE funding: on {chain}, the Reserve Safe `{sender}` transfers "
+                f"{units(one_funding['amount_raw'], 18)} ONE, exactly the claimable total, to the custody Safe; "
+                f"1 call at nonce {b['planned_nonce']}. The held and retained "
+                f"{units(one_funding['rest_raw'], 18)} ONE stays in the Reserve Safe for stage 2.")
+    if b["step"] == "2-one-rest":
+        return (f"stage 2 of the ONE funding: on {chain}, the Reserve Safe `{sender}` transfers "
+                f"{units(one_funding['stage2_raw'], 18)} of the held and retained "
+                f"{units(one_funding['rest_raw'], 18)} ONE to the custody Safe; 1 call at nonce {b['planned_nonce']}.")
     released = [by_escrow[(chain, a)] for a in b["escrows"]]
     symbols = [e["symbol"] for e in released]
     assets = ", ".join(
@@ -1029,7 +1109,7 @@ def file_description(b, safe, by_escrow, custody_safes, owner_setup, one_funding
         return (f"on {chain}, Safe `{sender}` releases {count} to {to} in one atomic transaction: "
                 f"{b['calls']} calls, nonce {b['planned_nonce']}, under {gas:.1f} million gas. Escrows: {assets}.")
     return (f"on {chain}, key `{sender}` releases {count} to the custody Safe in {b['calls']} transactions, "
-            f"sent one by one in file order, each under 100,000 gas. Escrows: {assets}.")
+            f"sent one by one in file order, each under {EOA_TX_GAS:,} gas. Escrows: {assets}.")
 
 
 def sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batches):
@@ -1092,14 +1172,30 @@ def sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batch
             f"{info.get('threshold', '?')} | {info.get('nonce', '?')} | {nat:.6f} | {info.get('status', '?')} |"
         )
     if one_funding:
-        amt = lib.format_units(int(one_funding["amount_raw"]), 18)
+        stage2 = int(one_funding["stage2_raw"])
         lines += [
             "",
-            "## ONE reserve transfer (`0-one-reserve/`)",
+            "## ONE funding, in two stages",
             "",
-            f"- From Reserve Safe `{one_funding['from']}` on {one_funding['chain']} to `{one_funding['to']}`: "
-            f"{amt} ONE (`{one_funding['amount_raw']}` raw, token `{one_funding['token']}`)",
+            f"The Reserve Safe `{one_funding['from']}` on {one_funding['chain']} funds the ONE claims (token",
+            f"`{one_funding['token']}`) to the custody Safe `{one_funding['to']}`:",
+            "",
+            f"1. **Stage 1** (`0-one-reserve/`): {units(one_funding['amount_raw'], 18)} ONE "
+            f"(`{one_funding['amount_raw']}` raw), exactly what the claim lists pay.",
+            f"2. **Stage 2**: the other {units(one_funding['rest_raw'], 18)} ONE. It is held (contracts and",
+            "   multisigs, not in the claim lists, which may become partly claimable) or retained (excluded",
+            "   accounts and collateral above all holdings, not issued). "
+            + (f"`2-one-rest/` transfers {units(stage2, 18)} ONE of it." if stage2 else
+               "It stays in the Reserve Safe until it is decided how much to issue; rebuild with "
+               "`--one-rest <raw amount>` or `--one-rest all` to add the `2-one-rest/` transfer."),
+            "",
+            "| Pool | Collateral | Stage 1: claimable | Held | Below minimum | Retained |",
+            "|---|---:|---:|---:|---:|---:|",
         ]
+        for pool, p in one_funding["pools"].items():
+            lines.append(f"| {pool} | {units(p['collateral_raw'], 18)} | {units(p['claimable_raw'], 18)} | "
+                         f"{units(p['held_raw'], 18)} | {units(p['below_minimum_raw'], 18)} | "
+                         f"{units(p['retained_raw'], 18)} |")
     lines += [
         "",
         "## Safe batches and planned nonces",
