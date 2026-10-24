@@ -442,7 +442,8 @@ class ReleaseTest(unittest.TestCase):
                                       "2026-10-22 00:00 UTC")
         self.assertIn("ab" * 32, text)
         self.assertIn("ETH 0.1", text)
-        self.assertIn("| ethereum | 20 | 0.002 ETH | 0.005 ETH |", text)
+        need = release.units(20 * release.EOA_TX_GAS * 10**9, 18, 8)
+        self.assertIn(f"| ethereum | 20 | {need} ETH | 0.005 ETH |", text)
         self.assertIn(f'cast call {native["escrow"]} "balanceOf(address)(uint256)" {native["escrow"]}', text)
         self.assertIn(f'cast call {DAI} "balanceOf(address)(uint256)" {proxy["escrow"]}', text)
 
@@ -463,6 +464,40 @@ class ReleaseTest(unittest.TestCase):
         self.assertIn("verifier config for chain 101 = unset", text[9])
         legacy = release.release_calls(e | {"payload_format": "oft_v1_legacy"}, safe)[5]
         self.assertIn(f"pays 1000 raw units to `{safe}`", release.decode_call(legacy["data"]))
+
+    def test_rebuild_removes_only_stale_generated_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            files = ["1-release/linea-0x431e2ee6-eoa.json", "1-release/base-0x431e2ee6-eoa.json",
+                     "0-safe-owners/bsc-0x19565f47-safe.json", "handoff/0x431e2ee6/linea-0x431e2ee6-eoa.json",
+                     "handoff/0x431e2ee6/linea-0x431e2ee6-eoa.json.sent.json", "handoff/old/README.md",
+                     "handoff/safe-signers/0-safe-owners/bsc-0x19565f47-safe.json",
+                     "handoff/release-handoff-safe-signers.zip", "notes.md"]
+            for f in files:
+                Path(tmp, f).parent.mkdir(parents=True, exist_ok=True)
+                Path(tmp, f).write_text("x")
+            removed = release.remove_stale(tmp, ["1-release/base-0x431e2ee6-eoa.json"])
+            self.assertEqual(removed, sorted([
+                "1-release/linea-0x431e2ee6-eoa.json", "0-safe-owners/bsc-0x19565f47-safe.json",
+                "handoff/0x431e2ee6/linea-0x431e2ee6-eoa.json", "handoff/old/README.md",
+                "handoff/safe-signers/0-safe-owners/bsc-0x19565f47-safe.json"]))
+            for kept in ("1-release/base-0x431e2ee6-eoa.json", "handoff/0x431e2ee6/linea-0x431e2ee6-eoa.json.sent.json",
+                         "handoff/release-handoff-safe-signers.zip", "notes.md"):
+                self.assertTrue(Path(tmp, kept).exists(), kept)
+            self.assertFalse(Path(tmp, "0-safe-owners").exists())
+
+    def test_one_split_matches_the_funded_collateral(self):
+        header = "pool_id,collateral_raw,claimable_raw,held_raw,below_minimum_raw,retained_raw\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "pools.csv").write_text(header + "bsc-one,100,70,20,0,10\nethereum-one,50,45,4,0,1\n")
+            split = release.one_split(tmp, {"pools": {"bsc-one": "100", "ethereum-one": "50"}})
+            self.assertEqual(sum(p["claimable_raw"] for p in split.values()), 115)
+            self.assertEqual(split["bsc-one"]["held_raw"] + split["bsc-one"]["retained_raw"], 30)
+            for funded in ({"bsc-one": "101"}, {"missing-one": "5"}):
+                with self.assertRaises(SystemExit):
+                    release.one_split(tmp, {"pools": funded})
+            Path(tmp, "pools.csv").write_text(header + "bsc-one,100,70,20,0,9\n")
+            with self.assertRaises(SystemExit):
+                release.one_split(tmp, {"pools": {"bsc-one": "100"}})
 
     def test_legacy_escrow_gets_the_two_tuple_payload(self):
         safe = "0x19565f4771843467aad632d6b56c75396785b06c"
