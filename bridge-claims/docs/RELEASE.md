@@ -99,12 +99,14 @@ the previous settings. Nobody else is presented as having verified anything.
 ## Owners
 
 Escrows owned by a Safe are released with one Transaction Builder batch per chain and owner. The
-batch is atomic: if any call fails, nothing happens. About 350,000 gas per escrow keeps the
-largest batch (23 Ethereum escrows) near 8.1 million gas, under the 16,777,216 per-transaction cap.
+batch is atomic: if any call fails, nothing happens. Each escrow adds up to about 420,000 gas,
+counted as a mainnet receipt counts it (cold state, calldata included). The largest batch (23
+Ethereum escrows) is about 9.1 million gas, under the 16,777,216 per-transaction cap.
 
 Escrows owned by a single key get raw calldata (`to`, `value`, `data`) to send in file order: 10
-transactions per escrow, or 8 when its receive version is already pinned. Each is under 100,000
-gas. The sequence is not atomic, but stopping midway is safe: once the first call has run, only
+transactions per escrow, or 8 when its receive version is already pinned. Each uses under 150,000
+gas; the largest on Linea mainnet, a delivery, used 145,510. The sequence is not atomic, but
+stopping midway is safe: once the first call has run, only
 the owner can attest or deliver on the path. The verifier config is the first setting changed and
 the last one restored, so `tools/release_plan.py` detects a half-finished escrow and refuses to
 plan over it; finish it from the same file.
@@ -122,8 +124,20 @@ python3 tools/release_plan.py --allocations-dir ../artifacts/<run>/allocations \
 | Step | Directory | Who |
 |---|---|---|
 | 0a | `0-safe-owners/` | initial owner on 1-of-1 chains (optional; adds the other owners, threshold 2) |
-| 0b | `0-one-reserve/` | the ONE Reserve Safe on Ethereum |
+| 0b | `0-one-reserve/` | the ONE Reserve Safe on Ethereum: stage 1 of the ONE funding |
 | 1 | `1-release/` | each escrow owner (`*-safe.json` batches, `*-eoa.json` calldata) |
+| 2 | `2-one-rest/` | the ONE Reserve Safe: stage 2, only when built with `--one-rest` |
+
+The ONE collateral comes from the Reserve Safe in two stages, read from the allocation run's
+`pools.csv`. The planner refuses to plan if a pool's parts don't add up to its collateral.
+
+1. **Stage 1** transfers exactly what the ONE claim lists pay (the pools' claimable totals), so
+   the ONE claims are fully funded at once.
+2. **Stage 2** is the rest: held ONE (contracts and multisigs; not in the claim lists, and
+   possibly partly claimable once they are looked through or routed) and retained ONE (excluded
+   accounts and collateral above all holdings; not issued). It stays in the Reserve Safe until it
+   is decided how much to issue. Then rebuild with `--one-rest <raw amount>` or `--one-rest all`
+   to add the `2-one-rest/` transfer at the Reserve Safe's next nonce.
 
 and `RELEASE.md`. That sheet says what each file does and who signs it, and lists the escrows,
 locked balances, prior settings, Safe nonces, and Safe transaction hashes. Rebuild right before
@@ -174,6 +188,12 @@ step.
   PAXG's transfer fee). The local path must advance by one nonce, every setting must read as
   before (both paths), every transaction must stay under the gas cap, and every approval must be
   funded. All 49 escrows on the five chains pass.
+
+  Gas is counted the way a mainnet receipt counts it: every contract involved is reset to cold
+  before each transaction, and the base and calldata costs are added. `FORK_BLOCK` pins the fork
+  to a block. Replayed at the block before the Linea release, the model's figures came within
+  about 10% of the real receipts for all 20 transactions, and its largest was above the real
+  largest (148,325 against 145,510 gas).
 - `tools/test_tools.py`: the packet codec reproduces a real ReceiveUln301 delivery on Ethereum. The
   payloads reproduce a real Harmony delivery to the Ethereum USDC escrow and the legacy encoding
   for `0xab89…bcab`. Each escrow's calls write back exactly what they overwrite, and the planner

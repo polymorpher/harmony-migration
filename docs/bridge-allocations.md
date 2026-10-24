@@ -221,10 +221,13 @@ LayerZero packet it attests itself, with no cross-chain message and no
 LayerZero service or fee. See
 [`bridge-claims/docs/RELEASE.md`](../bridge-claims/docs/RELEASE.md).
 
-The ONE funding entry sends the total ONE collateral from the reserve Safe to
-the Ethereum custody multisig and includes the ERC-20 `transfer` calldata for
-a Safe transaction. Its destination is the proposed
-`layerzero-nativeoft-custody` routing destination.
+The ONE funding entry gives the total ONE collateral the reserve Safe funds to
+the Ethereum custody multisig, per pool, and includes the ERC-20 `transfer`
+calldata for a single Safe transaction. Its destination is the proposed
+`layerzero-nativeoft-custody` routing destination. The release plan
+(`bridge-claims/tools/release_plan.py`) moves it in two stages instead: first
+exactly the pools' claimable ONE, then, once decided, some or all of the held
+and retained ONE.
 
 ## Outputs and verification
 

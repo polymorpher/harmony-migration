@@ -33,7 +33,8 @@ stores the RPC URL there.
 The escrows have no withdrawal. Each escrow's owner releases it on its own chain by delivering one
 LayerZero packet it attests itself, with no cross-chain message and no LayerZero service or fee.
 Build the release plan as described in [`RELEASE.md`](RELEASE.md), replay it on a fork of every
-chain, then have the Reserve Safe execute `0-one-reserve/` (the ONE funding) and each escrow owner
+chain, then have the Reserve Safe execute `0-one-reserve/` (stage 1 of the ONE funding: exactly the
+claimable ONE; the held and retained rest stays in the Reserve Safe until decided) and each escrow owner
 execute its `1-release/` file:
 
 ```sh
