@@ -3,8 +3,9 @@
 
     forge build && python3 tools/build_fixture.py        # from bridge-claims/
 
-The Solidity test claims every row against a contract deployed with this root, and recomputes the
-CREATE2 address from the compiled bytecode. Rerun this after any change to the contract.
+The Solidity test claims every row against a contract deployed with this root, recomputes the
+CREATE2 address from the compiled bytecode, and compares the deployed code with the runtime code
+the tools rebuild from the artifact. Rerun this after any change to the contract.
 """
 
 import json
@@ -34,10 +35,9 @@ def main():
         rows.append((i, account, token, amount))
     tree = ct.levels(ct.leaves(rows))
     root = ct.root(tree)
-    artifact = json.loads(ct.ARTIFACT.read_text())
-    init_code = ct.unhex(artifact["bytecode"]["object"]) + ct.constructor_args(
-        FUNDER, WRAPPED, CHAIN_ID, root, ROWS, LIST_HASH
-    )
+    artifact = ct.load_artifact()
+    values = (FUNDER, WRAPPED, CHAIN_ID, root, ROWS, LIST_HASH)
+    init_code = artifact["creation_code"] + ct.constructor_args(*values)
     fixture = {
         "chain_id": CHAIN_ID,
         "funder": FUNDER,
@@ -55,6 +55,7 @@ def main():
         "create2_deployer": ct.CREATE2_DEPLOYER,
         "init_code_keccak256": ct.hex0x(ct.common.keccak256(init_code)),
         "address": ct.create2_address(ct.CREATE2_DEPLOYER, ct.unhex(SALT), init_code),
+        "runtime_keccak256": ct.hex0x(ct.common.keccak256(ct.runtime_code(artifact, *values))),
     }
     FIXTURE.write_text(json.dumps(fixture, indent=1) + "\n")
     print(f"wrote {FIXTURE}: root {fixture['root']}, address {fixture['address']}")

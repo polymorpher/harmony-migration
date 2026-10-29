@@ -6,8 +6,9 @@ import {BridgeClaims} from "../src/BridgeClaims.sol";
 import {MockERC20, MockWETH} from "./mocks/Mocks.sol";
 
 /// @notice The Python tree (`toolkit/scripts/bridge/claim_tree.py`) and the contract agree: every row
-///         of a list built in Python verifies and pays, and the CREATE2 address computed in Python is
-///         the one the bytecode produces. Regenerate the fixture with `test/fixtures/build_fixture.py`.
+///         of a list built in Python verifies and pays, and the CREATE2 address and runtime code
+///         computed in Python are the ones the bytecode produces. Regenerate the fixture with
+///         `test/fixtures/build_fixture.py`.
 contract TreeFixtureTest is Test {
     string internal json;
 
@@ -98,5 +99,10 @@ contract TreeFixtureTest is Test {
             ),
             vm.parseJsonAddress(json, ".address")
         );
+    }
+
+    function test_PythonRuntimeCodeMatchesDeployment() public {
+        BridgeClaims claims = _deploy();
+        assertEq(address(claims).codehash, vm.parseJsonBytes32(json, ".runtime_keccak256"), "rebuild the fixture");
     }
 }
