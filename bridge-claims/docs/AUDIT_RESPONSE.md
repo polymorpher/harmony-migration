@@ -324,43 +324,109 @@ and BC-M01 and left BC-M02 and BC-M03 partly open. Both are now addressed.
 ### BC-H02 publication gate
 
 The rebuilt directories are missing from the checkout because `artifacts/` and `runs/` are
-gitignored. They are now designated canonical and stored in two places.
+gitignored. The canonical package is the allocations in
+`artifacts/bridge-allocations-20261018/allocations-20261028/` and the claim run
+`bridge-claims/runs/bridge-allocations-20261029/`. That claim run replaced
+`bridge-allocations-20261028` under BC-L07 of the second-pass audit (below). Both are stored in two
+places.
 
-- **Private, `gs://harmony-migration` (project `harmony-migration`).** The whole allocation run
-  `artifacts/bridge-allocations-20261018/` (inputs, the audited `allocations/`, and the canonical
-  `allocations-20261028/`), the canonical claim run `bridge-claims/runs/bridge-allocations-20261028/`,
-  and the superseded run with its quarantine, all under `harmony-migration/<repository path>`. The
-  SHA-256 index of every file is `gs://harmony-migration/MANIFEST-20261029-bridge-claims.tsv`, and
-  every object was checked against its local file after upload.
-- **Public, `gs://harmony-bridge-claims/bridge-allocations-20261028/`.** The publication bundle only:
+- **Private, `gs://harmony-migration` (project `harmony-migration`).** The whole allocation run, the
+  canonical claim run, and the two superseded claim runs with their quarantines, all under
+  `harmony-migration/<repository path>`. The SHA-256 index of every file is
+  `gs://harmony-migration/MANIFEST-20261029b-bridge-claims.tsv`, and every object was checked against
+  its local file after upload.
+- **Public, `gs://harmony-bridge-claims/bridge-allocations-20261029/`.** The publication bundle only:
   per chain `manifest.json`, `claims.csv`, `tree.txt`, and `samples.json`, plus `CLAIM_CONTRACTS.md`,
   `summary.json`, `README.md`, and `SHA256SUMS`. It is served at
-  `https://storage.googleapis.com/harmony-bridge-claims/bridge-allocations-20261028/`. Every file
-  downloaded anonymously matches `SHA256SUMS`, and the manifest, list, and tree hashes are the ones
-  this report commits to for all five chains.
+  `https://storage.googleapis.com/harmony-bridge-claims/bridge-allocations-20261029/`, and every file
+  downloaded anonymously matches `SHA256SUMS`. The superseded public prefix
+  `bridge-allocations-20261028/` now holds only a `SUPERSEDED.md` pointing here.
 
-The rejected Ethereum package is quarantined. The agent machine's service account
+The rejected packages are quarantined. The agent machine's service account
 (`polymorpher-agent-1@derivative-bot`) reads both buckets and writes to the public one.
 
 ### Deployment evidence and the release package
 
-- **Dry runs.** `runs/bridge-allocations-20261028/deploy-dry-run-20261029T044505Z/` holds a fresh
+- **Dry runs.** `runs/bridge-allocations-20261029/deploy-dry-run-20261029T055945Z/` holds a fresh
   dry run of every chain under Forge 1.6.0-nightly and 1.8.1: the redacted output, the broadcast
-  record, the manifest hash, and the source and script hashes. All ten land on the committed address
-  with the committed runtime hash. A copy is in the private bucket.
-- **Release package.** `runs/bridge-allocations-20261028/release/` was built with the roster, bound
+  record, the manifest hash, and the source and script hashes. All ten land on the address in the
+  table below, with the runtime hash the approval tool computes. A copy is in the private bucket.
+- **Release package.** `runs/bridge-allocations-20261029/release/` was built with the roster, bound
   to the canonical run, and read at pinned blocks. It holds only ONE stage 1, from the Reserve Safe at
-  nonce 61, for exactly the claimable ONE.
+  nonce 61, for exactly the claimable ONE. The Ethereum fork replay of it funds the ONE approval
+  exactly and every other Ethereum approval.
+- **Approval packages.** BSC, Arbitrum, Base, and Linea passed every chain check and were published
+  at each Safe's nonce 1. Ethereum waits for ONE stage 1.
+
+## Second-pass audit
+
+A second, independent pass over commit `4840fa9` (hiddenstate.xyz, 28 October 2026) re-graded the
+first-pass findings and reported new ones. Its Medium findings and BC-L01 to BC-L03 are the
+first-pass findings addressed above. The others:
+
+| Finding | Response |
+|---|---|
+| BC-L04 stale ONE stage-1 batch | Rebuilt at the Reserve Safe's nonce 61 and replayed on a fork (above) |
+| BC-L05 CRV and AAG reject a nonzero-to-nonzero approval | Confirmed on a fork. The approval tool now approves 0 first for every token whose live allowance is nonzero, and `chains.json` lists CRV and AAG with USDT for batches built without chain reads |
+| BC-L06 labels differ from token symbols | The tool reads each token's `decimals()` and `symbol()` at the pinned block. A decimals mismatch fails the run; a differing symbol is shown beside the label on the sheet. The three differences it named (`USD₮0`, `MOODENG`, `Cake`) now appear there |
+| BC-L07 wrong `amount` cells in `claims.csv` | Confirmed: 992 dust cells were 10^9 too large. `format_amount` now writes plain decimals with integer arithmetic. The lists were rebuilt into `bridge-allocations-20261029` (details below) |
+| BC-L08 hostile native recipient forces about 3.6 million gas | Documented for relayers in `DESIGN.md` and `RUNBOOK.md` §6 |
+| BC-I04 documentation | Gas figures, the reset rule, the corrections pitfalls, and the PAXG fee corrected in `DESIGN.md` and `RELEASE.md`. PAXG charges no fee today: a fork transfer from the custody Safe arrived in full |
+| BC-I05 tooling gaps | `proof.py`'s `claimMany` command carries `--chain`. `check-public-package.py` rejects RPC provider keys in URLs |
+| BC-I07 claim semantics | `DESIGN.md` and the public README note that `StandardMerkleTree.of()` builds a different tree; `DESIGN.md` adds the two correction pitfalls |
+| BC-I08 explorer verification | `RUNBOOK.md` §5 gives the exact settings |
+| BC-I10 hardware wallets | `RUNBOOK.md` §4 says what the devices can and cannot show |
+
+Not changed:
+
+- **BC-I09 (dust rows):** a policy decision, whether a relayer or a claim minimum pays for the rows
+  worth less than their gas, to be made before opening.
+- **BC-I03:** renaming `bytecode_keccak256` would change every manifest.
+- **NatSpec typo:** the misstated bitmap comment in `src/BridgeClaims.sol`, left so the audited source
+  stays byte-identical.
+
+**The BC-L07 rebuild.** The claim lists were rebuilt from the same canonical allocations with the
+fixed formatter. Compared with `bridge-allocations-20261028`:
+
+- every Merkle root, tree, and sample is identical;
+- every column but `amount` is identical;
+- `amount` changed only in cells that were in scientific notation (65,837 on Ethereum, 20,298 on BSC,
+  32 on Arbitrum), and every cell now equals `amount_raw` exactly;
+- the manifests differ only in the list hash, constructor arguments, init-code hash, and address;
+- Base and Linea are byte-identical.
+
+The Go verifier checked every leaf, node, and proof of all five lists. Fork tests pay the sampled rows
+of the three changed contracts with the real tokens.
+
+| Chain | Address | Init-code keccak256 | Runtime code keccak256 |
+|---|---|---|---|
+| Ethereum | `0xcc0407394a4d7eb59f894abbb9c005631183d49a` | `0xc2e0b6e1c3c316f37e53384093b6550eb07d04dc76150301e78c093cb70464cc` | `0xed9957a85f2ff3d089aa2f5cd760ce4afbdb1743b3d66770caeddfda26bdd2d3` |
+| BSC | `0xaffa52187721fb4165071349bbd8c55c8d4356fc` | `0xa562128309af307bf4cab369a18ef1567f0426a0672ed3f04a315f6520183284` | `0xdb4763abb510a261308e26bd3a80e5fa1d32b6f9eabcb08e011858d4311ffc93` |
+| Arbitrum | `0x2cf2afd2b8be95f9ba5e8a6b021e7895d6729469` | `0x2d0a3eb67c27e37be26eaeb1f39ae8a6ecf53a6394c06c0630b3814ff4f0b3e0` | `0xccde05f46873541165bd89c0c6fd06c2cb00a13b5ddb3423a5acbc1f198ba0b9` |
+| Base | `0xa2bddf296a5a945f0bb92e71629a3e78f401adbb` | unchanged | `0xa301f9ed766c50c19b603208641a535e15d534c023a11e127b031a4825f33db7` |
+| Linea | `0x8a5607026b92977c34aba988c5e22fc8b615ceaf` | unchanged | `0x62b4fc5e0faff1ed42efd514607ac655ac09bdaadebdb29efda5719ff753301d` |
+
+| Chain | `manifest.json` SHA-256 | `claims.csv` SHA-256 |
+|---|---|---|
+| Ethereum | `09f57711875d598b3b1f334ea46e4323ee07858b75521bebe8a2189ad54b9fee` | `a932076291d645a03f9e67511ae64632c394c2d21afc9cc1093bbc7fe6af9707` |
+| BSC | `9284c27532202a576f9acb7e7d8ab581e78e583fa2941cc5771b3e789ce7fdd3` | `370c274681f08ab5b16d8bc697944e0a03d3ea35672e9aa793e9db5eaa768b8f` |
+| Arbitrum | `e799b90745e97fb3803af342d3292772cfb059d7315e6a32a617500b4dce4861` | `63bcab8c72823df0ef275f6cac7ae02e7a1c8ef8d937a0d2a78048ae4f54f0d1` |
+| Base | `ce21f68a73f1bf332862f9b90562f02f560a2a3fdb9ac112c0332eb66dea9233` | `63f1b1142df38f4531fdd8c536662820668450951834c21b76a8fff9e0dff1e0` |
+| Linea | `7179e94698f24201a530af677fd9fe2a46e13953df3f2b7f175ff411711ca0bf` | `30e030491a0e183cc9f74312b2c88b5a923ab3a21b044a07f613ef36c28f21af` |
+
+The trees are unchanged from `bridge-allocations-20261028`. The second-pass report's Linea
+`claims.csv` hash (`…cc9f70312…`) is a typo for the value above, which the first report also gives.
 
 ## Remaining before signing
 
-1. Have the auditor re-verify the published Ethereum artifacts against the committed hashes.
-2. Sign and execute ONE stage 1 from `runs/bridge-allocations-20261028/release/`, rebuilding it first
+1. Have the auditor re-verify the published artifacts against the hashes above.
+2. Sign and execute ONE stage 1 from `runs/bridge-allocations-20261029/release/`, rebuilding it first
    if the Reserve Safe's nonce has moved:
-   `python3 tools/release_plan.py --allocations-dir ../artifacts/bridge-allocations-20261018/allocations-20261028 --claims-dir runs/bridge-allocations-20261028 --replace`.
+   `python3 tools/release_plan.py --allocations-dir ../artifacts/bridge-allocations-20261018/allocations-20261028 --claims-dir runs/bridge-allocations-20261029 --replace`.
 3. Right before signing, refresh each chain's approval package (Ethereum once ONE stage 1 has
    executed):
-   `tools/approve_claims.py --claims-dir runs/bridge-allocations-20261028 --labels <label> --rpc --replace`.
+   `tools/approve_claims.py --claims-dir runs/bridge-allocations-20261029 --labels <label> --rpc --replace`.
    Sign from `<label>/approval/` after independently decoding every call and Safe hash.
-4. Deploy from the same run, verify code and immutables on real nodes, and open as in `RUNBOOK.md`
-   §5 to §6.
+4. Decide who pays for the dust rows (BC-I09) before opening.
+5. Deploy from the same run, verify the source on each explorer, verify code and immutables on real
+   nodes, and open as in `RUNBOOK.md` §5 to §6.
