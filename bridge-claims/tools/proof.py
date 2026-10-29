@@ -73,7 +73,9 @@ def cast_command(result):
         f"({r['index']},{result['account']},{r['token']},{r['amount_raw']},[{','.join(r['proof'])}])"
         for r in result["rows"]
     )
-    return f'cast send {result["address"]} "{CLAIM_MANY}" "[{claims}]" --rpc-url "$RPC" --account <keystore>'
+    # --chain makes cast sign for this chain id, so an RPC of another chain rejects the transaction.
+    return (f'cast send {result["address"]} "{CLAIM_MANY}" "[{claims}]" --chain {result["chain_id"]} '
+            '--rpc-url "$RPC" --account <keystore>')
 
 
 def main():
