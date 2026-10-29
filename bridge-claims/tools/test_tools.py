@@ -19,6 +19,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import claim_tree as ct  # noqa: E402
 import approve_claims as approve  # noqa: E402
+import bridge_lib as lib  # noqa: E402
 import build_claims as build  # noqa: E402
 import proof  # noqa: E402
 import release_plan as release  # noqa: E402
@@ -32,7 +33,6 @@ WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
 USDT = "0xdac17f958d2ee523a2206206994597c13d831ec7"
 DAI = "0x6b175474e89094c44da98b954eedeac495271d0f"
 ONE_TOKEN = "0xff74317e948695297acb79cb2de06111f5cc16b3"
-SPENDER = "0x" + "c1" * 20
 
 
 def account(i):
@@ -182,11 +182,101 @@ class BuildTest(unittest.TestCase):
             self.assertEqual(sorted(r["token"] for r in samples["rows"]), sorted([DAI, ct.NATIVE_TOKEN]))
 
 
+def words(*values):
+    return "0x" + "".join(format(int(v), "064x") for v in values)
+
+
+# A stand-in for the compiled contract: creation code, and runtime code with six zeroed immutables.
+ARTIFACT = {
+    "creation_code": bytes.fromhex("6080604052") + b"\x01" * 40,
+    "runtime_template": b"".join(b"\xbb" + bytes(32) for _ in range(6)),
+    "immutables": [[(1 + 33 * i, 32)] for i in range(6)],
+}
+ROSTER = [account(100 + i) for i in range(4)]
+REQUIREMENTS = {"owner_count": 4, "threshold": 2, "owners": ROSTER}
+SINGLETON = next(iter(approve.SAFE_SINGLETONS))
+MULTISEND = safe_batch.MULTISEND_CALL_ONLY["1.3.0"][0].lower()
+
+
+def selector_hex(signature):
+    return "0x" + common.selector(signature).hex()
+
+
+class FakeChain(approve.Chain):
+    """Answers the approval preflight like a correctly set up chain; tests change one thing at a time."""
+
+    def __init__(self, manifest, bound):
+        super().__init__(None)
+        c = manifest["deployment"]["constructor"]
+        self.spender = bound["address"]
+        self.hashes = {
+            FUNDER: approve.SAFE_PROXY_CODEHASH,
+            SINGLETON: approve.SAFE_SINGLETONS[SINGLETON],
+            MULTISEND: safe_batch.MULTISEND_CALL_ONLY_CODE_HASH["1.3.0"],
+            ct.CREATE2_DEPLOYER: ct.CREATE2_DEPLOYER_CODEHASH,
+        }
+        self.slots = {"0x0": words(int(SINGLETON, 16)), approve.GUARD_SLOT: words(0),
+                      approve.FALLBACK_HANDLER_SLOT: words(0xf48f2b2d2a534e402487b3ee7c18c33aec0fe5e4)}
+        self.owners, self.threshold, self.nonce, self.modules = list(ROSTER), 2, 7, []
+        self.balances = {WETH: 0, DAI: 7, USDT: 11}
+        self.native = 5
+        self.final_hash = "0x" + "ab" * 32
+        self.getters = {
+            "funder()": words(int(c["funder"], 16)), "wrappedNative()": words(int(c["wrappedNative"], 16)),
+            "chainId()": words(c["chainId"]), "root()": c["root"], "claimCount()": words(c["claimCount"]),
+            "listHash()": c["listHash"],
+        }
+
+    def pin(self):
+        return {"number": 100, "hash": "0x" + "ab" * 32}
+
+    def block_hash(self, number):
+        return self.final_hash
+
+    def chain_id(self):
+        return 1
+
+    def code_hash(self, address):
+        return self.hashes.get(lib.address(address), approve.EMPTY_CODEHASH)
+
+    def storage(self, address, slot):
+        return self.slots.get(slot, words(0)) if lib.address(address) == FUNDER else words(0)
+
+    def native_balance(self, address):
+        return self.native
+
+    def call(self, to, data):
+        to, sel = lib.address(to), data[:10].lower()
+        if to == FUNDER:
+            return {
+                selector_hex("getOwners()"): words(32, len(self.owners), *[int(o, 16) for o in self.owners]),
+                selector_hex("getThreshold()"): words(self.threshold),
+                selector_hex("VERSION()"): words(32, 5) + b"1.3.0".hex().ljust(64, "0"),
+                selector_hex("nonce()"): words(self.nonce),
+                selector_hex("getModulesPaginated(address,uint256)"):
+                    words(64, 1, len(self.modules), *[int(m, 16) for m in self.modules]),
+            }.get(sel)
+        if to in self.balances:
+            if sel == selector_hex("balanceOf(address)"):
+                return words(self.balances[to])
+            if sel == selector_hex("allowance(address,address)"):
+                return words(0)
+        if to == self.spender and self.code_hash(to) != approve.EMPTY_CODEHASH:
+            return next((v for k, v in self.getters.items() if selector_hex(k) == sel), None)
+        return None
+
+
 class ApproveTest(unittest.TestCase):
-    def manifest(self):
+    def manifest(self, tmp):
+        """A manifest bound to ARTIFACT the way build_claims.py writes it, with its claims.csv."""
+        Path(tmp, "claims.csv").write_text("index,account,token,amount_raw\n0,a,b,1\n")
+        list_sha = lib.file_sha256(os.path.join(tmp, "claims.csv"))
+        root = "0x" + "ab" * 32
+        args_blob = ct.constructor_args(FUNDER, WETH, 1, ct.unhex(root), 3, bytes.fromhex(list_sha))
+        init_code = ARTIFACT["creation_code"] + args_blob
         return {
             "label": "ethereum", "chain": "ethereum", "chain_id": 1, "funder": FUNDER, "wrapped_native": WETH,
-            "root": "0x" + "ab" * 32, "claim_count": 3, "list_sha256": "cd" * 32,
+            "root": root, "claim_count": 3, "list_file": "claims.csv", "list_sha256": list_sha,
             "assets": [
                 {"token": ct.NATIVE_TOKEN, "symbol": "ETH", "decimals": 18, "total_raw": "5"},
                 {"token": DAI, "symbol": "DAI", "decimals": 18, "total_raw": "7"},
@@ -198,21 +288,31 @@ class ApproveTest(unittest.TestCase):
                 {"token": USDT, "symbol": "USDT", "decimals": 6, "amount_raw": "11", "amount": "0.000011"},
             ],
             "deployment": {
-                "status": "ready", "address": SPENDER, "create2_deployer": ct.CREATE2_DEPLOYER,
-                "salt": "0x" + "00" * 32, "constructor": {"funder": FUNDER},
+                "status": "ready", "create2_deployer": ct.CREATE2_DEPLOYER, "salt": "0x" + "00" * 32,
+                "address": ct.create2_address(ct.CREATE2_DEPLOYER, bytes(32), init_code),
+                "constructor": {"funder": FUNDER, "wrappedNative": WETH, "chainId": 1, "root": root,
+                                "claimCount": 3, "listHash": "0x" + list_sha},
+                "constructor_args": common.hex0x(args_blob),
+                "bytecode_keccak256": common.hex0x(common.keccak256(ARTIFACT["creation_code"])),
+                "init_code_keccak256": common.hex0x(common.keccak256(init_code)),
             },
         }
 
-    def build(self, tmp, nonce=7):
-        manifest = self.manifest()
+    def build(self, tmp, nonce=7, draft=True, chain=None, manifest=None, chains=None, artifact=ARTIFACT,
+              requirements=REQUIREMENTS):
+        manifest = manifest or self.manifest(tmp)
         Path(tmp, "manifest.json").write_text(json.dumps(manifest))
-        args = SimpleNamespace(nonce=nonce, safe_version="1.3.0", no_wrap=False, replace=False)
-        record = approve.build(args, {"custody_requirements": {}}, chains_constants(), manifest, tmp, None)
-        return record, json.loads(Path(tmp, "safe-approve.json").read_text())
+        args = SimpleNamespace(nonce=nonce, no_wrap=False, replace=True, draft=draft)
+        return approve.build(args, {"custody_requirements": requirements}, chains or chains_constants(),
+                             manifest, tmp, chain, artifact)
+
+    def fake_chain(self, tmp):
+        manifest = self.manifest(tmp)
+        return manifest, FakeChain(manifest, approve.bound_deployment(manifest, chains_constants(), ARTIFACT, tmp))
 
     def test_batch_wraps_resets_usdt_and_approves_exact_totals(self):
         with tempfile.TemporaryDirectory() as tmp:
-            record, _ = self.build(tmp)
+            record = self.build(tmp)
         calls = [(c["method"], c["to"], c["args"].get("value"), c["value"]) for c in record["approve"]["calls"]]
         self.assertEqual(calls, [
             ("deposit()", WETH, None, "5"),
@@ -221,19 +321,21 @@ class ApproveTest(unittest.TestCase):
             ("approve(address,uint256)", USDT, "0", "0"),
             ("approve(address,uint256)", USDT, "11", "0"),
         ])
-        self.assertTrue(all(c["args"].get("spender", SPENDER) == SPENDER for c in record["approve"]["calls"]))
+        spender = record["spender"]
+        self.assertTrue(all(c["args"].get("spender", spender) == spender for c in record["approve"]["calls"]))
         self.assertEqual([c["args"]["value"] for c in record["revoke"]["calls"]], ["0", "0", "0"])
 
     def test_transaction_builder_file_and_safe_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:
-            record, batch = self.build(tmp)
-            revoke = json.loads(Path(tmp, "safe-revoke.json").read_text())
+            record = self.build(tmp)
+            batch = json.loads(Path(tmp, "safe-approve.draft.json").read_text())
+            revoke = json.loads(Path(tmp, "safe-revoke.draft.json").read_text())
         for file in (batch, revoke):
             self.assertEqual(file["meta"]["checksum"], safe_batch.tx_builder_checksum(file))
             self.assertEqual(file["chainId"], "1")
         tx = record["approve"]["safe_transaction"]
         self.assertEqual(tx["operation"], safe_batch.DELEGATECALL)
-        self.assertEqual(tx["to"].lower(), safe_batch.MULTISEND_CALL_ONLY["1.3.0"][0].lower())
+        self.assertEqual(tx["to"].lower(), MULTISEND)
         decoded = safe_batch.decode_multisend(ct.unhex(tx["data"]))
         self.assertEqual(
             [(op, to.lower(), value, common.hex0x(data)) for op, to, value, data in decoded],
@@ -244,8 +346,118 @@ class ApproveTest(unittest.TestCase):
 
     def test_without_nonce_hashes_are_left_open(self):
         with tempfile.TemporaryDirectory() as tmp:
-            record, _ = self.build(tmp, nonce=None)
+            record = self.build(tmp, nonce=None)
         self.assertIsNone(record["approve"]["safe_transaction"]["safeTxHash"])
+
+    def test_spender_is_recomputed_from_the_bytecode(self):
+        def eoa_spender(m, chains, artifact):
+            m["deployment"]["address"] = account(50)
+
+        def other_factory(m, chains, artifact):
+            m["deployment"]["create2_deployer"] = account(51)
+
+        def other_factory_in_chains_file(m, chains, artifact):
+            chains["create2_deployer"] = account(51)
+
+        def other_creation_code(m, chains, artifact):
+            artifact["creation_code"] += b"\x00"
+
+        def other_list(m, chains, artifact):
+            m["list_sha256"] = "00" * 32
+
+        def other_salt(m, chains, artifact):
+            m["deployment"]["salt"] = "0x" + "01" * 32
+
+        for change in (eoa_spender, other_factory, other_factory_in_chains_file, other_creation_code, other_list,
+                       other_salt):
+            with self.subTest(change.__name__), tempfile.TemporaryDirectory() as tmp:
+                manifest, chains, artifact = self.manifest(tmp), chains_constants(), dict(ARTIFACT)
+                change(manifest, chains, artifact)
+                with self.assertRaises(SystemExit):
+                    self.build(tmp, manifest=manifest, chains=chains, artifact=artifact)
+                self.assertEqual(sorted(os.listdir(tmp)), ["claims.csv", "manifest.json"])
+
+    def test_signable_files_when_every_check_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, chain = self.fake_chain(tmp)
+            record = self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
+            sheet = Path(tmp, "APPROVALS.md").read_text()
+            names = sorted(os.listdir(tmp))
+        self.assertEqual([c for c in record["preflight"]["checks"] if not c["ok"]], [])
+        self.assertEqual(record["approve"]["safe_transaction"]["nonce"], 7)
+        self.assertFalse(record["draft"])
+        self.assertIn("safe-approve.json", names)
+        self.assertNotIn("DRAFT", sheet)
+        self.assertIn("block 100", sheet)
+        self.assertIn(record["spender_binding"]["runtime_keccak256"], sheet)
+
+    def test_failed_check_or_missing_chain_blocks_signable_files(self):
+        def getter_compatible_contract(c):
+            c.hashes[c.spender] = "0x" + "66" * 32
+
+        def no_roster(c):
+            return {"owner_count": 4, "threshold": 2}
+
+        def other_owner(c):
+            c.owners[0] = account(99)
+
+        def module(c):
+            c.modules = [account(98)]
+
+        def guard(c):
+            c.slots[approve.GUARD_SLOT] = words(int(account(97), 16))
+
+        def other_singleton(c):
+            c.slots["0x0"] = words(int(account(96), 16))
+
+        def other_multisend(c):
+            c.hashes[MULTISEND] = "0x" + "77" * 32
+
+        def other_factory_code(c):
+            c.hashes[ct.CREATE2_DEPLOYER] = "0x" + "88" * 32
+
+        def unfunded(c):
+            c.balances[DAI] = 6
+
+        def reorg(c):
+            c.final_hash = "0x" + "cd" * 32
+
+        cases = [(getter_compatible_contract, None), (no_roster, None), (other_owner, None), (module, None),
+                 (guard, None), (other_singleton, None), (other_multisend, None), (other_factory_code, None),
+                 (unfunded, None), (reorg, None), (lambda c: None, 3)]
+        for change, nonce in cases:
+            name = getattr(change, "__name__", "nonce")
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                manifest, chain = self.fake_chain(tmp)
+                requirements = change(chain) or REQUIREMENTS
+                with self.assertRaises(SystemExit):
+                    self.build(tmp, nonce=nonce, draft=False, chain=chain, manifest=manifest, requirements=requirements)
+                self.assertEqual(sorted(os.listdir(tmp)), ["claims.csv", "manifest.json"])
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(SystemExit):
+            self.build(tmp, draft=False, chain=None)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, chain = self.fake_chain(tmp)
+            chain.hashes[chain.spender] = approve.bound_deployment(manifest, chains_constants(), ARTIFACT, tmp)[
+                "runtime_keccak256"]
+            record = self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
+        self.assertTrue(record["spender_deployed"])
+        self.assertTrue(all(c["ok"] for c in record["preflight"]["checks"]))
+
+    def test_draft_files_are_named_and_marked_apart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, chain = self.fake_chain(tmp)
+            chain.balances[DAI] = 0
+            record = self.build(tmp, nonce=None, draft=True, chain=chain, manifest=manifest)
+            names = sorted(os.listdir(tmp))
+            sheet = Path(tmp, "APPROVALS.draft.md").read_text()
+            batch = json.loads(Path(tmp, "safe-approve.draft.json").read_text())
+        self.assertEqual(names, ["APPROVALS.draft.md", "approvals.draft.json", "claims.csv", "manifest.json",
+                                 "safe-approve.draft.json", "safe-revoke.draft.json"])
+        self.assertTrue(record["draft"])
+        self.assertTrue(sheet.startswith("# DRAFT, do not sign"))
+        self.assertIn("**FAILED**", sheet)
+        self.assertTrue(batch["meta"]["name"].startswith("DRAFT, do not sign"))
 
 
 class ReleaseTest(unittest.TestCase):
@@ -498,6 +710,41 @@ class ReleaseTest(unittest.TestCase):
             Path(tmp, "pools.csv").write_text(header + "bsc-one,100,70,20,0,9\n")
             with self.assertRaises(SystemExit):
                 release.one_split(tmp, {"pools": {"bsc-one": "100"}})
+
+    def test_recipient_is_the_configured_custody_multisig(self):
+        safe = "0x19565f4771843467aad632d6b56c75396785b06c"
+        plan = {"chains": {"ethereum": {}, "bsc": {}}}
+
+        def config(bsc=safe, one=None):
+            return {"chains": {"ethereum": {"custody_multisig": safe}, "bsc": {"custody_multisig": bsc}},
+                    "one_claims": {"claim_chain": "ethereum", "custody_multisig": one}}
+
+        self.assertEqual(release.custody_safe(config(), plan), safe)
+        self.assertEqual(release.custody_safe(config(), plan, safe.upper().replace("0X", "0x")), safe)
+        for bad, requested in ((config(bsc=account(1)), None), (config(bsc=None), None),
+                               (config(one=account(2)), None), (config(), account(3))):
+            with self.assertRaises(SystemExit):
+                release.custody_safe(bad, plan, requested)
+
+    def test_custody_safe_must_be_official_and_owned_by_the_roster(self):
+        roster = [account(i) for i in range(4)]
+        identity = {"code_hash": approve.SAFE_PROXY_CODEHASH, "singleton": SINGLETON,
+                    "singleton_code_hash": approve.SAFE_SINGLETONS[SINGLETON], "version": "1.3.0", "modules": [],
+                    "guard": lib.ZERO_ADDRESS, "fallback_handler": lib.ZERO_ADDRESS}
+
+        def problems(owners, threshold, **changes):
+            info = {"is_safe": True, "owners": owners, "threshold": threshold}
+            found = release.custody_problems("bsc", info, identity | changes, roster, 2)
+            return info["status"], found
+
+        self.assertEqual(problems(list(reversed(roster)), 2), ("ready", []))
+        self.assertEqual(problems(roster[:1], 1), ("needs_owner_setup", []))
+        self.assertEqual(problems(roster[:3] + [account(9)], 2)[0], "unexpected_owners")
+        self.assertEqual(problems([account(9)], 1)[0], "unexpected_owners")
+        self.assertEqual(len(problems(roster, 2, modules=[account(8)])[1]), 1)
+        self.assertEqual(len(problems(roster, 2, code_hash="0x" + "00" * 32)[1]), 1)
+        self.assertEqual(release.custody_problems("bsc", {"is_safe": False}, None, roster, 2),
+                         ["bsc: the custody multisig is not a Safe"])
 
     def test_legacy_escrow_gets_the_two_tuple_payload(self):
         safe = "0x19565f4771843467aad632d6b56c75396785b06c"
