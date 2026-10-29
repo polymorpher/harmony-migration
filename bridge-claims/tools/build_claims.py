@@ -29,7 +29,6 @@ import json
 import os
 import sys
 from collections import defaultdict
-from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import claim_tree as ct  # noqa: E402
@@ -128,7 +127,8 @@ def read_claims(path, chain, assets):
 
 
 def format_amount(raw, decimals):
-    text = str(Decimal(raw).scaleb(-decimals).quantize(Decimal(1).scaleb(-decimals)))
+    """`raw` in whole units, in plain decimal notation without trailing zeros (never scientific)."""
+    text = lib.format_units(raw, decimals)
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
