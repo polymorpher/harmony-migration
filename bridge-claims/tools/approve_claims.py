@@ -3,7 +3,8 @@
 
     python3 tools/approve_claims.py --claims-dir runs/bridge-allocations-20261018 --rpc
 
-For every contract built by `tools/build_claims.py` this writes, next to its manifest:
+For every contract built by `tools/build_claims.py` this writes one package, `approval/` next to its
+manifest:
 
 - `safe-approve.json`: a Transaction Builder batch for the funder Safe. It wraps the native
   total (WETH/WBNB `deposit`) when the list has native rows, then approves the contract for
@@ -25,8 +26,14 @@ module, no guard) whose owners are the roster in the config (`custody_requiremen
 whose threshold is the required one; its nonce; the code of the CREATE2 deployer and of
 MultiSendCallOnly; the contract's code and immutables once deployed; and the Safe's balances and
 current approvals. Signable files are written only when every check passes. `--draft` writes the
-same files as `*.draft.*`, marked not to be signed, without `--rpc` or despite failed checks.
-Nothing is sent.
+same files as `*.draft.*` into `approval-draft/`, marked not to be signed, without `--rpc` or despite
+failed checks. Nothing is sent.
+
+Packages are built in empty staging directories and published only when every contract of the run
+passes (`tools/package.py`): an earlier package moves to `superseded/`, and a failed rebuild moves it
+there with `INVALIDATED.md`, so `approval/` only ever holds the latest batch that passed every check.
+Signable files left directly beside a manifest by earlier versions stop the run until
+`tools/quarantine.py` moves them out.
 """
 
 import argparse
@@ -37,6 +44,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import claim_tree as ct  # noqa: E402
+import package  # noqa: E402
 import bridge_lib as lib  # noqa: E402  (toolkit/scripts/bridge, on sys.path through claim_tree)
 import safe_batch  # noqa: E402  (airdrop/tools, on sys.path through claim_tree)
 
@@ -61,6 +69,7 @@ VIEWS = {
     "listHash": "listHash()",
 }
 OUTPUTS = ("safe-approve.json", "safe-revoke.json", "approvals.json", "APPROVALS.md")
+APPROVAL_DIR, DRAFT_DIR = "approval", "approval-draft"
 
 # Safe 1.3.0 as deployed (github.com/safe-global/safe-deployments) for the custody Safe on all five
 # chains: the proxy's runtime code, the singleton and its code, and the fallback handlers allowed
@@ -448,7 +457,25 @@ def draft_name(name):
     return f"{base}.draft{ext}"
 
 
-def build(args, config, chains, manifest, out_dir, chain, artifact):
+def refresh(args, config, chains, jobs, artifact):
+    """Build the package of every (manifest, manifest directory, chain) in `jobs`; publish them only if
+    all succeed, otherwise publish none and invalidate the earlier ones (`package.staged`)."""
+    if not args.draft:
+        legacy = [os.path.join(out_dir, name) for _, out_dir, _ in jobs for name in OUTPUTS
+                  if os.path.lexists(os.path.join(out_dir, name))]
+        if legacy:
+            raise SystemExit("signable files from before approval packages are still in place: "
+                             + ", ".join(legacy) + "; move them out with tools/quarantine.py first")
+    targets = [os.path.join(out_dir, DRAFT_DIR if args.draft else APPROVAL_DIR) for _, out_dir, _ in jobs]
+    with package.staged(targets, args.replace) as staging:
+        records = [build(args, config, chains, manifest, out_dir, chain, artifact, staging.dirs[target])
+                   for (manifest, out_dir, chain), target in zip(jobs, targets)]
+    return records
+
+
+def build(args, config, chains, manifest, out_dir, chain, artifact, package_dir):
+    """Check one contract and write its package into `package_dir`; stops on a failed check unless
+    `--draft`."""
     label = manifest["label"]
     bound = bound_deployment(manifest, chains, artifact, out_dir)
     spender = bound["address"]
@@ -530,8 +557,7 @@ def build(args, config, chains, manifest, out_dir, chain, artifact):
         },
         "preflight": {"checked": chain is not None, "block": state.get("block"), "checks": checks, "state": state},
     }
-    paths = {name: os.path.join(out_dir, draft_name(name) if args.draft else name) for name in OUTPUTS}
-    lib.prepare_outputs(paths.values(), args.replace)
+    paths = {name: os.path.join(package_dir, draft_name(name) if args.draft else name) for name in OUTPUTS}
     for name, value in (("safe-approve.json", approve_batch), ("safe-revoke.json", revoke_batch)):
         lib.write_text(paths[name], json.dumps(value, indent=1) + "\n")
     lib.write_json(paths["approvals.json"], record)
@@ -567,6 +593,8 @@ def signing_sheet(manifest, record):
            (" — deployed" if record["spender_deployed"] else " — not deployed yet")),
         f"- Root: `{manifest['root']}`; rows: {manifest['claim_count']:,}; list SHA-256 `{manifest['list_sha256']}`",
         f"- Manifest SHA-256: `{record['manifest_sha256']}`",
+        f"- Package: `{DRAFT_DIR if record['draft'] else APPROVAL_DIR}/` beside the manifest; "
+        "`shasum -a 256 -c PACKAGE.sha256` there checks every file",
     ]
     if pre["checked"]:
         lines.append(f"- Chain state read at block {pre['block']['number']:,} (`{pre['block']['hash']}`)")
@@ -657,11 +685,14 @@ def main():
     labels = args.labels or [c["label"] for c in summary["contracts"] if c["status"] == "ready"]
     if args.nonce is not None and len(labels) != 1:
         raise SystemExit("--nonce needs exactly one contract (--labels)")
+    jobs = []
     for label in labels:
         out_dir = os.path.join(args.claims_dir, label)
         manifest = lib.load_json(os.path.join(out_dir, "manifest.json"))
         chain = Chain(lib.chain_rpc(config, manifest["chain"])) if args.rpc else None
-        record = build(args, config, chains, manifest, out_dir, chain, artifact)
+        jobs.append((manifest, out_dir, chain))
+    for record in refresh(args, config, chains, jobs, artifact):
+        label = record["label"]
         failed = [c["check"] for c in record["preflight"]["checks"] if not c["ok"]]
         tx = record["approve"]["safe_transaction"]
         print(
