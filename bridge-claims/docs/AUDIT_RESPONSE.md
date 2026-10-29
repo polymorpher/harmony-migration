@@ -485,6 +485,27 @@ packages current. The approve and revoke Safe transaction hashes equal the earli
 same calls at the same nonces. Every chain check passed: 58, 22, 19, and 19, one more each than
 before, because the funder is now also checked against the roster's Safe.
 
+The private bucket now holds this snapshot under the index `MANIFEST-20261029c-bridge-claims.tsv`
+(SHA-256 `acfc2b8e865b3c9ad35cc9cdaa7f133dac40a819bbb56648f817c7fc95761cb2`, 530 files, each
+checked after upload).
+
+### The reviewed checkout
+
+The checkout the review read (`~/git/harmony-migration` on the agent machine) now matches that
+snapshot. The auditor's untracked `output/` and `bridge-claims/docs/AUDIT_REPORT.md` are untouched.
+
+- It is at the commit that adds this section. All 530 indexed files match, and its tool suite
+  passes 57 of 57.
+- `runs/bridge-allocations-20261029` is present. `verify` reports its five packages current, and it
+  binds to all 22 public files.
+- In `runs/bridge-allocations-20261018`, all 118 files the checkout held were byte-identical to the
+  private copy. They are now quarantined exactly as there, with `SUPERSEDED.md`. Outside
+  `quarantine/`, only lists, manifests, and the summary remain, and `verify` finds nothing current.
+  `runs/bridge-allocations-20261028` is the same.
+- `artifacts/bridge-allocations-20261018/allocations-20261028/` is present.
+- `bridge/local/config.json` equals the team's copy. It differed only by the owner list, which
+  equals the committed roster.
+
 ## Remaining before signing
 
 1. Have the auditor re-verify the published artifacts against the hashes above.
