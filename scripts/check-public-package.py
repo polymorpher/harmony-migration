@@ -15,6 +15,9 @@ FORBIDDEN = {
     "archival host IP": re.compile(rb"\b69\.67\.149\.19\b"),
     "private LAN address": re.compile(rb"\b192\.168\."),
     "embedded SSH target": re.compile(rb"\bubuntu@"),
+    "RPC provider key in a URL": re.compile(
+        rb"(?:\.alchemy\.com/v2|\.infura\.io/v3|\.quiknode\.pro|\.ankr\.com/[a-z_]+)/[A-Za-z0-9_-]{20,}"
+    ),
     "private key marker": re.compile(
         rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
     ),
