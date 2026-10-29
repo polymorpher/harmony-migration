@@ -26,6 +26,8 @@ import common  # noqa: E402
 
 NATIVE_TOKEN = "0x" + "0" * 40
 CREATE2_DEPLOYER = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
+# keccak256 of the deterministic-deployment proxy's 69-byte runtime code, identical on every chain.
+CREATE2_DEPLOYER_CODEHASH = "0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989"
 CHAINS_FILE = PROJECT / "chains.json"
 ARTIFACT = PROJECT / "out" / "BridgeClaims.sol" / "BridgeClaims.json"
 LEAF_SCHEME = (
@@ -184,6 +186,38 @@ def load_chains(path=CHAINS_FILE):
 def create2_address(deployer, salt, init_code):
     digest = common.keccak256(b"\xff" + bytes.fromhex(deployer[2:]) + salt + common.keccak256(init_code))
     return "0x" + digest[12:].hex()
+
+
+def load_artifact(path=ARTIFACT):
+    """The compiled contract (`forge build`): creation code, the runtime code with zeroed immutables,
+    and where each immutable is written. solc numbers AST nodes in source order, so ascending node
+    ids are the immutables' declaration order, which is also the constructor's argument order."""
+    if not Path(path).exists():
+        raise SystemExit(f"no bytecode at {path}: run `forge build`")
+    with open(path, encoding="utf-8") as source:
+        artifact = json.load(source)
+    refs = artifact["deployedBytecode"].get("immutableReferences") or {}
+    return {
+        "creation_code": unhex(artifact["bytecode"]["object"]),
+        "runtime_template": unhex(artifact["deployedBytecode"]["object"]),
+        "immutables": [[(r["start"], r["length"]) for r in refs[key]] for key in sorted(refs, key=int)],
+    }
+
+
+def runtime_code(artifact, funder, wrapped_native, chain_id, root_node, claim_count, list_hash):
+    """The code the constructor leaves at the contract's address: the runtime template with every
+    immutable written in."""
+    blob = constructor_args(funder, wrapped_native, chain_id, root_node, claim_count, list_hash)
+    words = [blob[i:i + 32] for i in range(0, len(blob), 32)]
+    if len(artifact["immutables"]) != len(words):
+        raise ValueError(f"artifact has {len(artifact['immutables'])} immutables, the constructor sets {len(words)}")
+    code = bytearray(artifact["runtime_template"])
+    for positions, value in zip(artifact["immutables"], words):
+        for start, length in positions:
+            if length != 32 or any(code[start:start + 32]):
+                raise ValueError(f"no zeroed 32-byte immutable at runtime offset {start}")
+            code[start:start + 32] = value
+    return bytes(code)
 
 
 def hex0x(data):
