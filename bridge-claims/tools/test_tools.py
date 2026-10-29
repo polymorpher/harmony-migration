@@ -182,6 +182,21 @@ class BuildTest(unittest.TestCase):
             self.assertEqual(len(result["rows"]), len([r for r in rows if r["account"] == account(1)]))
             samples = json.loads(Path(tmp, "ethereum", "samples.json").read_text())
             self.assertEqual(sorted(r["token"] for r in samples["rows"]), sorted([DAI, ct.NATIVE_TOKEN]))
+            result["address"] = account(9)
+            self.assertIn(" --chain 1 ", proof.cast_command(result))
+
+    def test_amounts_are_plain_decimals(self):
+        cases = {
+            (172715615, 18): "0.000000000172715615",
+            (100, 18): "0.0000000000000001",
+            (10 ** 18, 18): "1",
+            (39336660, 6): "39.33666",
+            (62177050468244920346866563, 18): "62177050.468244920346866563",
+            (10 ** 40 + 1, 18): "10000000000000000000000.000000000000000001",
+            (0, 6): "0",
+        }
+        for (raw, decimals), text in cases.items():
+            self.assertEqual(build.format_amount(raw, decimals), text)
 
 
 def words(*values):
@@ -221,6 +236,9 @@ class FakeChain(approve.Chain):
                       approve.FALLBACK_HANDLER_SLOT: words(0xf48f2b2d2a534e402487b3ee7c18c33aec0fe5e4)}
         self.owners, self.threshold, self.nonce, self.modules = list(ROSTER), 2, 7, []
         self.balances = {WETH: 0, DAI: 7, USDT: 11}
+        self.allowances = {WETH: 0, DAI: 0, USDT: 0}
+        self.decimals = {WETH: 18, DAI: 18, USDT: 6}
+        self.symbols = {WETH: "WETH", DAI: "DAI", USDT: "USDT"}
         self.native = 5
         self.final_hash = "0x" + "ab" * 32
         self.getters = {
@@ -262,7 +280,12 @@ class FakeChain(approve.Chain):
             if sel == selector_hex("balanceOf(address)"):
                 return words(self.balances[to])
             if sel == selector_hex("allowance(address,address)"):
-                return words(0)
+                return words(self.allowances[to])
+            if sel == selector_hex("decimals()"):
+                return words(self.decimals[to])
+            if sel == selector_hex("symbol()"):
+                text = self.symbols[to].encode()
+                return words(32, len(text)) + text.hex().ljust(64, "0")
         if to == self.spender and self.code_hash(to) != approve.EMPTY_CODEHASH:
             return next((v for k, v in self.getters.items() if selector_hex(k) == sel), None)
         return None
@@ -465,6 +488,26 @@ class ApproveTest(unittest.TestCase):
         self.assertTrue(sheet.startswith("# DRAFT, do not sign"))
         self.assertIn("**FAILED**", sheet)
         self.assertTrue(batch["meta"]["name"].startswith("DRAFT, do not sign"))
+
+    def test_nonzero_allowance_is_reset_first_for_any_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, chain = self.fake_chain(tmp)
+            chain.allowances[DAI] = 3
+            record = self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
+        calls = [(c["to"], c["args"].get("value")) for c in record["approve"]["calls"] if c["method"] != "deposit()"]
+        self.assertEqual(calls, [(WETH, "5"), (DAI, "0"), (DAI, "7"), (USDT, "11")])
+
+    def test_token_decimals_are_checked_and_labels_compared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, chain = self.fake_chain(tmp)
+            chain.symbols[USDT] = "USD₮0"
+            self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
+            sheet = Path(tmp, "approval", "APPROVALS.md").read_text()
+            self.assertIn("USDT (its `symbol()`: `USD₮0`)", sheet)
+            chain.decimals[USDT] = 18
+            with self.assertRaises(SystemExit) as stopped:
+                self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
+            self.assertIn("USDT decimals", str(stopped.exception))
 
     def test_failed_refresh_moves_the_earlier_package_out(self):
         with tempfile.TemporaryDirectory() as tmp:
