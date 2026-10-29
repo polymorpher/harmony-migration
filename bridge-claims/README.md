@@ -48,6 +48,9 @@ tools/release_plan.py        the owner transactions that release each escrow on 
                              calldata, and a handoff folder per key holder)
 tools/send_calldata.py       sends one EOA calldata file with `cast`, simulating each transaction
                              first and logging each receipt so a rerun resumes
+tools/package.py             signable packages (approval/, release/): built in an empty staging
+                             directory and published whole; a failed build invalidates the old one
+tools/quarantine.py          moves a run's rejected signable files to quarantine/ with their hashes
 tools/build_fixture.py       regenerates test/fixtures/claim-tree.json
 tools/test_tools.py          tests of the tools
 runs/                        generated runs (ignored: address-level amounts)

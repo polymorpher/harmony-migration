@@ -40,8 +40,16 @@ Build the release plan as described in [`RELEASE.md`](RELEASE.md), replay it on 
 chain, then have the Reserve Safe execute `0-one-reserve/` (stage 1 of the ONE funding: exactly the
 claimable ONE; the held and retained rest stays in the Reserve Safe until decided) and each escrow owner
 execute its `1-release/` file. The planner pays only the custody multisig the bridge config names on
-every chain (the claim contracts' funder), and stops unless that Safe is an unmodified Safe 1.3.0
-owned by the configured roster (below) on every chain:
+every chain. Before reading any chain it checks the claim run (`--claims-dir`):
+
+- the run was built from these allocations;
+- every ready contract's funder is that Safe;
+- the ONE contract approves exactly the claimable ONE that stage 1 transfers.
+
+It then reads each chain at one pinned block, checked again before anything is written, and stops
+unless the Safe is an unmodified Safe 1.3.0 owned by the configured roster (below) on every chain.
+The package `runs/<run>/release/` is published only whole. A failed build leaves no `release/`,
+and moves the earlier one to `superseded/` with `INVALIDATED.md`:
 
 ```sh
 CLAIMS_DIR=runs/<run>/<label> RELEASE_DIR=runs/<run>/release FORK_RPC_URL="$ETHEREUM_RPC" \
@@ -58,17 +66,37 @@ First list the four custody Safe owners in the bridge config as `custody_require
 taken from a source independent of the chain (the owners themselves), not from what the Safe
 reports. The tool never takes the spender from the manifest: it recomputes the CREATE2 address
 from the compiled bytecode (`forge build`) and the manifest's constructor arguments and stops on
-any difference. It then reads the chain at one block and writes `safe-approve.json`, `safe-revoke.json`,
-and `APPROVALS.md` only if every check passes: the funder is an unmodified Safe 1.3.0 (proxy code,
-singleton, fallback handler, no module, no guard) owned by exactly the configured roster with the
-required threshold; MultiSendCallOnly and the CREATE2 deployer have their official code; the
-contract, if deployed, has exactly the expected code and immutables; the Safe holds every asset's
-total; and `--nonce`, if given, is the Safe's nonce. Otherwise it lists the failed checks and writes
-nothing. The batch is built for the Safe's nonce at that block, which `APPROVALS.md` records.
-`--draft` writes the same files as `*.draft.*`, titled not to be signed, without `--rpc` or despite
-failed checks; never load a draft into the Safe. Then:
+any difference. It then reads the chain at one block and publishes the package
+`runs/<run>/<label>/approval/` (`safe-approve.json`, `safe-revoke.json`, `approvals.json`,
+`APPROVALS.md`, `PACKAGE.sha256`) only if every check passes:
 
-1. In the Safe web app, open Transaction Builder and load `safe-approve.json`. It wraps the native
+- the funder is an unmodified Safe 1.3.0 (proxy code, singleton, fallback handler, no module, no
+  guard), owned by exactly the configured roster with the required threshold;
+- MultiSendCallOnly and the CREATE2 deployer have their official code;
+- the contract, if deployed, has exactly the expected code and immutables;
+- the Safe holds every asset's total;
+- `--nonce`, if given, is the Safe's nonce.
+
+Every contract of the run must pass, or none is published. When a check fails, the tool lists the
+failures. Any earlier `approval/` then moves to `superseded/` with `INVALIDATED.md`, so after a
+failed refresh there is nothing to sign. A successful refresh moves the earlier package there too.
+The batch is built for the Safe's nonce at that block, which `APPROVALS.md` records.
+
+`--draft` writes the same files as `*.draft.*` into `approval-draft/`, titled not to be signed,
+without `--rpc` or despite failed checks; never load a draft into the Safe.
+
+Approval files that earlier versions wrote directly beside a manifest stop the tool until they are
+quarantined, a reviewed step of its own that keeps them, with their SHA-256, under
+`runs/<run>/quarantine/<time>/`:
+
+```sh
+python3 tools/quarantine.py runs/<run> --reason "<why>" --dry-run   # then without --dry-run
+```
+
+Then:
+
+1. In the Safe web app, open Transaction Builder and load `approval/safe-approve.json`. Check
+   `shasum -a 256 -c PACKAGE.sha256` in `approval/` first. It wraps the native
    total (when the chain has native rows) and approves the contract for exactly each asset's total
    (USDT is approved for 0 first).
 2. Each signer compares the Safe transaction hash on the device with the one in `APPROVALS.md`,
@@ -89,6 +117,15 @@ Any account can deploy; the address and behaviour do not depend on it. The scrip
 chain, the deployer's code, the bytecode hash, the recomputed address, the runtime code left there,
 and every immutable. Publish the manifest, `claims.csv`, and `tree.txt` together with the deployment
 so anyone can recompute the root and the address.
+
+Where the packages live:
+
+- **Public.** The publication bundle goes to the public bucket `gs://harmony-bridge-claims/<run>/`
+  (`https://storage.googleapis.com/harmony-bridge-claims/<run>/`): each chain's `manifest.json`,
+  `claims.csv`, `tree.txt`, and `samples.json`, with `SHA256SUMS`.
+- **Private.** The whole run, including approval and release packages and the dry-run output kept as
+  evidence, goes to the private bucket `gs://harmony-migration/harmony-migration/bridge-claims/runs/<run>/`
+  with a SHA-256 index. The allocation run goes beside it under `artifacts/`.
 
 ## 6. Open
 

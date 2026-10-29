@@ -116,10 +116,22 @@ plan over it; finish it from the same file.
 ```sh
 set -a; . ../bridge/local/rpc.env; set +a
 python3 tools/release_plan.py --allocations-dir ../artifacts/<run>/allocations \
-  --output-dir runs/<run>/release
+  --claims-dir runs/<run> --replace
 ```
 
-`runs/<run>/release/` then holds, in the order to run them:
+The planner first checks that `runs/<run>` is the claim run these allocations fund:
+
+- it was built from them (summary, custody plan, and pools by SHA-256);
+- every ready contract's funder is the custody Safe;
+- the ONE contract approves exactly the stage-1 amount.
+
+It then reads every chain at one pinned block, which `RELEASE.md` and `release-plan.json` record,
+and checks that each block is unchanged before writing.
+
+The package is built in an empty staging directory and published only if all of this passes. An
+earlier `release/` moves to `runs/<run>/superseded/`, with `INVALIDATED.md` when the new build
+failed, so `release/` never holds files from an older or failed build. `PACKAGE.sha256` lists every
+file. `runs/<run>/release/` then holds, in the order to run them:
 
 | Step | Directory | Who |
 |---|---|---|
