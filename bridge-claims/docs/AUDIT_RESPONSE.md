@@ -11,8 +11,8 @@ under BC-H02 and has a new root and address.
 | BC-H01 | High | Fixed: both tools recompute the spender from the bytecode and check code hashes |
 | BC-H02 | High | Resolved: eight of the ten payees are validator keys (no issue); the other two are Harmony contracts and are now held, with a new Ethereum list |
 | BC-M01 | Medium | Fixed: the deployment is a plain call to the canonical deployer |
-| BC-M02 | Medium | Fixed: the approval tool fails closed; the team must add the owner roster |
-| BC-M03 | Medium | Fixed: the release planner derives and verifies the recipient |
+| BC-M02 | Medium | Fixed in two rounds: the approval tool fails closed, and a failed refresh leaves nothing signable; the rejected files are quarantined. The team must add the owner roster |
+| BC-M03 | Medium | Fixed in two rounds: the release planner derives and verifies the recipient, binds it to the claim run's manifests, reads each chain at one pinned block, and publishes only whole packages |
 
 ## Where the process stood
 
@@ -243,13 +243,124 @@ The allocation run's `custody-plan.json` is out of date on this point: it names 
 Chain custody multisig and none on the L2s. The config names the same custody Safe on all five
 chains, matching the five manifests.
 
+## Remediation review
+
+The remediation review (hiddenstate.xyz, 28 October 2026, commit `91f408b`) verified BC-H01, BC-H02,
+and BC-M01 and left BC-M02 and BC-M03 partly open. Both are now addressed.
+
+### BC-M02: a failed refresh leaves nothing signable
+
+- **Packages.** `approve_claims.py` no longer writes beside the manifest. Each contract's files form
+  one package, `<label>/approval/` (drafts: `<label>/approval-draft/`). The package is built in an
+  empty staging directory beside it and sealed with `PACKAGE.sha256` (`tools/package.py`).
+- **Publication.** Every contract of a run must pass before any is published. Publishing moves an
+  earlier package to `<label>/superseded/<name>-<UTC time>/`. A failed refresh publishes nothing and
+  moves the earlier package there with `INVALIDATED.md`, which holds the failure. So `approval/` only
+  ever holds the latest package that passed every check, and after a failed refresh there is nothing
+  to sign.
+- **Files from earlier versions.** Approval files written beside a manifest stop the tool until they
+  are quarantined. `tools/quarantine.py` is a separate, explicit step with `--dry-run`. It moves the
+  files to `<run>/quarantine/<UTC time>/` under their relative paths and records each file's SHA-256
+  in `QUARANTINE.md`. Nothing is deleted.
+- **Tests:**
+  - the auditor's PoC as a regression: a package is built, funding then fails under `--replace`,
+    `approval/` is gone, and the old files sit under `superseded/` with `INVALIDATED.md`;
+  - a run where one of two contracts fails publishes neither;
+  - files from earlier versions stop signable runs;
+  - an existing package needs `--replace`;
+  - quarantine's selection and hash record.
+- **Done.** `runs/bridge-allocations-20261018/` is quarantined in `quarantine/20261029T035952Z/`. That
+  covers the four unchanged chains' old approval files, the whole rejected Ethereum package, and the
+  run's three release directories: the stale package, the executed 22 October package, and the
+  superseded cross-chain plan. The report's identification hashes match the quarantined copies.
+  `SUPERSEDED.md` at the run's root points to the canonical run.
+- **Owner roster.** The team confirmed the custody Safe's four current owners as the roster on 28
+  October. They are recorded as `custody_requirements.owners` in the bridge config. With the roster in
+  place, signable approval packages for BSC, Arbitrum, Base, and Linea passed every chain check and
+  were published at each Safe's nonce 1. Ethereum fails only its ONE funding check and waits for ONE
+  stage 1.
+
+### BC-M03: release bound to the claim run, read at pinned blocks, and published whole
+
+1. **Manifest binding.** `--claims-dir` is required. Before any chain read, the planner checks:
+   - the claim run was built from these allocations: the allocation summary and custody plan match the
+     SHA-256 the run recorded, and `pools.csv` matches the allocation summary;
+   - every chain of the custody plan has a ready contract;
+   - every ready manifest's funder is the custody Safe, which catches a `build_claims.py --funder`
+     override;
+   - the ONE contract approves exactly the claimable ONE that stage 1 transfers.
+
+   The manifests' SHA-256 are recorded in `release-plan.json`.
+2. **Pinned reads.** Every read of a chain goes through a `PinnedRpc` that pins one block on first use
+   and turns every `latest` into that block, including reads made through the approval tool's `Chain`.
+   Before publishing, each pinned block's hash is read again, and a change stops the build. The blocks
+   and hashes are in `release-plan.json` and `RELEASE.md`.
+3. **Package.** `<claims-dir>/release/` is built and published through `tools/package.py`. A failure
+   leaves no `release/` and moves the earlier one to `superseded/` with `INVALIDATED.md`. The old
+   stale-file cleanup is gone, since a package is always built in an empty directory.
+
+- **Tests:**
+  - a manifest funder that is not the custody Safe;
+  - a ONE approval that is not the claimable amount;
+  - another allocation summary;
+  - changed pools;
+  - a contract that is not ready;
+  - `latest` replaced by the pinned block, and a changed block hash stopping the build;
+  - the auditor's PoC through the real planner: a rejected ONE batch seeded at the output, no roster,
+    `--replace`. The batch moves to `superseded/` with `INVALIDATED.md` and no `release/` remains.
+- **Live check.** A dry run against the canonical run, with a test roster and then discarded:
+  - bound all five manifests, with hashes equal to the report's;
+  - read the five chains at pinned blocks, rechecked unchanged;
+  - found no escrow left to release;
+  - planned only ONE stage 1, at the Reserve Safe's nonce 61.
+- **Reconciliation.** `runs/bridge-allocations-20261028/RELEASE-RECONCILIATION.md` lists, for each
+  escrow of the custody plan, the on-chain transaction that released it: the asset's transfer to the
+  custody Safe, or a NativeOFT's burn. The window runs from the allocation state blocks to those pinned
+  blocks.
+  - Every non-empty escrow released exactly the locked balance of the executed 22 October plan.
+  - The one empty escrow had nothing to release.
+  - Every escrow holds nothing at the pinned blocks.
+
+### BC-H02 publication gate
+
+The rebuilt directories are missing from the checkout because `artifacts/` and `runs/` are
+gitignored. They are now designated canonical and stored in two places.
+
+- **Private, `gs://harmony-migration` (project `harmony-migration`).** The whole allocation run
+  `artifacts/bridge-allocations-20261018/` (inputs, the audited `allocations/`, and the canonical
+  `allocations-20261028/`), the canonical claim run `bridge-claims/runs/bridge-allocations-20261028/`,
+  and the superseded run with its quarantine, all under `harmony-migration/<repository path>`. The
+  SHA-256 index of every file is `gs://harmony-migration/MANIFEST-20261029-bridge-claims.tsv`, and
+  every object was checked against its local file after upload.
+- **Public, `gs://harmony-bridge-claims/bridge-allocations-20261028/`.** The publication bundle only:
+  per chain `manifest.json`, `claims.csv`, `tree.txt`, and `samples.json`, plus `CLAIM_CONTRACTS.md`,
+  `summary.json`, `README.md`, and `SHA256SUMS`. It is served at
+  `https://storage.googleapis.com/harmony-bridge-claims/bridge-allocations-20261028/`. Every file
+  downloaded anonymously matches `SHA256SUMS`, and the manifest, list, and tree hashes are the ones
+  this report commits to for all five chains.
+
+The rejected Ethereum package is quarantined. The agent machine's service account
+(`polymorpher-agent-1@derivative-bot`) reads both buckets and writes to the public one.
+
+### Deployment evidence and the release package
+
+- **Dry runs.** `runs/bridge-allocations-20261028/deploy-dry-run-20261029T044505Z/` holds a fresh
+  dry run of every chain under Forge 1.6.0-nightly and 1.8.1: the redacted output, the broadcast
+  record, the manifest hash, and the source and script hashes. All ten land on the committed address
+  with the committed runtime hash. A copy is in the private bucket.
+- **Release package.** `runs/bridge-allocations-20261028/release/` was built with the roster, bound
+  to the canonical run, and read at pinned blocks. It holds only ONE stage 1, from the Reserve Safe at
+  nonce 61, for exactly the claimable ONE.
+
 ## Remaining before signing
 
-1. Have the auditor re-verify the new Ethereum artifacts (table under BC-H02).
-2. Add the four custody Safe owners to `custody_requirements.owners` in `bridge/local/config.json`,
-   from a source independent of the chain.
-3. Rebuild `0-one-reserve/` from the new allocations (the Reserve Safe is now at nonce 61; the amount
-   is the new claimable ONE) and execute it:
-   `python3 tools/release_plan.py --allocations-dir ../artifacts/bridge-allocations-20261018/allocations-20261028 --output-dir runs/bridge-allocations-20261028/release`.
-4. Run `tools/approve_claims.py --claims-dir runs/bridge-allocations-20261028 --rpc --replace` per chain
-   right before signing, deploy from the same run, and open as in `RUNBOOK.md` §4 to §6.
+1. Have the auditor re-verify the published Ethereum artifacts against the committed hashes.
+2. Sign and execute ONE stage 1 from `runs/bridge-allocations-20261028/release/`, rebuilding it first
+   if the Reserve Safe's nonce has moved:
+   `python3 tools/release_plan.py --allocations-dir ../artifacts/bridge-allocations-20261018/allocations-20261028 --claims-dir runs/bridge-allocations-20261028 --replace`.
+3. Right before signing, refresh each chain's approval package (Ethereum once ONE stage 1 has
+   executed):
+   `tools/approve_claims.py --claims-dir runs/bridge-allocations-20261028 --labels <label> --rpc --replace`.
+   Sign from `<label>/approval/` after independently decoding every call and Safe hash.
+4. Deploy from the same run, verify code and immutables on real nodes, and open as in `RUNBOOK.md`
+   §5 to §6.
