@@ -39,7 +39,7 @@ Each pool in `routes.json` has:
 | `chains.<chain>.custody_multisig` | where escrowed collateral on that chain moves; `null` until one exists |
 | `chains.<chain>.rpc_settings` | optional `workers`, `batch_size`, `min_interval` for slow providers, and `log_range` (blocks per `eth_getLogs` when reading trusted-remote history) |
 | `chains.<chain>.holder_scan` | optional `range_size` and `workers` for `token-holders` |
-| `custody_requirements` | owner count and threshold every custody Safe must have |
+| `custody_requirements` | owner count and threshold every custody Safe must have, and `owners`: the custody Safe's owner addresses, confirmed out of band (the claim approval and release tools stop without it rather than trusting the owners a Safe reports) |
 | `one_claims.claim_token` | Ethereum ERC-20 ONE paid to bridged-ONE holders |
 | `one_claims.reserve_safe` | supply reserve Safe that funds the ONE claims |
 | `one_claims.custody_multisig` | ONE custody; defaults to the claim chain's custody multisig |

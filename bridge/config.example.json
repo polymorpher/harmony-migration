@@ -47,7 +47,8 @@
   },
   "custody_requirements": {
     "owner_count": 4,
-    "threshold": 2
+    "threshold": 2,
+    "owners": []
   },
   "one_claims": {
     "claim_chain": "ethereum",
