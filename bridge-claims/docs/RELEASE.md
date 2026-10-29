@@ -196,8 +196,8 @@ step.
     Safe transaction hash at the Safe's live nonce, and runs through the real Safe;
   - each EOA file is sent by its owner, one transaction at a time.
 
-  Every escrow must end empty and the Safe must receive the locked total of each asset (less
-  PAXG's transfer fee). The local path must advance by one nonce, every setting must read as
+  Every escrow must end empty and the Safe must receive the locked total of each asset (less any
+  transfer fee a token charges). The local path must advance by one nonce, every setting must read as
   before (both paths), every transaction must stay under the gas cap, and every approval must be
   funded. All 49 escrows on the five chains pass.
 

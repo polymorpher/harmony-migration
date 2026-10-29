@@ -75,7 +75,7 @@ contract FalseToken is MockERC20 {
     }
 }
 
-/// @notice Token that keeps a 1% fee on every transfer (like PAXG's transfer fee).
+/// @notice Token that keeps a 1% fee on every transfer, the behaviour of a fee-on-transfer token.
 contract FeeToken is MockERC20 {
     address public constant FEE_SINK = address(0xFEE);
 

@@ -66,6 +66,10 @@ always go to the row's account: a submitter can only choose when a row is paid.
 - Rows are sorted by (account, token) and numbered from 0. The index is part of the leaf and of
   the paid bitmap, so every row pays once.
 
+OpenZeppelin's `StandardMerkleTree.verify` accepts these proofs, but `StandardMerkleTree.of()`
+builds a different tree from the same leaves. Anyone recomputing the root must build it as above,
+sorted pairs with the unpaired node carried up, and not with `of()`.
+
 `tools/claim_tree.py` builds the tree, `test/lib/ClaimTree.sol` is the Solidity reference, and
 `test/TreeFixture.t.sol` pays every row of a list built in Python against the compiled contract.
 The builder also recomputes a sample of leaves and proofs on every run, and requires each asset's
@@ -83,10 +87,12 @@ is set before any external call, so a re-entering account cannot be paid twice.
 
 - Tokens that return nothing (Ethereum USDT) are accepted; `false`, a revert, or an address without
   code fail the claim and leave the row unpaid.
-- Tokens that refuse to change a nonzero approval (Ethereum USDT) get an approval of 0 first in the
-  batch; `chains.json` lists them.
-- Fee-on-transfer tokens (PAXG) deliver the row less the token's fee; the Safe's own transfer from
-  the escrow also pays a fee, which the pool's retained collateral covers.
+- Some tokens refuse to change one nonzero approval into another (on Ethereum USDT, CRV, and AAG).
+  The approval batch approves 0 first for every token whose live allowance is nonzero, and every
+  listed token accepts that; `chains.json` lists the known ones for batches built without chain reads.
+- A fee-on-transfer token delivers the row less the token's fee. PAXG has charged one, but at the
+  time of writing it charges none: on an Ethereum fork in October 2026, a transfer from the custody
+  Safe arrived in full. A fee introduced later would make its rows deliver less.
 - Tokens with transfer hooks (FXS vote checkpoints) work with real balances; the fork test moves
   the real escrow balances to the Safe for that reason.
 - A blacklisted or paused token makes its claims revert until the issuer allows transfers again;
@@ -108,7 +114,10 @@ does not use).
 A list cannot change. To correct rows of one asset: set that token's approval to 0 on the old
 contract, build a new list for that asset that leaves out or adjusts the rows already paid
 (`claimedBitmap` gives them), deploy it, and approve it. Other assets keep paying from the old
-contract.
+contract. Two details matter:
+
+- Read `claimedBitmap` only once the revocation is mined; before that, rows can still be paid.
+- Leave out paid rows by account and token, not by index: the new list numbers its rows afresh.
 
 ## Verification
 
@@ -121,5 +130,12 @@ contract.
   manifest address, the real escrow balances (and the reserve's ONE) are moved to the Safe, the
   Safe's approvals are made, and the first row of every asset is claimed with the real token.
 
-A single-row claim costs about 50,000 gas of execution on top of the base transaction cost and its
-proof's calldata; deployment costs about 1.6 million gas.
+A single-row claim costs roughly 76,000 to 114,000 gas of execution, depending on the token and the
+proof's depth, on top of the base transaction cost and the proof's calldata. Deployment uses about
+1.2 million gas; Forge's dry run reports about 1.6 million because it adds a margin.
+
+A native row to an account whose `receive()` burns all the gas it is given and then fails needs
+about 3.6 million call gas to succeed. The coin send gets all but 1/64 of the gas, and the
+wrapped-token fallback must run on what is left. With less gas the whole transaction reverts and the
+row stays unpaid, so the cost falls on whoever submits it. A relayer paying other people's rows
+should estimate gas per row, cap it, and skip rows whose recipient reverts.
