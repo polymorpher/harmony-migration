@@ -8,8 +8,8 @@ manifest:
 
 - `safe-approve.json`: a Transaction Builder batch for the funder Safe. It wraps the native
   total (WETH/WBNB `deposit`) when the list has native rows, then approves the contract for
-  exactly each asset's total. Tokens that refuse to change a nonzero approval (Ethereum USDT)
-  are first approved for 0.
+  exactly each asset's total. A token that already has a nonzero approval is first approved
+  for 0.
 - `safe-revoke.json`: approves 0 for every asset, which stops all claims at once.
 - `approvals.json` and `APPROVALS.md`: every call with its decoded arguments, the single Safe
   transaction the batch becomes (MultiSendCallOnly, or a direct call for one), and the domain,
@@ -17,8 +17,9 @@ manifest:
 
 The spender is not read from the manifest: the tool recomputes it as the CREATE2 address of the
 compiled creation code (`forge build`) and the manifest's constructor arguments through the
-canonical deployer and salt in `chains.json`, and stops when the manifest disagrees. Tokens that
-need the reset come from `chains.json`.
+canonical deployer and salt in `chains.json`, and stops when the manifest disagrees. A token whose
+live allowance is nonzero is approved for 0 first (several, like USDT, refuse a change between two
+nonzero approvals); without `--rpc` the tokens listed in `chains.json` get that reset.
 
 With `--rpc` (chain RPC URLs in the environment, see bridge/README.md) it reads the chain at one
 pinned block: the funder is an unmodified Safe 1.3.0 (proxy code, singleton, fallback handler, no
@@ -314,6 +315,19 @@ def decode_modules(raw):
     return ["0x" + data[at + 44 + 32 * i:at + 64 + 32 * i].hex() for i in range(count)]
 
 
+def token_symbol(raw):
+    """`symbol()` as text: an ABI string, or the bytes32 a few older tokens return."""
+    if not raw or raw == "0x":
+        return None
+    data = ct.unhex(raw)
+    try:
+        if len(data) == 32:
+            return data.rstrip(b"\x00").decode("utf-8")
+        return lib.crl.decode_string(raw)
+    except (UnicodeDecodeError, ValueError, IndexError):
+        return None
+
+
 def read_safe(chain, address):
     """What identifies the Safe at `address`: its code, singleton, version, modules, guard, fallback
     handler, owners, threshold, and nonce."""
@@ -426,10 +440,19 @@ def preflight(chain, manifest, bound, approvals, wrapped, requirements, nonce=No
         token = a["token"]
         balance = chain.erc20(token, "balanceOf(address)", lib.address_word(funder))
         allowance = chain.erc20(token, "allowance(address,address)", lib.address_word(funder), lib.address_word(spender))
+        decimals = chain.erc20(token, "decimals()")
+        symbol = token_symbol(chain.call(token, "0x" + common.selector("symbol()").hex()))
         entry = {
             "balance_raw": None if balance is None else str(balance),
             "allowance_raw": None if allowance is None else str(allowance),
+            "decimals": decimals,
+            "symbol": symbol,
         }
+        check(f"{a['symbol']} decimals", decimals == int(a["decimals"]),
+              f"`{token}` reports {decimals}, the manifest {a['decimals']}"
+              + ("" if symbol == a["symbol"] else f"; its symbol() is `{symbol}`, the label {a['symbol']}"))
+        check(f"{a['symbol']} allowance readable", allowance is not None,
+              f"current allowance {allowance}" if allowance is not None else "allowance() failed")
         need = int(a["amount_raw"])
         if token == wrapped:
             native = chain.native_balance(funder)
@@ -512,7 +535,9 @@ def build(args, config, chains, manifest, out_dir, chain, artifact, package_dir)
     for a in approvals:
         token = a["token"]
         current = int((state.get("tokens", {}).get(token) or {}).get("allowance_raw") or 0)
-        if token in reset and (chain is None or current != 0):
+        # USDT, CRV, AAG and others revert on a change between two nonzero approvals; every listed
+        # token accepts X to 0 to X, so any nonzero allowance is reset first.
+        if current != 0 or (chain is None and token in reset):
             calls.append(approve_call(token, spender, 0, f"{a['symbol']} only accepts a new approval from 0"))
         calls.append(approve_call(token, spender, int(a["amount_raw"]), f"{a['symbol']} total of the rows"))
     revoke = [approve_call(a["token"], spender, 0, f"stop {a['symbol']} claims") for a in approvals]
@@ -565,12 +590,14 @@ def build(args, config, chains, manifest, out_dir, chain, artifact, package_dir)
     return record
 
 
-def describe(call, approvals_by_token, wrapped):
+def describe(call, approvals_by_token, symbols):
     if call["method"] == "deposit()":
         return f"wrap {lib.format_units(call['value'], 18)} native coin into `{call['to']}`"
     a = approvals_by_token[call["to"]]
     amount = int(call["args"]["value"])
-    return f"approve {lib.format_units(amount, a['decimals'])} {a['symbol']} (`{call['to']}`)"
+    onchain = symbols.get(call["to"])
+    label = a["symbol"] if onchain in (None, a["symbol"]) else f"{a['symbol']} (its `symbol()`: `{onchain}`)"
+    return f"approve {lib.format_units(amount, a['decimals'])} {label} (`{call['to']}`)"
 
 
 def signing_sheet(manifest, record):
@@ -626,12 +653,16 @@ def signing_sheet(manifest, record):
         "",
         "## Approve batch (`safe-approve.json`)",
         "",
+        "A token is identified by its address and decimals, both checked on chain. Where the bridge",
+        "registry's label differs from the token's own `symbol()`, both are shown.",
+        "",
         "| # | Call | To | Value | Call data |",
         "|---:|---|---|---:|---|",
     ]
+    symbols = {token: entry.get("symbol") for token, entry in (pre["state"].get("tokens") or {}).items()}
     for i, c in enumerate(record["approve"]["calls"], start=1):
         lines.append(
-            f"| {i} | {describe(c | {'value': int(c['value'])}, by_token, manifest['wrapped_native'])} | "
+            f"| {i} | {describe(c | {'value': int(c['value'])}, by_token, symbols)} | "
             f"`{c['to']}` | {c['value']} | `{c['data']}` |"
         )
     lines += ["", *sheet_hashes(record["approve"]["safe_transaction"]), ""]
