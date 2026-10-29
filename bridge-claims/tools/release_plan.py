@@ -418,6 +418,45 @@ def release_calls(e, safe):
     return calls
 
 
+def custody_safe(config, custody_plan, requested=None):
+    """The recipient of every release and of the ONE funding: the one custody multisig the bridge
+    config names on every chain of the plan, which is also the claim contracts' funder. Stops when a
+    chain names none, when they disagree, or when `requested` (`--safe`) is another address."""
+    named = {chain: config["chains"][chain].get("custody_multisig") for chain in custody_plan["chains"]}
+    missing = sorted(chain for chain, address in named.items() if not address)
+    if missing:
+        raise SystemExit(f"the bridge config names no custody_multisig for {', '.join(missing)}")
+    safes = {lib.address(address) for address in named.values()}
+    if lib.one_custody(config):
+        safes.add(lib.address(lib.one_custody(config)))
+    if len(safes) != 1:
+        raise SystemExit(f"the bridge config names more than one custody multisig: {', '.join(sorted(safes))}")
+    safe = safes.pop()
+    if requested and lib.address(requested) != safe:
+        raise SystemExit(f"--safe {requested} is not the custody multisig {safe} the bridge config names")
+    return safe
+
+
+def custody_problems(chain, info, identity, roster, threshold):
+    """Sets `info["status"]` (ready, or needs_owner_setup for a 1-of-1 Safe whose owner is in the
+    roster) and returns why the custody Safe on `chain` cannot receive the release, if it cannot."""
+    if not info.get("is_safe"):
+        info["status"] = "not_a_safe"
+        return [f"{chain}: the custody multisig is not a Safe"]
+    problems = [f"{chain}: {name} ({detail})"
+                for name, ok, detail in ac.safe_identity_checks(identity, "custody Safe") if not ok]
+    owners = [lib.address(o) for o in info["owners"]]
+    if sorted(owners) == sorted(roster) and info["threshold"] == threshold:
+        info["status"] = "ready"
+    elif len(owners) == 1 and owners[0] in set(roster) and info["threshold"] == 1:
+        info["status"] = "needs_owner_setup"
+    else:
+        info["status"] = "unexpected_owners"
+        problems.append(f"{chain}: custody Safe owners {', '.join(owners)} with threshold {info['threshold']} are not "
+                        "the configured roster")
+    return problems
+
+
 def plan(args, config, custody_plan, safe):
     rpcs = {}
 
@@ -426,32 +465,27 @@ def plan(args, config, custody_plan, safe):
             rpcs[chain] = rpc_for(config, chain)
         return rpcs[chain]
 
-    # Inspect the custody Safe across all five chains and build owner-setup batches where still 1-of-1.
+    # Inspect the custody Safe across all five chains: an unmodified Safe 1.3.0 owned by the configured
+    # roster, or 1-of-1 by one of them, which gets an owner-setup batch. Anything else stops the plan.
     requirements = config.get("custody_requirements") or {"owner_count": 4, "threshold": 2}
     req_count = int(requirements["owner_count"])
     req_threshold = int(requirements["threshold"])
-    custody_safes = {}
+    target_owners = [lib.address(o) for o in requirements.get("owners") or []]
+    if len(target_owners) != req_count:
+        raise SystemExit(f"custody_requirements.owners in the bridge config must list the {req_count} custody Safe "
+                         "owners, confirmed out of band")
+    custody_safes, problems = {}, []
     for chain in custody_plan["chains"]:
-        custody_safes[chain] = read_safe_info(rpc(chain), safe)
-
-    eth_info = custody_safes.get("ethereum") or {}
-    target_owners = (
-        eth_info.get("owners")
-        if len(eth_info.get("owners") or []) == req_count and eth_info.get("threshold") == req_threshold
-        else requirements.get("owners") or []
-    )
-    owner_setup = {}
-    for chain, info in custody_safes.items():
-        if not info.get("is_safe") or not target_owners:
-            continue
-        cur = info["owners"]
-        if sorted(cur) == sorted(target_owners) and info["threshold"] == req_threshold:
-            info["status"] = "ready"
-        elif len(cur) == 1 and cur[0] in set(target_owners) and info["threshold"] == 1:
-            info["status"] = "needs_owner_setup"
-            owner_setup[chain] = owner_setup_calls(safe, cur, target_owners, req_threshold)
-        else:
-            info["status"] = "unexpected_owners"
+        info = read_safe_info(rpc(chain), safe)
+        identity = ac.read_safe(ac.Chain(rpc(chain)), safe) if info.get("is_safe") else None
+        problems += custody_problems(chain, info, identity, target_owners, req_threshold)
+        custody_safes[chain] = info
+    if problems:
+        raise SystemExit("custody Safe checks failed; nothing written:\n  " + "\n  ".join(problems))
+    owner_setup = {
+        chain: owner_setup_calls(safe, [lib.address(o) for o in info["owners"]], target_owners, req_threshold)
+        for chain, info in custody_safes.items() if info["status"] == "needs_owner_setup"
+    }
 
     # Inspect the ONE Reserve Safe on Ethereum and build the ONE transfer batches: stage 1 moves the
     # claimable total; stage 2 (the held and retained rest) is built only when asked for.
@@ -961,8 +995,8 @@ def main():
     parser.add_argument("--config", default=str(ct.REPO / "bridge" / "local" / "config.json"))
     parser.add_argument("--allocations-dir", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--safe", default="0x19565f4771843467aad632d6b56c75396785b06c",
-                        help="custody Safe: the recipient on every chain and the sender named in each packet")
+    parser.add_argument("--safe", help="custody Safe (the recipient on every chain and the sender named in each "
+                        "packet); must be the custody_multisig the bridge config names on every chain, the default")
     parser.add_argument("--skip", nargs="*", default=[], help="escrow addresses to leave out")
     parser.add_argument("--max-escrows-per-batch", type=int, default=DEFAULT_MAX_ESCROWS_PER_BATCH,
                         help="escrows per Safe release batch (keeps each under the 16,777,216 gas cap)")
@@ -976,8 +1010,8 @@ def main():
 
     routes = lib.load_routes(args.routes)
     config = lib.load_config(args.config, routes)
-    safe = lib.address(args.safe)
     custody_plan = lib.load_json(os.path.join(args.allocations_dir, "custody-plan.json"))
+    safe = custody_safe(config, custody_plan, args.safe)
     escrows, skipped, releases, custody_safes, owner_setup, one_funding, safe_states = plan(
         args, config, custody_plan, safe)
 
