@@ -179,7 +179,7 @@ bridge-claims-release: check-python
 	cd bridge-claims && python3 tools/release_plan.py \
 		--config ../$(BRIDGE_CONFIG) \
 		--allocations-dir $(abspath $(BRIDGE_OUT))/allocations \
-		--output-dir runs/$(BRIDGE_CLAIMS_RUN)/release \
+		--claims-dir runs/$(BRIDGE_CLAIMS_RUN) \
 		$(if $(BRIDGE_RELEASE_SKIP),--skip $(BRIDGE_RELEASE_SKIP)) \
 		$(if $(BRIDGE_ONE_REST),--one-rest $(BRIDGE_ONE_REST)) \
 		--replace

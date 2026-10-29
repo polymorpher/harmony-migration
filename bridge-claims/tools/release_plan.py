@@ -2,7 +2,7 @@
 """Plan the release of the bridge collateral from the LayerZero v1 escrows to the custody Safe.
 
     python3 tools/release_plan.py --allocations-dir ../artifacts/<run>/allocations \\
-        --output-dir runs/<run>/release
+        --claims-dir runs/<run> --replace
 
 The escrows (ProxyOFT / NativeOFT) have no owner withdrawal: collateral leaves only when the
 escrow's LayerZero endpoint delivers a message from a trusted remote. The escrow's owner chooses
@@ -30,8 +30,16 @@ LayerZero verifier, executor, relayer, or fee:
 
 Safe-owned escrows get one Transaction Builder batch per chain and owner (atomic); EOA-owned escrows
 get raw calldata to send in order, and each key holder gets `handoff/<key>/` with their files,
-`tools/send_calldata.py`, and step-by-step instructions. Balances, configs, nonces, and Safe nonces
-are read live. The Harmony path (chain 116) is never touched. Nothing is sent.
+`tools/send_calldata.py`, and step-by-step instructions. The Harmony path (chain 116) is never
+touched. Nothing is sent.
+
+Before reading any chain, the planner checks the claim run (`--claims-dir`): it was built from these
+allocations, every ready contract's funder is the custody Safe, and the ONE contract approves exactly
+the claimable ONE that stage 1 transfers. Balances, configs, nonces, and Safe nonces are then read
+live, each chain at one pinned block whose hash is checked again before the package is written. The
+package (`<claims-dir>/release/` by default) is built in an empty staging directory and published
+whole (`tools/package.py`): a failed build publishes nothing and moves an earlier package to
+`superseded/` with `INVALIDATED.md`.
 
 `test/EscrowRelease.t.sol` replays every generated file on a fork of each chain.
 """
@@ -40,7 +48,6 @@ import argparse
 import csv
 import json
 import os
-import re
 import shutil
 import sys
 import time
@@ -48,6 +55,7 @@ from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import claim_tree as ct  # noqa: E402
+import package  # noqa: E402
 import bridge_lib as lib  # noqa: E402  (toolkit/scripts/bridge, on sys.path through claim_tree)
 import approve_claims as ac  # noqa: E402
 import safe_batch  # noqa: E402  (airdrop/tools, on sys.path through claim_tree)
@@ -182,8 +190,49 @@ def call_data(signature, types, values):
 # ------------------------------------------------------------------ chain reads
 
 
-def rpc_for(config, chain):
-    return lib.chain_rpc(config, chain)
+class PinnedRpc:
+    """A chain's RPC whose reads all come from the block it pins when created: every `"latest"` in a
+    request becomes that block. `recheck` stops when the block is no longer the canonical one."""
+
+    def __init__(self, rpc):
+        self.rpc = rpc
+        head = rpc.call("eth_getBlockByNumber", ["latest", False])
+        self.number, self.hash = int(head["number"], 16), head["hash"]
+        self.tag = hex(self.number)
+
+    def _pinned(self, params):
+        return [self.tag if p == "latest" else p for p in params]
+
+    def call(self, method, params):
+        return self.rpc.call(method, self._pinned(params))
+
+    def call_soft(self, method, params):
+        return self.rpc.call_soft(method, self._pinned(params))
+
+    def recheck(self, chain):
+        now = self.rpc.call("eth_getBlockByNumber", [self.tag, False])["hash"]
+        if now != self.hash:
+            raise SystemExit(f"{chain}: block {self.number} is now {now}, not {self.hash}; the chain reorganized "
+                             "while planning")
+
+
+class Reads:
+    """One pinned RPC per chain, created on first use."""
+
+    def __init__(self, config, connect=lib.chain_rpc):
+        self.config, self.connect, self.rpcs = config, connect, {}
+
+    def __call__(self, chain):
+        if chain not in self.rpcs:
+            self.rpcs[chain] = PinnedRpc(self.connect(self.config, chain))
+        return self.rpcs[chain]
+
+    def blocks(self):
+        return {chain: {"number": r.number, "hash": r.hash} for chain, r in sorted(self.rpcs.items())}
+
+    def recheck(self):
+        for chain, r in sorted(self.rpcs.items()):
+            r.recheck(chain)
 
 
 def eth_call(rpc, to, data):
@@ -457,14 +506,54 @@ def custody_problems(chain, info, identity, roster, threshold):
     return problems
 
 
-def plan(args, config, custody_plan, safe):
-    rpcs = {}
+def claim_run(claims_dir, allocations_dir, config, custody_plan, safe):
+    """The claim run this release funds, checked before anything is read from a chain: it was built
+    from these allocations (summary, custody plan, and pools by SHA-256), every chain of the custody
+    plan has a ready contract whose funder is `safe`, and the contract paying ONE approves exactly
+    the claimable ONE that stage 1 transfers. Returns what the plan records about the run."""
+    summary = lib.load_json(os.path.join(claims_dir, "summary.json"))
+    allocation = lib.load_json(os.path.join(allocations_dir, "summary.json"))
+    problems = []
 
-    def rpc(chain):
-        if chain not in rpcs:
-            rpcs[chain] = rpc_for(config, chain)
-        return rpcs[chain]
+    def need(ok, what):
+        if not ok:
+            problems.append(what)
 
+    def digest(name):
+        return lib.file_sha256(os.path.join(allocations_dir, name))
+
+    inputs = summary.get("inputs") or {}
+    need(inputs.get("summary.json") == digest("summary.json"), "the claim run was built from another allocation summary")
+    need(inputs.get("custody-plan.json") == digest("custody-plan.json")
+         == allocation["outputs"].get("custody-plan.json"), "the custody plan differs from the claim run's")
+    need(allocation["outputs"].get("pools.csv") == digest("pools.csv"), "pools.csv differs from the allocation summary")
+    manifests = {}
+    for contract in summary["contracts"]:
+        if contract["status"] != "ready":
+            continue
+        path = os.path.join(claims_dir, contract["label"], "manifest.json")
+        manifest = lib.load_json(path)
+        manifests[contract["label"]] = (manifest, lib.file_sha256(path))
+        need(lib.address(manifest["funder"]) == safe,
+             f"{contract['label']}: the manifest's funder {manifest['funder']} is not the custody Safe {safe}")
+    for chain in custody_plan["chains"]:
+        need(any(m["chain"] == chain for m, _ in manifests.values()), f"{chain}: no ready claim contract")
+    funding = custody_plan.get("one_funding")
+    if funding and int(funding.get("amount_raw") or 0) > 0:
+        token = lib.address(config["one_claims"]["claim_token"])
+        claimable = sum(p["claimable_raw"] for p in one_split(allocations_dir, funding).values())
+        approved = [int(a["amount_raw"]) for m, _ in manifests.values() if m["chain"] == funding["chain"]
+                    for a in m["approvals"] if lib.address(a["token"]) == token]
+        need(approved == [claimable], f"the ONE approvals {approved} are not the claimable ONE {claimable}")
+    if problems:
+        raise SystemExit(f"{claims_dir} is not the claim run these allocations fund:\n  " + "\n  ".join(problems))
+    return {
+        "summary_sha256": lib.file_sha256(os.path.join(claims_dir, "summary.json")),
+        "manifests_sha256": {label: sha for label, (_, sha) in sorted(manifests.items())},
+    }
+
+
+def plan(args, config, custody_plan, safe, rpc):
     # Inspect the custody Safe across all five chains: an unmodified Safe 1.3.0 owned by the configured
     # roster, or 1-of-1 by one of them, which gets an owner-setup batch. Anything else stops the plan.
     requirements = config.get("custody_requirements") or {"owner_count": 4, "threshold": 2}
@@ -724,22 +813,21 @@ def handoff_readme(owner, files, by_escrow, config, safe, hashes, gas, built):
     return "\n".join(lines) + "\n"
 
 
-def write_handoff(out, owner, files, by_escrow, config, safe, replace):
+def write_handoff(out, owner, files, by_escrow, config, safe, rpc):
     """`handoff/<owner>/`: everything one key holder needs, in one folder they can be sent."""
     folder = os.path.join(out, "handoff", owner[:10])
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "send_calldata.py")
     sources = [(os.path.join(out, b["file"]), os.path.basename(b["file"])) for b in files]
     sources.append((script, "send_calldata.py"))
     readme = os.path.join(folder, "README.md")
-    lib.prepare_outputs([os.path.join(folder, name) for _, name in sources] + [readme], replace)
+    lib.prepare_outputs([os.path.join(folder, name) for _, name in sources] + [readme], False)
     for source, name in sources:
         shutil.copyfile(source, os.path.join(folder, name))
     hashes = {name: lib.file_sha256(os.path.join(folder, name)) for _, name in sources}
     gas = {}
     for b in files:
-        rpc = rpc_for(config, b["chain"])
-        gas[b["chain"]] = (int(rpc.call("eth_gasPrice", []), 16),
-                           int(rpc.call("eth_getBalance", [owner, "latest"]), 16))
+        gas[b["chain"]] = (int(rpc(b["chain"]).call("eth_gasPrice", []), 16),
+                           int(rpc(b["chain"]).call("eth_getBalance", [owner, "latest"]), 16))
     built = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
     lib.write_text(readme, handoff_readme(owner, files, by_escrow, config, safe, hashes, gas, built))
     return [os.path.relpath(p, out) for p in [os.path.join(folder, name) for _, name in sources] + [readme]]
@@ -934,7 +1022,7 @@ def signers_readme(safe, batches, by_escrow, safe_states, hashes, gas, built, de
     return "\n".join(lines) + "\n"
 
 
-def write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path, descriptions, replace):
+def write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path, descriptions, rpc):
     """`handoff/safe-signers/`: every Safe batch, the plan, the design note, and a signing guide."""
     folder = os.path.join(out, "handoff", "safe-signers")
     design = os.path.join(ct.PROJECT, "docs", "RELEASE.md")
@@ -942,11 +1030,11 @@ def write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path
     sources += [(sheet_path, "PLAN.md"), (design, "DESIGN.md")]
     readme = os.path.join(folder, "README.md")
     targets = [os.path.join(folder, name) for _, name in sources] + [readme]
-    lib.prepare_outputs(targets, replace)
+    lib.prepare_outputs(targets, False)
     for source, name in sources:
         shutil.copyfile(source, os.path.join(folder, name))
     hashes = {name: lib.file_sha256(os.path.join(folder, name)) for _, name in sources[:-2]}
-    gas = {b["chain"]: int(rpc_for(config, b["chain"]).call("eth_gasPrice", []), 16)
+    gas = {b["chain"]: int(rpc(b["chain"]).call("eth_gasPrice", []), 16)
            for b in batches if b["sender_is_safe"]}
     release = example_release(batches, safe)
     release_txs = []
@@ -957,28 +1045,6 @@ def write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path
     lib.write_text(readme, signers_readme(safe, batches, by_escrow, safe_states, hashes, gas, built, descriptions,
                                           release, release_txs))
     return [os.path.relpath(p, out) for p in targets]
-
-
-GENERATED = re.compile(
-    r"^(?:handoff/[^/]+/)?[0-9]-[a-z-]+/[^/]+-(?:safe|eoa)\.json$"
-    r"|^handoff/[^/]+/(?:[^/]+-eoa\.json|README\.md|PLAN\.md|DESIGN\.md|send_calldata\.py)$"
-)
-
-
-def remove_stale(out, written):
-    """Delete files an earlier build generated that this plan no longer contains (an escrow released
-    since, a Safe already set up), so no package offers them again. Logs and other files stay."""
-    keep, removed = set(written), []
-    for root, _, names in os.walk(out):
-        for name in names:
-            rel = os.path.relpath(os.path.join(root, name), out)
-            if rel not in keep and GENERATED.match(rel):
-                os.remove(os.path.join(root, name))
-                removed.append(rel)
-    for root, dirs, names in sorted(os.walk(out), key=lambda w: -w[0].count(os.sep)):
-        if root != out and not dirs and not names:
-            os.rmdir(root)
-    return sorted(removed)
 
 
 def calldata_record(chain, chain_id, owner, calls):
@@ -994,7 +1060,8 @@ def main():
     parser.add_argument("--routes", default=str(ct.REPO / "bridge" / "routes.json"))
     parser.add_argument("--config", default=str(ct.REPO / "bridge" / "local" / "config.json"))
     parser.add_argument("--allocations-dir", required=True)
-    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--claims-dir", required=True, help="the claim run (tools/build_claims.py) this release funds")
+    parser.add_argument("--output-dir", help="the release package (default: <claims-dir>/release)")
     parser.add_argument("--safe", help="custody Safe (the recipient on every chain and the sender named in each "
                         "packet); must be the custody_multisig the bridge config names on every chain, the default")
     parser.add_argument("--skip", nargs="*", default=[], help="escrow addresses to leave out")
@@ -1010,12 +1077,26 @@ def main():
 
     routes = lib.load_routes(args.routes)
     config = lib.load_config(args.config, routes)
-    custody_plan = lib.load_json(os.path.join(args.allocations_dir, "custody-plan.json"))
-    safe = custody_safe(config, custody_plan, args.safe)
-    escrows, skipped, releases, custody_safes, owner_setup, one_funding, safe_states = plan(
-        args, config, custody_plan, safe)
+    target = args.output_dir or os.path.join(args.claims_dir, "release")
+    with package.staged([target], args.replace) as staging:
+        custody_plan = lib.load_json(os.path.join(args.allocations_dir, "custody-plan.json"))
+        safe = custody_safe(config, custody_plan, args.safe)
+        claims = claim_run(args.claims_dir, args.allocations_dir, config, custody_plan, safe)
+        rpc = Reads(config)
+        escrows, skipped, batches, written = write_release(
+            args, config, custody_plan, safe, claims, rpc, staging.dirs[target])
+        rpc.recheck()
+    eoa_txs = sum(b["calls"] for b in batches if b["step"] == "1-release" and not b["sender_is_safe"])
+    safe_batches = sum(1 for b in batches if b["step"] == "1-release" and b["sender_is_safe"])
+    print(f"{len(escrows)} escrows to release, {len(skipped)} skipped; wrote {len(written)} files in {target}, "
+          "read at " + ", ".join(f"{c} block {b['number']}" for c, b in rpc.blocks().items()))
+    print(f"  release: {safe_batches} Safe batches, {eoa_txs} EOA transactions; no LayerZero fees")
 
-    out = args.output_dir
+
+def write_release(args, config, custody_plan, safe, claims, rpc, out):
+    """Plan from the chains (`rpc`, pinned) and write the whole release package into `out`."""
+    escrows, skipped, releases, custody_safes, owner_setup, one_funding, safe_states = plan(
+        args, config, custody_plan, safe, rpc)
     written = []
     batches = []
     next_nonce = {
@@ -1031,7 +1112,7 @@ def main():
                   "calls": len(calls), "escrows": [e["escrow"] for e in released]}
         if is_safe_sender:
             path = os.path.join(out, step, f"{chain}-{sender[:10]}{suffix}-safe.json")
-            lib.prepare_outputs([path], args.replace)
+            lib.prepare_outputs([path], False)
             info = safe_states.get((chain, sender)) or {}
             version = info.get("version") or args.safe_version
             planned_nonce = next_nonce.get((chain, sender))
@@ -1051,7 +1132,7 @@ def main():
             }
         else:
             path = os.path.join(out, step, f"{chain}-{sender[:10]}-eoa.json")
-            lib.prepare_outputs([path], args.replace)
+            lib.prepare_outputs([path], False)
             lib.write_json(path, calldata_record(chain, chain_id, sender, calls))
         record["file"] = os.path.relpath(path, out)
         batches.append(record)
@@ -1068,16 +1149,16 @@ def main():
     by_escrow = {(e["chain"], e["escrow"]): e for e in escrows}
     for owner in sorted({b["sender"] for b in batches if not b["sender_is_safe"]}):
         files = [b for b in batches if b["sender"] == owner and not b["sender_is_safe"]]
-        written += write_handoff(out, owner, files, by_escrow, config, safe, args.replace)
+        written += write_handoff(out, owner, files, by_escrow, config, safe, rpc)
 
     summary_path = os.path.join(out, "release-plan.json")
     sheet_path = os.path.join(out, "RELEASE.md")
-    lib.prepare_outputs([summary_path, sheet_path], args.replace)
-    lib.write_text(sheet_path, sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batches))
+    lib.prepare_outputs([summary_path, sheet_path], False)
+    lib.write_text(sheet_path, sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batches,
+                                     rpc.blocks()))
     descriptions = {b["file"]: file_description(b, safe, by_escrow, custody_safes, owner_setup, one_funding)
                     for b in batches}
-    written += write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path, descriptions,
-                             args.replace)
+    written += write_signers(out, batches, by_escrow, safe_states, config, safe, sheet_path, descriptions, rpc)
     one_summary = (
         {k: v for k, v in one_funding.items() if k not in ("calls", "stage2_calls")}
         if one_funding else None
@@ -1087,6 +1168,8 @@ def main():
         "method": "local",
         "safe": safe,
         "built_at": int(time.time()),
+        "blocks": rpc.blocks(),
+        "claims_run": claims,
         "custody_safes": custody_safes,
         "one_funding": one_summary,
         "escrows": escrows,
@@ -1094,12 +1177,7 @@ def main():
         "batches": batches,
         "files": sorted(written),
     })
-    for rel in remove_stale(out, written):
-        print(f"  removed {rel}: not in this plan")
-    eoa_txs = sum(b["calls"] for b in batches if b["step"] == "1-release" and not b["sender_is_safe"])
-    safe_batches = sum(1 for b in batches if b["step"] == "1-release" and b["sender_is_safe"])
-    print(f"{len(escrows)} escrows to release, {len(skipped)} skipped; wrote {len(written)} files in {out}")
-    print(f"  release: {safe_batches} Safe batches, {eoa_txs} EOA transactions; no LayerZero fees")
+    return escrows, skipped, batches, written
 
 
 def units(raw, decimals, places=4):
@@ -1146,12 +1224,18 @@ def file_description(b, safe, by_escrow, custody_safes, owner_setup, one_funding
             f"sent one by one in file order, each under {EOA_TX_GAS:,} gas. Escrows: {assets}.")
 
 
-def sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batches):
+def sheet(safe, escrows, skipped, custody_safes, owner_setup, one_funding, batches, blocks):
     by_escrow = {(e["chain"], e["escrow"]): e for e in escrows}
     lines = [
         "# Release the bridge collateral to the custody Safe",
         "",
         f"Custody Safe (recipient on every chain): `{safe}`.",
+        "",
+        "Every chain was read at one block, checked again unchanged before this package was written:",
+        "",
+        "| Chain | Block | Block hash |",
+        "|---|---:|---|",
+        *[f"| {chain} | {b['number']:,} | `{b['hash']}` |" for chain, b in blocks.items()],
         "",
         "Every escrow is released on its own chain by its own owner. No message crosses chains, and no",
         "LayerZero verifier, executor, or fee is involved. Why this works, and what each call encodes, is",
