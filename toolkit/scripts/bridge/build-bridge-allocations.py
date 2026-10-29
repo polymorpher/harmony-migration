@@ -178,7 +178,20 @@ def status_for(account_class, holder_chain, claim_chain):
     return "held_unclassified", "account was not classified"
 
 
-def build_pool(pool, plan_pool, config, state, holders_dir, adjustments, classes,
+def contract_elsewhere(account, holder_chain, claim_chain, chain_classes):
+    """An account without code where it holds is taken as a key only when no other chain has a
+    contract at that address: a contract address has no key, so it is held as that contract would
+    be. Returns (status, reason), or None when the account stays claimable."""
+    for chain, other in sorted(chain_classes.get(account, {}).items()):
+        if chain == holder_chain or other in KEY_CONTROLLED:
+            continue
+        status, reason = status_for(other, chain, claim_chain)
+        if status != "claimable":
+            return status, f"{other} on {chain}, no code on {holder_chain}: {reason}"
+    return None
+
+
+def build_pool(pool, plan_pool, config, state, holders_dir, adjustments, classes, chain_classes,
                roles, exclusions, overrides, minimum):
     pid = pool["pool_id"]
     claim_chain, claim_token = lib.claim_target(pool, config)
@@ -199,6 +212,8 @@ def build_pool(pool, plan_pool, config, state, holders_dir, adjustments, classes
             account_class = "adjustment_target"
         payee = account
         status, reason = status_for(account_class, holder_chain, claim_chain)
+        if account_class in ("eoa", "adjustment_target"):
+            status, reason = contract_elsewhere(account, holder_chain, claim_chain, chain_classes) or (status, reason)
         if account in roles:
             status, reason = "excluded_system", roles[account]
         elif lib.reserved_address_reason(account):
@@ -515,6 +530,9 @@ def main():
         (row["chain"], lib.address(row["address"])): row["class"]
         for row in lib.read_csv(args.classes)
     }
+    chain_classes = {}
+    for (chain, account), account_class in classes.items():
+        chain_classes.setdefault(account, {})[chain] = account_class
     exclusions = {}
     if args.exclusions:
         for row in lib.read_csv(args.exclusions):
@@ -542,7 +560,7 @@ def main():
             raise ValueError(f"{pid}: message scan is not complete")
         summary, rows = build_pool(
             pool, plan_pool, config, state, args.holders_dir,
-            adjustments.get(pid, {}), classes, roles, exclusions, overrides,
+            adjustments.get(pid, {}), classes, chain_classes, roles, exclusions, overrides,
             minimum_by_pool.get(pid, minimum),
         )
         pools.append(summary)
