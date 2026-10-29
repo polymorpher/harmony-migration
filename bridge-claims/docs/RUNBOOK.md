@@ -98,9 +98,13 @@ Then:
 1. In the Safe web app, open Transaction Builder and load `approval/safe-approve.json`. Check
    `shasum -a 256 -c PACKAGE.sha256` in `approval/` first. It wraps the native
    total (when the chain has native rows) and approves the contract for exactly each asset's total
-   (USDT is approved for 0 first).
+   (a token with a nonzero allowance is approved for 0 first).
 2. Each signer compares the Safe transaction hash on the device with the one in `APPROVALS.md`,
    and checks the spender and constructor arguments listed there against the published manifest.
+   Hardware wallets cannot show the spender and amount inside a MultiSend batch; Ledger hides the
+   nonce, and Trezor shows hashes only. The sheet, rebuilt at the live nonce, is therefore the
+   reference. Compare its domain and message hashes with the device, and have a second person
+   recompute the Safe transaction hash independently.
 3. Two of the four owners sign; one executes.
 
 Approving before deployment is safe: the spender is the CREATE2 address of this exact list, and
@@ -118,6 +122,18 @@ chain, the deployer's code, the bytecode hash, the recomputed address, the runti
 and every immutable. Publish the manifest, `claims.csv`, and `tree.txt` together with the deployment
 so anyone can recompute the root and the address.
 
+Then verify the source on each chain's explorer, so payees can read the code. Use the exact
+settings:
+
+- Solidity 0.8.36, EVM version Cancun, optimizer enabled with 20,000 runs, legacy codegen (no
+  `viaIR`);
+- metadata `bytecodeHash` none and `appendCBOR` false, no libraries;
+- the six constructor arguments from the manifest's `constructor_args`.
+
+Etherscan-style explorers need the exact standard-JSON input (`forge verify-contract` with
+`--show-standard-json-input`). Sourcify cannot full-match a build without metadata. Verification
+changes nothing about the bytecode.
+
 Where the packages live:
 
 - **Public.** The publication bundle goes to the public bucket `gs://harmony-bridge-claims/<run>/`
@@ -131,7 +147,16 @@ Where the packages live:
 
 `available(token)` on the contract must equal each approval. Payees (or a relayer on their behalf)
 claim with `claim` or `claimMany`; `python3 tools/proof.py runs/<run>/<label> <payee> --cast` prints
-a payee's rows, proofs, and a ready `claimMany` command.
+a payee's rows, proofs, and a ready `claimMany` command. The command carries `--chain`, so an RPC
+of another chain rejects it.
+
+Relayers paying other people's rows:
+
+- Estimate gas per row and cap it.
+- Skip rows that revert. A native row whose recipient burns all its gas needs about 3.6 million gas
+  (see `DESIGN.md`).
+- Many rows are worth less than the gas to claim them. Who pays for those, a relayer or a minimum
+  claim in the allocation config, is decided before opening.
 
 ## 7. Chains without a custody multisig
 
