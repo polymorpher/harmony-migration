@@ -69,7 +69,7 @@ python3 tools/build_claims.py \
   --output-dir runs/bridge-allocations-<date>
 
 set -a; . ../bridge/local/rpc.env; set +a       # archive RPC URLs (never print them)
-python3 tools/approve_claims.py --claims-dir runs/bridge-allocations-<date> --rpc
+python3 tools/approve_claims.py --claims-dir runs/bridge-allocations-<date> --rpc   # --draft: unsignable files
 
 CLAIMS_DIR=runs/bridge-allocations-<date>/ethereum FORK_RPC_URL="$ETHEREUM_RPC" \
   forge test --match-contract Fork -vv
