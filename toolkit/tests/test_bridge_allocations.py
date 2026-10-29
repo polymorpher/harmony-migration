@@ -571,6 +571,35 @@ class BuildAndVerifyTest(unittest.TestCase):
             verified = fixture.verify()
             self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
 
+    def test_contract_on_another_chain_is_not_a_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Fixture(directory)
+            fixture.write()
+            plan = fixture.run_plan()
+            fixture.write_inputs(plan, [])
+            classes = read_rows(fixture.classes)
+            overrides = fixture.root / "overrides.csv"
+            write_csv(overrides, ("pool_id", "address", "action", "destination", "reason"), [
+                {"pool_id": "ethereum-one", "address": CAROL, "action": "claim", "destination": "",
+                 "reason": "deployer controls the address on ethereum"},
+            ])
+            cases = (("validator_wrapper", (), "claimable"), ("contract", (), "held_contract"),
+                     ("contract", ("--overrides", str(overrides)), "claimable"))
+            for harmony_class, extra, status in cases:
+                write_csv(fixture.classes, ("chain", "address", "block", "class"), classes + [
+                    {"chain": "harmony", "address": CAROL, "block": classes[0]["block"], "class": harmony_class},
+                ])
+                result = fixture.build("--replace", *extra)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                carol = next(row for row in read_rows(fixture.out / "allocations.csv")
+                             if (row["pool_id"], row["account"]) == ("ethereum-one", CAROL))
+                self.assertEqual((carol["class"], carol["status"]), ("eoa", status), harmony_class)
+                payees = {row["account"] for row in read_rows(fixture.out / "claims" / "ethereum.csv")}
+                self.assertEqual(CAROL in payees, status == "claimable")
+            fixture.build("--replace")
+            carol = next(row for row in read_rows(fixture.out / "allocations.csv") if row["account"] == CAROL)
+            self.assertEqual(carol["reason"], "contract on harmony, no code on ethereum: contract holder needs review")
+
     def test_overrides_and_minimum(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Fixture(directory)
