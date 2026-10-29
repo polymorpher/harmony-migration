@@ -33,13 +33,15 @@ get raw calldata to send in order, and each key holder gets `handoff/<key>/` wit
 `tools/send_calldata.py`, and step-by-step instructions. The Harmony path (chain 116) is never
 touched. Nothing is sent.
 
-Before reading any chain, the planner checks the claim run (`--claims-dir`): it was built from these
-allocations, every ready contract's funder is the custody Safe, and the ONE contract approves exactly
-the claimable ONE that stage 1 transfers. Balances, configs, nonces, and Safe nonces are then read
-live, each chain at one pinned block whose hash is checked again before the package is written. The
-package (`<claims-dir>/release/` by default) is built in an empty staging directory and published
-whole (`tools/package.py`): a failed build publishes nothing and moves an earlier package to
-`superseded/` with `INVALIDATED.md`.
+Before reading any chain, the planner checks the claim run (`--claims-dir`): every ready manifest is
+bound to its `summary.json` entry, files, and the run's published index (`tools/claims_run.py`); the
+run was built from these allocations; every ready contract's funder is the custody Safe of the
+committed roster (`custody-roster.json`); and the ONE contract approves exactly the claimable ONE
+that stage 1 transfers. Balances, configs, nonces, and Safe nonces are then read live, each chain at
+one pinned block whose hash is checked again before the package is written. The package
+(`<claims-dir>/release/`, or `release-<name>/` there) is built in an empty staging directory and
+listed in the run record `PACKAGES.json` only whole (`tools/package.py`): a failed build lists
+nothing and moves an earlier package to `superseded/` with `INVALIDATED.md`.
 
 `test/EscrowRelease.t.sol` replays every generated file on a fork of each chain.
 """
@@ -55,6 +57,7 @@ from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import claim_tree as ct  # noqa: E402
+import claims_run  # noqa: E402
 import package  # noqa: E402
 import bridge_lib as lib  # noqa: E402  (toolkit/scripts/bridge, on sys.path through claim_tree)
 import approve_claims as ac  # noqa: E402
@@ -506,12 +509,15 @@ def custody_problems(chain, info, identity, roster, threshold):
     return problems
 
 
-def claim_run(claims_dir, allocations_dir, config, custody_plan, safe):
-    """The claim run this release funds, checked before anything is read from a chain: it was built
-    from these allocations (summary, custody plan, and pools by SHA-256), every chain of the custody
-    plan has a ready contract whose funder is `safe`, and the contract paying ONE approves exactly
-    the claimable ONE that stage 1 transfers. Returns what the plan records about the run."""
-    summary = lib.load_json(os.path.join(claims_dir, "summary.json"))
+def claim_run(claims_dir, allocations_dir, config, custody_plan, safe, index=None):
+    """The claim run this release funds, checked before anything is read from a chain: every ready
+    manifest is bound to its summary entry and files, and to the published index `index`
+    (`claims_run.bind`); the run was built from these allocations (summary, custody plan, and pools
+    by SHA-256); every chain of the custody plan, and no other, has a ready contract, each paid by
+    `safe`; and the contract paying ONE approves exactly the claimable ONE that stage 1 transfers.
+    Returns what the plan records about the run."""
+    run = claims_run.bind(claims_dir, index=index)
+    summary = run.summary
     allocation = lib.load_json(os.path.join(allocations_dir, "summary.json"))
     problems = []
 
@@ -528,14 +534,12 @@ def claim_run(claims_dir, allocations_dir, config, custody_plan, safe):
          == allocation["outputs"].get("custody-plan.json"), "the custody plan differs from the claim run's")
     need(allocation["outputs"].get("pools.csv") == digest("pools.csv"), "pools.csv differs from the allocation summary")
     manifests = {}
-    for contract in summary["contracts"]:
-        if contract["status"] != "ready":
-            continue
-        path = os.path.join(claims_dir, contract["label"], "manifest.json")
-        manifest = lib.load_json(path)
-        manifests[contract["label"]] = (manifest, lib.file_sha256(path))
+    for contract in run.contracts:
+        manifest, label = contract.manifest, contract.entry["label"]
+        manifests[label] = (manifest, contract.manifest_sha256)
         need(lib.address(manifest["funder"]) == safe,
-             f"{contract['label']}: the manifest's funder {manifest['funder']} is not the custody Safe {safe}")
+             f"{label}: the manifest's funder {manifest['funder']} is not the custody Safe {safe}")
+        need(manifest["chain"] in custody_plan["chains"], f"{label}: chain {manifest['chain']} is not in the custody plan")
     for chain in custody_plan["chains"]:
         need(any(m["chain"] == chain for m, _ in manifests.values()), f"{chain}: no ready claim contract")
     funding = custody_plan.get("one_funding")
@@ -548,21 +552,23 @@ def claim_run(claims_dir, allocations_dir, config, custody_plan, safe):
     if problems:
         raise SystemExit(f"{claims_dir} is not the claim run these allocations fund:\n  " + "\n  ".join(problems))
     return {
-        "summary_sha256": lib.file_sha256(os.path.join(claims_dir, "summary.json")),
+        "summary_sha256": run.summary_sha256,
         "manifests_sha256": {label: sha for label, (_, sha) in sorted(manifests.items())},
+        "published_index": run.index,
     }
 
 
 def plan(args, config, custody_plan, safe, rpc):
     # Inspect the custody Safe across all five chains: an unmodified Safe 1.3.0 owned by the configured
     # roster, or 1-of-1 by one of them, which gets an owner-setup batch. Anything else stops the plan.
-    requirements = config.get("custody_requirements") or {"owner_count": 4, "threshold": 2}
+    requirements = config["custody_requirements"]
     req_count = int(requirements["owner_count"])
     req_threshold = int(requirements["threshold"])
     target_owners = [lib.address(o) for o in requirements.get("owners") or []]
     if len(target_owners) != req_count:
-        raise SystemExit(f"custody_requirements.owners in the bridge config must list the {req_count} custody Safe "
-                         "owners, confirmed out of band")
+        raise SystemExit(f"the custody roster must list the {req_count} custody Safe owners")
+    if requirements.get("safe") != safe:
+        raise SystemExit(f"the custody roster's Safe {requirements.get('safe')} is not the custody multisig {safe}")
     custody_safes, problems = {}, []
     for chain in custody_plan["chains"]:
         info = read_safe_info(rpc(chain), safe)
@@ -1060,8 +1066,12 @@ def main():
     parser.add_argument("--routes", default=str(ct.REPO / "bridge" / "routes.json"))
     parser.add_argument("--config", default=str(ct.REPO / "bridge" / "local" / "config.json"))
     parser.add_argument("--allocations-dir", required=True)
+    parser.add_argument("--roster", default=str(claims_run.ROSTER_FILE), help="custody Safe owner roster")
     parser.add_argument("--claims-dir", required=True, help="the claim run (tools/build_claims.py) this release funds")
-    parser.add_argument("--output-dir", help="the release package (default: <claims-dir>/release)")
+    parser.add_argument("--published-index", help="SHA256SUMS (path or URL) of the run's published copy (default: "
+                        "the public bucket's)")
+    parser.add_argument("--output-dir", help="the release package, release/ or release-<name>/ in the claim run "
+                        "(default: <claims-dir>/release)")
     parser.add_argument("--safe", help="custody Safe (the recipient on every chain and the sender named in each "
                         "packet); must be the custody_multisig the bridge config names on every chain, the default")
     parser.add_argument("--skip", nargs="*", default=[], help="escrow addresses to leave out")
@@ -1077,15 +1087,23 @@ def main():
 
     routes = lib.load_routes(args.routes)
     config = lib.load_config(args.config, routes)
-    target = args.output_dir or os.path.join(args.claims_dir, "release")
-    with package.staged([target], args.replace) as staging:
+    config["custody_requirements"] = claims_run.custody_requirements(config, args.roster)
+    root = package.run_root(args.claims_dir)
+    target = os.path.basename(os.path.normpath(args.output_dir)) if args.output_dir else "release"
+    if (args.output_dir and os.path.realpath(os.path.dirname(os.path.abspath(args.output_dir))) != root) or not (
+            target == "release" or target.startswith("release-")):
+        raise SystemExit(f"--output-dir {args.output_dir}: the package must be release/ or release-<name>/ in {root}")
+    index = args.published_index or claims_run.default_index(root)
+    with package.staged(root, [target], args.replace) as staging:
         custody_plan = lib.load_json(os.path.join(args.allocations_dir, "custody-plan.json"))
         safe = custody_safe(config, custody_plan, args.safe)
-        claims = claim_run(args.claims_dir, args.allocations_dir, config, custody_plan, safe)
+        claims = claim_run(root, args.allocations_dir, config, custody_plan, safe, index)
+        claims["custody_roster_sha256"] = config["custody_requirements"]["roster_sha256"]
         rpc = Reads(config)
         escrows, skipped, batches, written = write_release(
             args, config, custody_plan, safe, claims, rpc, staging.dirs[target])
         rpc.recheck()
+    target = os.path.join(root, target)
     eoa_txs = sum(b["calls"] for b in batches if b["step"] == "1-release" and not b["sender_is_safe"])
     safe_batches = sum(1 for b in batches if b["step"] == "1-release" and b["sender_is_safe"])
     print(f"{len(escrows)} escrows to release, {len(skipped)} skipped; wrote {len(written)} files in {target}, "

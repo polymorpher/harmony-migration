@@ -10,17 +10,20 @@ built here against the compiled contract.
 import csv
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import claim_tree as ct  # noqa: E402
 import approve_claims as approve  # noqa: E402
 import bridge_lib as lib  # noqa: E402
 import build_claims as build  # noqa: E402
+import claims_run  # noqa: E402
 import package  # noqa: E402
 import proof  # noqa: E402
 import quarantine  # noqa: E402
@@ -43,6 +46,30 @@ def account(i):
 
 def chains_constants():
     return ct.load_chains()
+
+
+def write_run(run, contracts, inputs=None):
+    """A claim run as build_claims.py lays it out: for each label a manifest, claims.csv, and
+    tree.txt, and summary.json committing each manifest. Its published index is written beside the
+    run as SHA256SUMS; returns that path."""
+    entries = []
+    for n, (label, fields) in enumerate(contracts.items()):
+        out = Path(run, label)
+        out.mkdir(parents=True, exist_ok=True)
+        Path(out, "claims.csv").write_text(f"index,account\n0,{account(n)}\n")
+        Path(out, "tree.txt").write_text(f"0x{n:064x}\n")
+        manifest = {"label": label, "chain": label, "chain_id": 1, "funder": FUNDER, "root": f"0x{n + 1:064x}",
+                    "claim_count": 1, "list_file": "claims.csv", "list_sha256": lib.file_sha256(Path(out, "claims.csv")),
+                    "tree_file": "tree.txt", "tree_sha256": lib.file_sha256(Path(out, "tree.txt")), "approvals": [],
+                    "deployment": {"status": "ready", "address": account(200 + n)}} | fields
+        Path(out, "manifest.json").write_text(json.dumps(manifest))
+        entries.append(claims_run.committed_fields(manifest))
+    Path(run, "summary.json").write_text(json.dumps({"inputs": inputs or {}, "contracts": entries}))
+    files = ["summary.json"] + [f"{label}/{name}" for label in contracts
+                                for name in ("claims.csv", "manifest.json", "tree.txt")]
+    index = Path(run).parent / "SHA256SUMS"
+    index.write_text("".join(f"{lib.file_sha256(Path(run, f))}  {f}\n" for f in files))
+    return str(index)
 
 
 class TreeTest(unittest.TestCase):
@@ -199,6 +226,104 @@ class BuildTest(unittest.TestCase):
             self.assertEqual(build.format_amount(raw, decimals), text)
 
 
+class BindTest(unittest.TestCase):
+    """`claims_run.bind`: every summary entry bound one to one to its manifest and files."""
+
+    def run_dir(self, tmp):
+        run = os.path.join(tmp, "run")
+        index = write_run(run, {"ethereum": {}, "bsc": {"chain_id": 56},
+                                "base": {"deployment": {"status": "no_funder", "address": None}}})
+        return run, index
+
+    def test_a_coherent_run_binds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run, index = self.run_dir(tmp)
+            bound = claims_run.bind(run, index=index)
+            self.assertEqual([c.entry["label"] for c in bound.contracts], ["ethereum", "bsc"])
+            self.assertEqual(bound.index["entries"], 10)
+            self.assertEqual([c.entry["label"] for c in claims_run.bind(run, ["bsc"]).contracts], ["bsc"])
+
+    def test_every_disagreement_stops_before_any_chain_read(self):
+        def manifest(run, **changes):
+            path = Path(run, "bsc", "manifest.json")
+            data = json.loads(path.read_text())
+            for key, value in changes.items():
+                if key in ("address", "status"):
+                    data["deployment"][key] = value
+                else:
+                    data[key] = value
+            path.write_text(json.dumps(data))
+
+        def summary(run, change):
+            data = json.loads(Path(run, "summary.json").read_text())
+            change(data)
+            Path(run, "summary.json").write_text(json.dumps(data))
+
+        cases = {
+            "root": lambda run: manifest(run, root="0x" + "99" * 32),
+            "chain id": lambda run: manifest(run, chain_id=97),
+            "row count": lambda run: manifest(run, claim_count=2),
+            "funder": lambda run: manifest(run, funder=account(9)),
+            "label": lambda run: manifest(run, label="other"),
+            "address": lambda run: manifest(run, address=account(8)),
+            "status": lambda run: manifest(run, status="no_funder"),
+            "tampered list": lambda run: Path(run, "bsc", "claims.csv").write_text("index,account\n0,x\n"),
+            "tampered tree": lambda run: Path(run, "bsc", "tree.txt").write_text("0x00\n"),
+            "list outside its directory": lambda run: manifest(run, list_file="../ethereum/claims.csv"),
+            "two entries for a label": lambda run: summary(run, lambda s: s["contracts"].append(s["contracts"][1])),
+            "label that is a path": lambda run: summary(run, lambda s: s["contracts"][1].update(label="../bsc")),
+            "manifest outside the summary": lambda run: (Path(run, "extra").mkdir(),
+                                                         Path(run, "extra", "manifest.json").write_text("{}")),
+            "missing manifest": lambda run: Path(run, "bsc", "manifest.json").unlink(),
+        }
+        for name, change in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                run, _ = self.run_dir(tmp)
+                change(run)
+                with self.assertRaises(SystemExit):
+                    claims_run.bind(run)
+
+    def test_labels_must_be_ready_summary_entries_named_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run, _ = self.run_dir(tmp)
+            for labels in (["base"], ["missing"], ["bsc", "bsc"]):
+                with self.subTest(labels), self.assertRaises(SystemExit):
+                    claims_run.bind(run, labels)
+
+    def test_the_run_must_match_its_published_index(self):
+        def changed_digest(index):
+            Path(index).write_text("".join(("f" * 64 + l[64:] if l.endswith("  bsc/manifest.json") else l) + "\n"
+                                           for l in Path(index).read_text().splitlines()))
+
+        def summary_not_listed(index):
+            Path(index).write_text("".join(l + "\n" for l in Path(index).read_text().splitlines()
+                                           if not l.endswith("  summary.json")))
+
+        def listed_file_missing_here(index):
+            Path(index).write_text(Path(index).read_text() + "0" * 64 + "  bsc/samples.json\n")
+
+        def not_an_index(index):
+            Path(index).write_text("not a checksum list\n")
+
+        for change in (changed_digest, summary_not_listed, listed_file_missing_here, not_an_index):
+            with self.subTest(change.__name__), tempfile.TemporaryDirectory() as tmp:
+                run, index = self.run_dir(tmp)
+                change(index)
+                with self.assertRaises(SystemExit):
+                    claims_run.bind(run, index=index)
+
+    def test_roster_is_the_committed_one(self):
+        committed = json.loads(claims_run.ROSTER_FILE.read_text())
+        requirements = claims_run.custody_requirements({})
+        self.assertEqual((requirements["safe"], requirements["threshold"]), (committed["safe"], 2))
+        self.assertEqual(requirements["owners"], sorted(committed["owners"]))
+        self.assertEqual(claims_run.custody_requirements({"custody_requirements": {"owners": []}})["owners"],
+                         requirements["owners"])
+        for configured in ({"owners": committed["owners"][:3] + [account(1)]}, {"threshold": 1}, {"owner_count": 5}):
+            with self.subTest(configured), self.assertRaises(SystemExit):
+                claims_run.custody_requirements({"custody_requirements": configured})
+
+
 def words(*values):
     return "0x" + "".join(format(int(v), "064x") for v in values)
 
@@ -210,7 +335,14 @@ ARTIFACT = {
     "immutables": [[(1 + 33 * i, 32)] for i in range(6)],
 }
 ROSTER = [account(100 + i) for i in range(4)]
-REQUIREMENTS = {"owner_count": 4, "threshold": 2, "owners": ROSTER}
+REQUIREMENTS = {"safe": FUNDER, "owner_count": 4, "threshold": 2, "owners": ROSTER}
+ETH = "ethereum"
+
+
+def label_dir(run, label=ETH):
+    path = os.path.join(run, label)
+    os.makedirs(path, exist_ok=True)
+    return path
 SINGLETON = next(iter(approve.SAFE_SINGLETONS))
 MULTISEND = safe_batch.MULTISEND_CALL_ONLY["1.3.0"][0].lower()
 
@@ -292,10 +424,12 @@ class FakeChain(approve.Chain):
 
 
 class ApproveTest(unittest.TestCase):
-    def manifest(self, tmp):
+    """Each test's temporary directory is a run; its contract is `ethereum/`."""
+
+    def manifest(self, out):
         """A manifest bound to ARTIFACT the way build_claims.py writes it, with its claims.csv."""
-        Path(tmp, "claims.csv").write_text("index,account,token,amount_raw\n0,a,b,1\n")
-        list_sha = lib.file_sha256(os.path.join(tmp, "claims.csv"))
+        Path(out, "claims.csv").write_text("index,account,token,amount_raw\n0,a,b,1\n")
+        list_sha = lib.file_sha256(os.path.join(out, "claims.csv"))
         root = "0x" + "ab" * 32
         args_blob = ct.constructor_args(FUNDER, WETH, 1, ct.unhex(root), 3, bytes.fromhex(list_sha))
         init_code = ARTIFACT["creation_code"] + args_blob
@@ -325,15 +459,17 @@ class ApproveTest(unittest.TestCase):
 
     def build(self, tmp, nonce=7, draft=True, chain=None, manifest=None, chains=None, artifact=ARTIFACT,
               requirements=REQUIREMENTS, replace=True):
-        manifest = manifest or self.manifest(tmp)
-        Path(tmp, "manifest.json").write_text(json.dumps(manifest))
-        args = SimpleNamespace(nonce=nonce, no_wrap=False, replace=replace, draft=draft)
+        out = label_dir(tmp)
+        manifest = manifest or self.manifest(out)
+        Path(out, "manifest.json").write_text(json.dumps(manifest))
+        args = SimpleNamespace(nonce=nonce, no_wrap=False, replace=replace, draft=draft, claims_dir=tmp)
         return approve.refresh(args, {"custody_requirements": requirements}, chains or chains_constants(),
-                               [(manifest, tmp, chain)], artifact)[0]
+                               [(manifest, out, chain)], artifact)[0]
 
-    def fake_chain(self, tmp):
-        manifest = self.manifest(tmp)
-        return manifest, FakeChain(manifest, approve.bound_deployment(manifest, chains_constants(), ARTIFACT, tmp))
+    def fake_chain(self, tmp, label=ETH):
+        out = label_dir(tmp, label)
+        manifest = self.manifest(out)
+        return manifest, FakeChain(manifest, approve.bound_deployment(manifest, chains_constants(), ARTIFACT, out))
 
     def test_batch_wraps_resets_usdt_and_approves_exact_totals(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -353,8 +489,8 @@ class ApproveTest(unittest.TestCase):
     def test_transaction_builder_file_and_safe_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:
             record = self.build(tmp)
-            batch = json.loads(Path(tmp, "approval-draft", "safe-approve.draft.json").read_text())
-            revoke = json.loads(Path(tmp, "approval-draft", "safe-revoke.draft.json").read_text())
+            batch = json.loads(Path(tmp, ETH, "approval-draft", "safe-approve.draft.json").read_text())
+            revoke = json.loads(Path(tmp, ETH, "approval-draft", "safe-revoke.draft.json").read_text())
         for file in (batch, revoke):
             self.assertEqual(file["meta"]["checksum"], safe_batch.tx_builder_checksum(file))
             self.assertEqual(file["chainId"], "1")
@@ -396,25 +532,28 @@ class ApproveTest(unittest.TestCase):
         for change in (eoa_spender, other_factory, other_factory_in_chains_file, other_creation_code, other_list,
                        other_salt):
             with self.subTest(change.__name__), tempfile.TemporaryDirectory() as tmp:
-                manifest, chains, artifact = self.manifest(tmp), chains_constants(), dict(ARTIFACT)
+                manifest, chains, artifact = self.manifest(label_dir(tmp)), chains_constants(), dict(ARTIFACT)
                 change(manifest, chains, artifact)
                 with self.assertRaises(SystemExit):
                     self.build(tmp, manifest=manifest, chains=chains, artifact=artifact)
-                self.assertEqual(sorted(os.listdir(tmp)), ["claims.csv", "manifest.json"])
+                self.assertEqual(sorted(os.listdir(Path(tmp, ETH))), ["claims.csv", "manifest.json"])
+                self.assertEqual(package.read_record(tmp)["packages"], {})
 
     def test_signable_files_when_every_check_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             manifest, chain = self.fake_chain(tmp)
             record = self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
-            sheet = Path(tmp, "approval", "APPROVALS.md").read_text()
-            names = sorted(os.listdir(Path(tmp, "approval")))
-            top = sorted(os.listdir(tmp))
+            sheet = Path(tmp, ETH, "approval", "APPROVALS.md").read_text()
+            names = sorted(os.listdir(Path(tmp, ETH, "approval")))
+            top = sorted(os.listdir(Path(tmp, ETH)))
+            _, _, results = package.verify(tmp)
         self.assertEqual([c for c in record["preflight"]["checks"] if not c["ok"]], [])
         self.assertEqual(record["approve"]["safe_transaction"]["nonce"], 7)
         self.assertFalse(record["draft"])
-        self.assertEqual(names, ["APPROVALS.md", "PACKAGE.sha256", "approvals.json", "safe-approve.json",
-                                 "safe-revoke.json"])
+        self.assertEqual(names, ["APPROVALS.md", "GENERATION", "PACKAGE.sha256", "approvals.json",
+                                 "safe-approve.json", "safe-revoke.json"])
         self.assertEqual(top, ["approval", "claims.csv", "manifest.json"])
+        self.assertEqual([(rel, ok) for rel, ok, _ in results], [("ethereum/approval", True)])
         self.assertNotIn("DRAFT", sheet)
         self.assertIn("block 100", sheet)
         self.assertIn(record["spender_binding"]["runtime_keccak256"], sheet)
@@ -450,9 +589,12 @@ class ApproveTest(unittest.TestCase):
         def reorg(c):
             c.final_hash = "0x" + "cd" * 32
 
+        def other_custody_safe(c):
+            return REQUIREMENTS | {"safe": account(95)}
+
         cases = [(getter_compatible_contract, None), (no_roster, None), (other_owner, None), (module, None),
                  (guard, None), (other_singleton, None), (other_multisend, None), (other_factory_code, None),
-                 (unfunded, None), (reorg, None), (lambda c: None, 3)]
+                 (unfunded, None), (reorg, None), (other_custody_safe, None), (lambda c: None, 3)]
         for change, nonce in cases:
             name = getattr(change, "__name__", "nonce")
             with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
@@ -460,14 +602,14 @@ class ApproveTest(unittest.TestCase):
                 requirements = change(chain) or REQUIREMENTS
                 with self.assertRaises(SystemExit):
                     self.build(tmp, nonce=nonce, draft=False, chain=chain, manifest=manifest, requirements=requirements)
-                self.assertEqual(sorted(os.listdir(tmp)), ["claims.csv", "manifest.json"])
+                self.assertEqual(sorted(os.listdir(Path(tmp, ETH))), ["claims.csv", "manifest.json"])
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(SystemExit):
             self.build(tmp, draft=False, chain=None)
 
         with tempfile.TemporaryDirectory() as tmp:
             manifest, chain = self.fake_chain(tmp)
-            chain.hashes[chain.spender] = approve.bound_deployment(manifest, chains_constants(), ARTIFACT, tmp)[
-                "runtime_keccak256"]
+            chain.hashes[chain.spender] = approve.bound_deployment(manifest, chains_constants(), ARTIFACT,
+                                                                   label_dir(tmp))["runtime_keccak256"]
             record = self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
         self.assertTrue(record["spender_deployed"])
         self.assertTrue(all(c["ok"] for c in record["preflight"]["checks"]))
@@ -477,12 +619,12 @@ class ApproveTest(unittest.TestCase):
             manifest, chain = self.fake_chain(tmp)
             chain.balances[DAI] = 0
             record = self.build(tmp, nonce=None, draft=True, chain=chain, manifest=manifest)
-            top = sorted(os.listdir(tmp))
-            names = sorted(os.listdir(Path(tmp, "approval-draft")))
-            sheet = Path(tmp, "approval-draft", "APPROVALS.draft.md").read_text()
-            batch = json.loads(Path(tmp, "approval-draft", "safe-approve.draft.json").read_text())
+            top = sorted(os.listdir(Path(tmp, ETH)))
+            names = sorted(os.listdir(Path(tmp, ETH, "approval-draft")))
+            sheet = Path(tmp, ETH, "approval-draft", "APPROVALS.draft.md").read_text()
+            batch = json.loads(Path(tmp, ETH, "approval-draft", "safe-approve.draft.json").read_text())
         self.assertEqual(top, ["approval-draft", "claims.csv", "manifest.json"])
-        self.assertEqual(names, ["APPROVALS.draft.md", "PACKAGE.sha256", "approvals.draft.json",
+        self.assertEqual(names, ["APPROVALS.draft.md", "GENERATION", "PACKAGE.sha256", "approvals.draft.json",
                                  "safe-approve.draft.json", "safe-revoke.draft.json"])
         self.assertTrue(record["draft"])
         self.assertTrue(sheet.startswith("# DRAFT, do not sign"))
@@ -502,7 +644,7 @@ class ApproveTest(unittest.TestCase):
             manifest, chain = self.fake_chain(tmp)
             chain.symbols[USDT] = "USD₮0"
             self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
-            sheet = Path(tmp, "approval", "APPROVALS.md").read_text()
+            sheet = Path(tmp, ETH, "approval", "APPROVALS.md").read_text()
             self.assertIn("USDT (its `symbol()`: `USD₮0`)", sheet)
             chain.decimals[USDT] = 18
             with self.assertRaises(SystemExit) as stopped:
@@ -511,38 +653,39 @@ class ApproveTest(unittest.TestCase):
 
     def test_failed_refresh_moves_the_earlier_package_out(self):
         with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp, ETH)
             manifest, chain = self.fake_chain(tmp)
             self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
-            stale = Path(tmp, "approval", "safe-approve.json").read_bytes()
+            stale = Path(out, "approval", "safe-approve.json").read_bytes()
             chain.balances[DAI] = 6
             with self.assertRaises(SystemExit):
                 self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
-            self.assertEqual(sorted(os.listdir(tmp)), ["claims.csv", "manifest.json", "superseded"])
-            [moved] = Path(tmp, "superseded").iterdir()
+            self.assertEqual(sorted(os.listdir(out)), ["claims.csv", "manifest.json", "superseded"])
+            self.assertEqual(package.read_record(tmp)["packages"], {})
+            [moved] = Path(out, "superseded").iterdir()
             self.assertEqual(Path(moved, "safe-approve.json").read_bytes(), stale)
             self.assertIn("DAI funded", Path(moved, "INVALIDATED.md").read_text())
 
             chain.balances[DAI] = 7
             self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
             self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
-            self.assertEqual(len(list(Path(tmp, "superseded").iterdir())), 2)
-            self.assertTrue(Path(tmp, "approval", "safe-approve.json").exists())
-            self.assertFalse([p for p in os.listdir(tmp) if "staging" in p])
+            self.assertEqual(len(list(Path(out, "superseded").iterdir())), 2)
+            self.assertTrue(Path(out, "approval", "safe-approve.json").exists())
+            self.assertFalse([p for p in os.listdir(out) if "staging" in p])
             with self.assertRaises(SystemExit):
                 self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest, replace=False)
-            self.assertTrue(Path(tmp, "approval", "safe-approve.json").exists())
+            self.assertTrue(Path(out, "approval", "safe-approve.json").exists())
+            self.assertEqual([ok for _, ok, _ in package.verify(tmp)[2]], [True])
 
     def test_one_failing_contract_publishes_no_package(self):
         with tempfile.TemporaryDirectory() as tmp:
             jobs = []
             for label in ("a", "b"):
-                out = Path(tmp, label)
-                out.mkdir()
-                manifest, chain = self.fake_chain(out)
-                Path(out, "manifest.json").write_text(json.dumps(manifest))
-                jobs.append((manifest, str(out), chain))
+                manifest, chain = self.fake_chain(tmp, label)
+                Path(tmp, label, "manifest.json").write_text(json.dumps(manifest))
+                jobs.append((manifest, os.path.join(tmp, label), chain))
             jobs[1][2].balances[DAI] = 6
-            args = SimpleNamespace(nonce=None, no_wrap=False, replace=True, draft=False)
+            args = SimpleNamespace(nonce=None, no_wrap=False, replace=True, draft=False, claims_dir=tmp)
             with self.assertRaises(SystemExit):
                 approve.refresh(args, {"custody_requirements": REQUIREMENTS}, chains_constants(), jobs, ARTIFACT)
             for label in ("a", "b"):
@@ -551,30 +694,63 @@ class ApproveTest(unittest.TestCase):
             approve.refresh(args, {"custody_requirements": REQUIREMENTS}, chains_constants(), jobs, ARTIFACT)
             for label in ("a", "b"):
                 self.assertTrue(Path(tmp, label, "approval", "safe-approve.json").exists())
+            self.assertEqual(sorted(package.read_record(tmp)["packages"]), ["a/approval", "b/approval"])
 
     def test_signable_files_from_before_packages_stop_the_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             manifest, chain = self.fake_chain(tmp)
-            Path(tmp, "safe-approve.json").write_text("{}")
+            Path(tmp, ETH, "safe-approve.json").write_text("{}")
             with self.assertRaises(SystemExit) as stopped:
                 self.build(tmp, nonce=None, draft=False, chain=chain, manifest=manifest)
             self.assertIn("quarantine", str(stopped.exception))
-            self.assertFalse(Path(tmp, "approval").exists())
+            self.assertFalse(Path(tmp, ETH, "approval").exists())
             self.build(tmp, nonce=None, draft=True, chain=chain, manifest=manifest)
-            self.assertTrue(Path(tmp, "approval-draft").exists())
+            self.assertTrue(Path(tmp, ETH, "approval-draft").exists())
+
+
+def publish(run, rels, text="old"):
+    with package.staged(run, rels, replace=True) as staging:
+        for rel in rels:
+            Path(staging.dirs[rel], "x.json").write_text(f"{text} {rel}")
+
+
+def current(run):
+    return {rel: ok for rel, ok, _ in package.verify(run)[2]}
+
+
+# Run in a child process: publish a/pkg and b/pkg over earlier ones and die right after the first
+# staged package is renamed into place, as a killed process would.
+CRASH_BETWEEN_RENAMES = """
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import package
+real = os.replace
+def replace(src, dst):
+    real(src, dst)
+    if "-staging-" in os.path.basename(src):
+        os._exit(3)
+os.replace = replace
+with package.staged(sys.argv[2], ["a/pkg", "b/pkg"], replace=True) as staging:
+    for target, directory in staging.dirs.items():
+        open(os.path.join(directory, "x.json"), "w").write("new")
+"""
 
 
 class PackageTest(unittest.TestCase):
+    def legacy_run(self, run):
+        files = ["eth/manifest.json", "eth/claims.csv", "eth/safe-approve.json", "eth/APPROVALS.md",
+                 "eth/safe-approve.draft.json", "eth/approval/safe-approve.json", "bsc/manifest.json",
+                 "bsc/approvals.json", "release/0-one-reserve/ethereum-0xf868743b-safe.json",
+                 "release/handoff/safe-signers/README.md", "release-built-x/1-release/a-eoa.json",
+                 "release-built-x/1-release/a-eoa.json.sent.json", "summary.json"]
+        for f in files:
+            Path(run, f).parent.mkdir(parents=True, exist_ok=True)
+            Path(run, f).write_text(f)
+        return files
+
     def test_quarantine_moves_every_signable_file_and_records_it(self):
         with tempfile.TemporaryDirectory() as run:
-            files = ["eth/manifest.json", "eth/claims.csv", "eth/safe-approve.json", "eth/APPROVALS.md",
-                     "eth/safe-approve.draft.json", "eth/approval/safe-approve.json", "bsc/manifest.json",
-                     "bsc/approvals.json", "release/0-one-reserve/ethereum-0xf868743b-safe.json",
-                     "release/handoff/safe-signers/README.md", "release-built-x/1-release/a-eoa.json",
-                     "release-built-x/1-release/a-eoa.json.sent.json", "summary.json"]
-            for f in files:
-                Path(run, f).parent.mkdir(parents=True, exist_ok=True)
-                Path(run, f).write_text(f)
+            files = self.legacy_run(run)
             _, planned = quarantine.quarantine(run, "test", dry_run=True)
             self.assertTrue(Path(run, "eth", "safe-approve.json").exists())
             dest, moved = quarantine.quarantine(run, "rejected", include=["eth", "bsc/approvals.json"])
@@ -584,37 +760,198 @@ class PackageTest(unittest.TestCase):
                                                "release-built-x"])
             left = sorted(str(p.relative_to(run)) for p in Path(run).rglob("*") if p.is_file()
                           and quarantine.QUARANTINE not in p.parts)
-            self.assertEqual(left, ["bsc/manifest.json", "summary.json"])
+            self.assertEqual(left, [package.LOCK, package.RECORD, "bsc/manifest.json", "summary.json"])
             record = Path(dest, "QUARANTINE.md").read_text()
             for f in files:
                 if f not in left:
                     self.assertIn(f"| `{f}` | `{package.file_sha256(Path(dest, f))}` |", record)
             self.assertEqual(Path(dest, "eth", "approval", "safe-approve.json").read_text(),
                              "eth/approval/safe-approve.json")
-            for bad in ("..", quarantine.QUARANTINE, "missing"):
+            self.assertEqual(json.loads(Path(dest, quarantine.JOURNAL).read_text())["status"], "done")
+            self.assertIsNone(package.read_record(run)["pending"])
+            for bad in ("..", quarantine.QUARANTINE, "missing", package.RECORD):
                 with self.assertRaises(SystemExit):
                     quarantine.quarantine(run, "x", include=[bad])
 
+    def test_quarantine_unlists_the_packages_it_moves(self):
+        with tempfile.TemporaryDirectory() as run:
+            Path(run, "eth").mkdir()
+            Path(run, "eth", "manifest.json").write_text("{}")
+            publish(run, ["eth/approval", "release"])
+            self.assertEqual(current(run), {"eth/approval": True, "release": True})
+            quarantine.quarantine(run, "rejected")
+            self.assertEqual(package.read_record(run)["packages"], {})
+            self.assertEqual(current(run), {})
+
+    def test_failed_quarantine_move_puts_everything_back(self):
+        real = os.replace
+
+        def replace(src, dst):
+            if src.endswith(os.path.join("eth", "safe-approve.json")) and os.sep + quarantine.QUARANTINE + os.sep in dst:
+                raise PermissionError("denied")
+            return real(src, dst)
+
+        with tempfile.TemporaryDirectory() as run:
+            files = self.legacy_run(run)
+            with mock.patch("os.replace", side_effect=replace), self.assertRaises(SystemExit) as stopped:
+                quarantine.quarantine(run, "rejected")
+            self.assertIn("everything was put back", str(stopped.exception))
+            for f in files:
+                self.assertEqual(Path(run, f).read_text(), f)
+            [dest] = Path(run, quarantine.QUARANTINE).iterdir()
+            self.assertEqual(json.loads(Path(dest, quarantine.JOURNAL).read_text())["status"], "rolled_back")
+            self.assertFalse(Path(dest, "QUARANTINE.md").exists())
+            self.assertIsNone(package.read_record(run)["pending"])
+            quarantine.quarantine(run, "rejected")
+            self.assertFalse(Path(run, "eth", "safe-approve.json").exists())
+
+    def test_interrupted_quarantine_blocks_the_run_until_recovered(self):
+        real = os.replace
+
+        def replace(src, dst):
+            if src.endswith(os.path.join("eth", "safe-approve.json")) and os.sep + quarantine.QUARANTINE + os.sep in dst:
+                raise KeyboardInterrupt
+            return real(src, dst)
+
+        with tempfile.TemporaryDirectory() as run:
+            files = self.legacy_run(run)
+            publish(run, ["bsc/approval", "other/pkg"])
+            with mock.patch("os.replace", side_effect=replace), self.assertRaises(KeyboardInterrupt):
+                quarantine.quarantine(run, "rejected")
+            self.assertEqual(package.read_record(run)["pending"]["operation"], "quarantine")
+            self.assertEqual(current(run), {"other/pkg": False})
+            for blocked in (lambda: publish(run, ["eth/approval"]), lambda: quarantine.quarantine(run, "again")):
+                with self.assertRaises(SystemExit) as stopped:
+                    blocked()
+                self.assertIn("--recover", str(stopped.exception))
+            dest, moved = quarantine.recover(run)
+            self.assertIn("eth/safe-approve.json", moved)
+            for f in files:
+                if f.startswith("release") or "approv" in f.lower() or f.endswith("draft.json"):
+                    self.assertFalse(Path(run, f).exists(), f)
+                    self.assertEqual(Path(dest, f).read_text(), f)
+            self.assertIn("eth/safe-approve.json", Path(dest, "QUARANTINE.md").read_text())
+            self.assertIsNone(package.read_record(run)["pending"])
+            self.assertEqual(current(run), {"other/pkg": True})
+
     def test_staged_packages_publish_whole_or_not_at_all(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            a, b = os.path.join(tmp, "a", "pkg"), os.path.join(tmp, "b", "pkg")
-            with package.staged([a, b], replace=False) as staging:
+        with tempfile.TemporaryDirectory() as run:
+            a, b = "a/pkg", "b/pkg"
+            with package.staged(run, [a, b], replace=False) as staging:
                 for target in (a, b):
                     Path(staging.dirs[target], "x.json").write_text(target)
-            self.assertEqual(Path(a, "PACKAGE.sha256").read_text(), f"{package.file_sha256(Path(a, 'x.json'))}  x.json\n")
+            x = package.file_sha256(Path(run, a, "x.json"))
+            generation = Path(run, a, "GENERATION").read_text()
+            self.assertEqual(Path(run, a, "PACKAGE.sha256").read_text(),
+                             f"{package.file_sha256(Path(run, a, 'GENERATION'))}  GENERATION\n{x}  x.json\n")
+            record = package.read_record(run)
+            self.assertEqual(record["packages"][a]["generation"], generation.strip())
+            self.assertEqual(record["packages"][a]["package_sha256"], package.file_sha256(Path(run, a, "PACKAGE.sha256")))
+            self.assertEqual(current(run), {a: True, b: True})
             with self.assertRaises(SystemExit):
-                with package.staged([a], replace=False):
+                with package.staged(run, [a], replace=False):
                     pass
             with self.assertRaises(RuntimeError):
-                with package.staged([a, b], replace=True) as staging:
+                with package.staged(run, [a, b], replace=True) as staging:
                     Path(staging.dirs[a], "x.json").write_text("new")
                     raise RuntimeError("check failed")
             for target in (a, b):
-                self.assertFalse(Path(target).exists())
-                [moved] = Path(target).parent.joinpath("superseded").iterdir()
+                self.assertFalse(Path(run, target).exists())
+                [moved] = Path(run, target).parent.joinpath("superseded").iterdir()
                 self.assertEqual(Path(moved, "x.json").read_text(), target)
                 self.assertIn("check failed", Path(moved, "INVALIDATED.md").read_text())
-                self.assertEqual(sorted(os.listdir(Path(target).parent)), ["superseded"])
+                self.assertEqual(sorted(os.listdir(Path(run, target).parent)), ["superseded"])
+            self.assertEqual(package.read_record(run)["packages"], {})
+            self.assertIsNone(package.read_record(run)["pending"])
+
+    def test_one_lock_covers_every_refresh_and_quarantine(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = os.path.join(tmp, "run")
+            os.mkdir(run)
+            os.symlink(run, os.path.join(tmp, "same-run"))
+            with package.staged(run, ["a/approval"], replace=False) as staging:
+                for other_run, targets in ((run, ["a/approval", "b/approval"]), (run, ["b/approval"]),
+                                           (run, ["release"]), (os.path.join(tmp, "same-run"), ["b/approval"])):
+                    with self.assertRaises(SystemExit) as stopped:
+                        with package.staged(other_run, targets, replace=True):
+                            pass
+                    self.assertIn("another refresh or quarantine", str(stopped.exception))
+                with self.assertRaises(SystemExit):
+                    quarantine.quarantine(run, "x")
+                self.assertEqual(package.read_record(run)["pending"]["targets"], ["a/approval"])
+                Path(staging.dirs["a/approval"], "x.json").write_text("a")
+            self.assertEqual(current(run), {"a/approval": True})
+
+    def test_symlinks_from_the_run_down_are_refused(self):
+        with tempfile.TemporaryDirectory() as run, tempfile.TemporaryDirectory() as elsewhere:
+            os.symlink(elsewhere, os.path.join(run, "a"))
+            os.mkdir(os.path.join(run, "b"))
+            os.symlink(elsewhere, os.path.join(run, "b", "approval"))
+            for target in ("a/approval", "b/approval", "../outside"):
+                with self.subTest(target), self.assertRaises(SystemExit):
+                    with package.staged(run, [target], replace=True):
+                        pass
+            self.assertEqual(os.listdir(elsewhere), [])
+            with self.assertRaises(ValueError):
+                with package.staged(run, ["c/approval"], replace=True) as staging:
+                    os.symlink("/etc/hosts", os.path.join(staging.dirs["c/approval"], "hosts"))
+            self.assertFalse(Path(run, "c", "approval").exists())
+            self.assertEqual(package.read_record(run)["packages"], {})
+
+    def test_crash_between_renames_leaves_nothing_current(self):
+        with tempfile.TemporaryDirectory() as run:
+            publish(run, ["a/pkg", "b/pkg", "c/pkg"])
+            child = subprocess.run([sys.executable, "-c", CRASH_BETWEEN_RENAMES, str(Path(__file__).parent), run],
+                                   capture_output=True, text=True)
+            self.assertEqual(child.returncode, 3, child.stderr)
+            self.assertEqual(Path(run, "a", "pkg", "x.json").read_text(), "new")
+            record = package.read_record(run)
+            self.assertEqual(record["pending"]["targets"], ["a/pkg", "b/pkg"])
+            self.assertEqual(sorted(record["packages"]), ["c/pkg"])
+            self.assertEqual(current(run), {"c/pkg": False, "a/pkg": False})
+            publish(run, ["a/pkg", "b/pkg"], text="again")
+            self.assertEqual(current(run), {"a/pkg": True, "b/pkg": True, "c/pkg": True})
+
+    def test_a_package_that_cannot_be_moved_is_not_current(self):
+        with tempfile.TemporaryDirectory() as run:
+            publish(run, ["release", "a/approval"])
+            with mock.patch.object(package, "set_aside", side_effect=PermissionError("denied")):
+                with self.assertRaises(RuntimeError):
+                    with package.staged(run, ["release"], replace=True):
+                        raise RuntimeError("check failed")
+            self.assertTrue(Path(run, "release", "x.json").exists())
+            _, record, results = package.verify(run)
+            self.assertIsNone(record["pending"])
+            self.assertEqual({rel: ok for rel, ok, _ in results}, {"a/approval": True, "release": False})
+            self.assertIn("not in PACKAGES.json", dict((r, d) for r, _, d in results)["release"][0])
+
+    def test_a_refresh_that_cannot_write_the_record_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as run:
+            publish(run, ["a/pkg"])
+            before = package.read_record(run)
+            with mock.patch.object(package, "write_record", side_effect=OSError("read-only")):
+                with self.assertRaises(OSError):
+                    with package.staged(run, ["a/pkg"], replace=True):
+                        self.fail("nothing may be built")
+            self.assertEqual(package.read_record(run), before)
+            self.assertEqual(current(run), {"a/pkg": True})
+
+    def test_verify_checks_every_file_and_names_unlisted_packages(self):
+        with tempfile.TemporaryDirectory() as run:
+            publish(run, ["a/approval", "release"])
+            Path(run, "a", "approval", "x.json").write_text("changed")
+            Path(run, "release", "extra.json").write_text("{}")
+            Path(run, "b", "approval").mkdir(parents=True)
+            Path(run, "b", "approval", "PACKAGE.sha256").write_text("")
+            _, _, results = package.verify(run)
+            details = {rel: (ok, d) for rel, ok, d in results}
+            self.assertEqual({rel: ok for rel, (ok, _) in details.items()},
+                             {"a/approval": False, "release": False, "b/approval": False})
+            self.assertIn("x.json differs from PACKAGE.sha256", details["a/approval"][1])
+            self.assertIn("extra.json is not in PACKAGE.sha256", details["release"][1])
+            self.assertIn("not in PACKAGES.json", details["b/approval"][1][0])
+            publish(run, ["a/approval"])
+            self.assertFalse([r for r, _, _ in package.verify(run)[2] if "superseded" in r])
 
 
 class ReleaseTest(unittest.TestCase):
@@ -837,7 +1174,8 @@ class ReleaseTest(unittest.TestCase):
     CUSTODY = "0x19565f4771843467aad632d6b56c75396785b06c"
 
     def claim_fixture(self, tmp, bsc_funder=None, one_approval=115):
-        """Allocations and a claim run built from them, as release_plan.claim_run expects."""
+        """Allocations and a claim run built from them, as release_plan.claim_run expects; the run's
+        published index is `<tmp>/SHA256SUMS`."""
         alloc, claims = Path(tmp, "allocations"), Path(tmp, "run")
         alloc.mkdir()
         Path(alloc, "pools.csv").write_text("pool_id,collateral_raw,claimable_raw,held_raw,below_minimum_raw,"
@@ -849,18 +1187,11 @@ class ReleaseTest(unittest.TestCase):
         }))
         Path(alloc, "summary.json").write_text(json.dumps({"outputs": {
             name: lib.file_sha256(Path(alloc, name)) for name in ("pools.csv", "custody-plan.json")}}))
-        manifests = {
+        write_run(claims, {
             "ethereum": {"chain": "ethereum", "funder": self.CUSTODY,
                          "approvals": [{"token": ONE_TOKEN, "amount_raw": str(one_approval)}]},
-            "bsc": {"chain": "bsc", "funder": bsc_funder or self.CUSTODY, "approvals": []},
-        }
-        for label, manifest in manifests.items():
-            Path(claims, label).mkdir(parents=True)
-            Path(claims, label, "manifest.json").write_text(json.dumps(manifest))
-        Path(claims, "summary.json").write_text(json.dumps({
-            "inputs": {name: lib.file_sha256(Path(alloc, name)) for name in ("summary.json", "custody-plan.json")},
-            "contracts": [{"label": label, "status": "ready"} for label in manifests],
-        }))
+            "bsc": {"chain": "bsc", "chain_id": 56, "funder": bsc_funder or self.CUSTODY, "approvals": []},
+        }, inputs={name: lib.file_sha256(Path(alloc, name)) for name in ("summary.json", "custody-plan.json")})
         return str(alloc), str(claims)
 
     def test_release_is_bound_to_the_ready_claim_manifests(self):
@@ -869,11 +1200,12 @@ class ReleaseTest(unittest.TestCase):
         def run(tmp, **fixture):
             alloc, claims = self.claim_fixture(tmp, **fixture)
             plan = json.loads(Path(alloc, "custody-plan.json").read_text())
-            return release.claim_run(claims, alloc, config, plan, self.CUSTODY)
+            return release.claim_run(claims, alloc, config, plan, self.CUSTODY, os.path.join(tmp, "SHA256SUMS"))
 
         with tempfile.TemporaryDirectory() as tmp:
             bound = run(tmp)
         self.assertEqual(sorted(bound["manifests_sha256"]), ["bsc", "ethereum"])
+        self.assertEqual(bound["published_index"]["entries"], 7)
         for fixture in ({"bsc_funder": account(5)}, {"one_approval": 114}):
             with self.subTest(fixture), tempfile.TemporaryDirectory() as tmp, self.assertRaises(SystemExit):
                 run(tmp, **fixture)
@@ -888,14 +1220,40 @@ class ReleaseTest(unittest.TestCase):
             summary = json.loads(Path(claims, "summary.json").read_text())
             summary["contracts"][1]["status"] = "no_funder"
             Path(claims, "summary.json").write_text(json.dumps(summary))
+            manifest = json.loads(Path(claims, "bsc", "manifest.json").read_text())
+            manifest["deployment"]["status"] = "no_funder"
+            Path(claims, "bsc", "manifest.json").write_text(json.dumps(manifest))
 
-        for change in (other_allocations, changed_pools, contract_not_ready):
+        def chain_outside_the_plan(alloc, claims):
+            plan = json.loads(Path(alloc, "custody-plan.json").read_text())
+            del plan["chains"]["bsc"]
+            return plan
+
+        for change in (other_allocations, changed_pools, contract_not_ready, chain_outside_the_plan):
             with self.subTest(change.__name__), tempfile.TemporaryDirectory() as tmp:
                 alloc, claims = self.claim_fixture(tmp)
-                change(alloc, claims)
-                plan = json.loads(Path(alloc, "custody-plan.json").read_text())
+                plan = change(alloc, claims) or json.loads(Path(alloc, "custody-plan.json").read_text())
                 with self.assertRaises(SystemExit):
                     release.claim_run(claims, alloc, config, plan, self.CUSTODY)
+
+    def test_release_rejects_a_manifest_the_summary_does_not_commit(self):
+        """The second-pass review's case: summary unchanged, while the manifest's root, chain id, row
+        count, list hash, and address change together with its claims.csv."""
+        config = {"one_claims": {"claim_token": ONE_TOKEN}}
+        with tempfile.TemporaryDirectory() as tmp:
+            alloc, claims = self.claim_fixture(tmp)
+            path = Path(claims, "bsc", "manifest.json")
+            manifest = json.loads(path.read_text())
+            Path(claims, "bsc", "claims.csv").write_text("index,account\n0,someone else\n")
+            manifest.update(root="0x" + "99" * 32, chain_id=97, claim_count=2,
+                            list_sha256=lib.file_sha256(Path(claims, "bsc", "claims.csv")))
+            manifest["deployment"]["address"] = account(77)
+            path.write_text(json.dumps(manifest))
+            plan = json.loads(Path(alloc, "custody-plan.json").read_text())
+            with self.assertRaises(SystemExit) as stopped:
+                release.claim_run(claims, alloc, config, plan, self.CUSTODY)
+            for field in ("root", "chain_id", "claim_count", "list_sha256", "address"):
+                self.assertIn(f"bsc: summary {field}", str(stopped.exception))
 
     def test_reads_come_from_one_block_checked_again(self):
         class Upstream:
@@ -940,21 +1298,29 @@ class ReleaseTest(unittest.TestCase):
     def test_failed_release_build_moves_the_stale_package_out(self):
         with tempfile.TemporaryDirectory() as tmp:
             alloc, claims = self.claim_fixture(tmp)
+            roster = Path(tmp, "roster.json")
+            roster.write_text(claims_run.ROSTER_FILE.read_text().replace(self.CUSTODY, account(5)))
+            planner = ("--published-index", os.path.join(tmp, "SHA256SUMS"), "--roster", str(roster))
             stale = Path(claims, "release", "0-one-reserve", "ethereum-0xf868743b-safe.json")
             stale.parent.mkdir(parents=True)
             stale.write_text('{"rejected": true}')
             with self.assertRaises(SystemExit):
-                self.run_planner(alloc, claims)
+                self.run_planner(alloc, claims, *planner)
             self.assertTrue(stale.exists())
             with self.assertRaises(SystemExit) as stopped:
-                self.run_planner(alloc, claims, "--replace")
-            self.assertIn("custody_requirements.owners", str(stopped.exception))
+                self.run_planner(alloc, claims, *planner, "--replace")
+            self.assertIn("custody roster's Safe", str(stopped.exception))
             self.assertFalse(Path(claims, "release").exists())
             [moved] = Path(claims, "superseded").iterdir()
             self.assertEqual(Path(moved, "0-one-reserve", "ethereum-0xf868743b-safe.json").read_text(),
                              '{"rejected": true}')
-            self.assertIn("custody_requirements.owners", Path(moved, "INVALIDATED.md").read_text())
-            self.assertEqual(sorted(os.listdir(claims)), ["bsc", "ethereum", "summary.json", "superseded"])
+            self.assertIn("custody roster's Safe", Path(moved, "INVALIDATED.md").read_text())
+            self.assertEqual(sorted(os.listdir(claims)), [package.LOCK, package.RECORD, "bsc", "ethereum",
+                                                          "summary.json", "superseded"])
+            for outside in (os.path.join(tmp, "release"), os.path.join(claims, "plan")):
+                with self.subTest(outside), self.assertRaises(SystemExit) as stopped:
+                    self.run_planner(alloc, claims, *planner, "--output-dir", outside)
+                self.assertIn("release/ or release-<name>/", str(stopped.exception))
 
     def test_one_split_matches_the_funded_collateral(self):
         header = "pool_id,collateral_raw,claimable_raw,held_raw,below_minimum_raw,retained_raw\n"

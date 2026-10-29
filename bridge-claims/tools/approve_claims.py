@@ -21,20 +21,26 @@ canonical deployer and salt in `chains.json`, and stops when the manifest disagr
 live allowance is nonzero is approved for 0 first (several, like USDT, refuse a change between two
 nonzero approvals); without `--rpc` the tokens listed in `chains.json` get that reset.
 
+Before any chain read, the run is bound to its summary (`tools/claims_run.py`): every contract's
+manifest agrees with its `summary.json` entry field by field, its list and tree hash to what the
+manifest records, `--labels` names only ready contracts, and, for signable files, every file the
+run's published index (`SHA256SUMS` in the public bucket, or `--published-index`) lists hashes the
+same here.
+
 With `--rpc` (chain RPC URLs in the environment, see bridge/README.md) it reads the chain at one
-pinned block: the funder is an unmodified Safe 1.3.0 (proxy code, singleton, fallback handler, no
-module, no guard) whose owners are the roster in the config (`custody_requirements.owners`) and
-whose threshold is the required one; its nonce; the code of the CREATE2 deployer and of
-MultiSendCallOnly; the contract's code and immutables once deployed; and the Safe's balances and
-current approvals. Signable files are written only when every check passes. `--draft` writes the
+pinned block: the funder is the custody Safe of the committed roster (`custody-roster.json`), an
+unmodified Safe 1.3.0 (proxy code, singleton, fallback handler, no module, no guard) whose owners
+are the roster's and whose threshold is the roster's; its nonce; the code of the CREATE2 deployer
+and of MultiSendCallOnly; the contract's code and immutables once deployed; and the Safe's balances
+and current approvals. Signable files are written only when every check passes. `--draft` writes the
 same files as `*.draft.*` into `approval-draft/`, marked not to be signed, without `--rpc` or despite
 failed checks. Nothing is sent.
 
-Packages are built in empty staging directories and published only when every contract of the run
-passes (`tools/package.py`): an earlier package moves to `superseded/`, and a failed rebuild moves it
-there with `INVALIDATED.md`, so `approval/` only ever holds the latest batch that passed every check.
-Signable files left directly beside a manifest by earlier versions stop the run until
-`tools/quarantine.py` moves them out.
+Packages are built in empty staging directories and listed in the run record `PACKAGES.json` only
+when every contract of the refresh passes (`tools/package.py`): an earlier package moves to
+`superseded/`, and a failed rebuild moves it there with `INVALIDATED.md`. Sign only a package that
+`tools/package.py verify` reports current. Signable files left directly beside a manifest by earlier
+versions stop the run until `tools/quarantine.py` moves them out.
 """
 
 import argparse
@@ -45,6 +51,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import claim_tree as ct  # noqa: E402
+import claims_run  # noqa: E402
 import package  # noqa: E402
 import bridge_lib as lib  # noqa: E402  (toolkit/scripts/bridge, on sys.path through claim_tree)
 import safe_batch  # noqa: E402  (airdrop/tools, on sys.path through claim_tree)
@@ -93,8 +100,11 @@ def parse_args():
     parser.add_argument("--config", default=str(ct.REPO / "bridge" / "local" / "config.json"))
     parser.add_argument("--chains-file", default=str(ct.CHAINS_FILE))
     parser.add_argument("--bytecode", default=str(ct.ARTIFACT), help="forge artifact of BridgeClaims")
+    parser.add_argument("--roster", default=str(claims_run.ROSTER_FILE), help="custody Safe owner roster")
     parser.add_argument("--claims-dir", required=True, help="output directory of tools/build_claims.py")
-    parser.add_argument("--labels", nargs="*", help="only these contracts (default: every ready one)")
+    parser.add_argument("--labels", nargs="*", help="only these ready contracts (default: every ready one)")
+    parser.add_argument("--published-index", help="SHA256SUMS (path or URL) of the run's published copy; default for "
+                        "signable files: the public bucket's")
     parser.add_argument("--rpc", action="store_true", help="check the chain at one block (needed for signable files)")
     parser.add_argument("--nonce", type=int, help="Safe nonce for the hashes (one contract only); with --rpc it must "
                         "equal the Safe's nonce")
@@ -371,8 +381,8 @@ def safe_owner_checks(info, requirements, role):
     roster = sorted(lib.address(o) for o in requirements.get("owners") or [])
     owners = sorted(lib.address(o) for o in info["owners"])
     if not roster:
-        roster_detail = ("no `custody_requirements.owners` in the config; confirm the owners out of band and list "
-                         "them there. The Safe has " + ", ".join(f"`{o}`" for o in owners))
+        roster_detail = ("no owners in the custody roster (`custody-roster.json`); the Safe has "
+                         + ", ".join(f"`{o}`" for o in owners))
     elif owners == roster:
         roster_detail = f"the {len(roster)} configured owners"
     else:
@@ -395,6 +405,8 @@ def preflight(chain, manifest, bound, approvals, wrapped, requirements, nonce=No
         checks.append({"check": name, "ok": bool(ok), "detail": detail})
 
     funder, spender = manifest["funder"], bound["address"]
+    check("funder is the roster's custody Safe", lib.address(funder) == requirements.get("safe"),
+          f"funder `{funder}`, roster Safe `{requirements.get('safe')}`")
     block = chain.pin()
     state["block"] = block
     chain_id = chain.chain_id()
@@ -481,16 +493,19 @@ def draft_name(name):
 
 
 def refresh(args, config, chains, jobs, artifact):
-    """Build the package of every (manifest, manifest directory, chain) in `jobs`; publish them only if
-    all succeed, otherwise publish none and invalidate the earlier ones (`package.staged`)."""
+    """Build the package of every (manifest, manifest directory, chain) in `jobs`, each directory a
+    contract of the run `args.claims_dir`; publish them only if all succeed, otherwise publish none
+    and invalidate the earlier ones (`package.staged`)."""
     if not args.draft:
         legacy = [os.path.join(out_dir, name) for _, out_dir, _ in jobs for name in OUTPUTS
                   if os.path.lexists(os.path.join(out_dir, name))]
         if legacy:
             raise SystemExit("signable files from before approval packages are still in place: "
                              + ", ".join(legacy) + "; move them out with tools/quarantine.py first")
-    targets = [os.path.join(out_dir, DRAFT_DIR if args.draft else APPROVAL_DIR) for _, out_dir, _ in jobs]
-    with package.staged(targets, args.replace) as staging:
+    root = package.run_root(args.claims_dir)
+    targets = [os.path.join(os.path.relpath(os.path.realpath(out_dir), root), DRAFT_DIR if args.draft else APPROVAL_DIR)
+               for _, out_dir, _ in jobs]
+    with package.staged(root, targets, args.replace) as staging:
         records = [build(args, config, chains, manifest, out_dir, chain, artifact, staging.dirs[target])
                    for (manifest, out_dir, chain), target in zip(jobs, targets)]
     return records
@@ -568,6 +583,7 @@ def build(args, config, chains, manifest, out_dir, chain, artifact, package_dir)
         "root": manifest["root"],
         "claim_count": manifest["claim_count"],
         "manifest_sha256": manifest_sha,
+        "custody_roster_sha256": config["custody_requirements"].get("roster_sha256"),
         "safe_version": SAFE_VERSION,
         "multisend_call_only": multisend,
         "approve": {
@@ -620,9 +636,11 @@ def signing_sheet(manifest, record):
            (" — deployed" if record["spender_deployed"] else " — not deployed yet")),
         f"- Root: `{manifest['root']}`; rows: {manifest['claim_count']:,}; list SHA-256 `{manifest['list_sha256']}`",
         f"- Manifest SHA-256: `{record['manifest_sha256']}`",
-        f"- Package: `{DRAFT_DIR if record['draft'] else APPROVAL_DIR}/` beside the manifest; "
-        "`shasum -a 256 -c PACKAGE.sha256` there checks every file",
+        f"- Package: `{DRAFT_DIR if record['draft'] else APPROVAL_DIR}/` beside the manifest; sign it only if "
+        f"`python3 tools/package.py verify runs/<run> {manifest['label']}/{APPROVAL_DIR}` reports it current",
     ]
+    if record.get("custody_roster_sha256"):
+        lines.append(f"- Custody roster: `custody-roster.json` SHA-256 `{record['custody_roster_sha256']}`")
     if pre["checked"]:
         lines.append(f"- Chain state read at block {pre['block']['number']:,} (`{pre['block']['hash']}`)")
     lines += [
@@ -710,18 +728,20 @@ def main():
         raise SystemExit("signable files need the chain checks: add --rpc (or --draft for files not to be signed)")
     routes = lib.load_routes(args.routes)
     config = lib.load_config(args.config, routes)
+    config["custody_requirements"] = claims_run.custody_requirements(config, args.roster)
     chains = ct.load_chains(args.chains_file)
     artifact = ct.load_artifact(args.bytecode)
-    summary = lib.load_json(os.path.join(args.claims_dir, "summary.json"))
-    labels = args.labels or [c["label"] for c in summary["contracts"] if c["status"] == "ready"]
+    index = args.published_index or (None if args.draft else claims_run.default_index(args.claims_dir))
+    run = claims_run.bind(args.claims_dir, args.labels, index)
+    if run.index:
+        print(f"the run matches the {run.index['entries']} files of the published index {run.index['source']}")
+    summary, labels = run.summary, [c.entry["label"] for c in run.contracts]
     if args.nonce is not None and len(labels) != 1:
         raise SystemExit("--nonce needs exactly one contract (--labels)")
     jobs = []
-    for label in labels:
-        out_dir = os.path.join(args.claims_dir, label)
-        manifest = lib.load_json(os.path.join(out_dir, "manifest.json"))
-        chain = Chain(lib.chain_rpc(config, manifest["chain"])) if args.rpc else None
-        jobs.append((manifest, out_dir, chain))
+    for contract in run.contracts:
+        chain = Chain(lib.chain_rpc(config, contract.manifest["chain"])) if args.rpc else None
+        jobs.append((contract.manifest, contract.out_dir, chain))
     for record in refresh(args, config, chains, jobs, artifact):
         label = record["label"]
         failed = [c["check"] for c in record["preflight"]["checks"] if not c["ok"]]
