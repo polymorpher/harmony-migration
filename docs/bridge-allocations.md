@@ -151,7 +151,11 @@ and claim at the same address. Safes and MultiSigWallets claim at the same
 address only when they hold on the claim chain itself; elsewhere they are held
 until an approved destination exists. 1wallets, SmartVaults, and other
 contracts are held for review. On Harmony the cutoff contract review adds its
-1wallet, multisig, SmartVault, and validator classifications.
+1wallet, multisig, SmartVault, and validator classifications. An account with
+no code where it holds counts as key-controlled only when no other classified
+chain has a contract at the same address (a contract address has no key); one
+that does is held as that contract would be, for example a Harmony contract
+holding bridged ONE on BNB Chain, until an override decides it.
 
 Bridge contracts, tokens, endpoints, Horizon bridge managers and multisigs,
 the bridge deployer, custody multisigs, the reserve Safe, the zero address,
