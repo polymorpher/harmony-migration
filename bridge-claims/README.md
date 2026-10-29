@@ -39,7 +39,10 @@ test/EscrowRelease.t.sol     a run's release files replayed on a fork of each ch
 script/Deploy.s.sol          CREATE2 deployment from a run manifest, with every check
 chains.json                  per-chain constants: wrapped native coin, approval quirks, CREATE2
                              deployer and salt
+custody-roster.json          the custody Safe, its four owners, and the threshold the tools require
 tools/claim_tree.py          leaves, tree, proofs, CREATE2 address (shared by the tools)
+tools/claims_run.py          binds a run's manifests and files to its summary and published index,
+                             and loads the custody roster
 tools/build_claims.py        claim lists -> published list, tree, samples, manifest per contract
 tools/approve_claims.py      Safe Transaction Builder batches (approve and revoke) and signing sheet
 tools/proof.py               one payee's rows and proofs, and a claimMany command
@@ -48,9 +51,11 @@ tools/release_plan.py        the owner transactions that release each escrow on 
                              calldata, and a handoff folder per key holder)
 tools/send_calldata.py       sends one EOA calldata file with `cast`, simulating each transaction
                              first and logging each receipt so a rerun resumes
-tools/package.py             signable packages (approval/, release/): built in an empty staging
-                             directory and published whole; a failed build invalidates the old one
-tools/quarantine.py          moves a run's rejected signable files to quarantine/ with their hashes
+tools/package.py             signable packages (approval/, release/): one lock per run, built in an
+                             empty staging directory, current only once listed in PACKAGES.json;
+                             `verify` checks a package before signing
+tools/quarantine.py          moves a run's rejected signable files to quarantine/ with their
+                             hashes, all or none, under the run's lock (`--recover` after a crash)
 tools/build_fixture.py       regenerates test/fixtures/claim-tree.json
 tools/test_tools.py          tests of the tools
 runs/                        generated runs (ignored: address-level amounts)
@@ -73,6 +78,7 @@ python3 tools/build_claims.py \
 
 set -a; . ../bridge/local/rpc.env; set +a       # archive RPC URLs (never print them)
 python3 tools/approve_claims.py --claims-dir runs/bridge-allocations-<date> --rpc   # --draft: unsignable files
+python3 tools/package.py verify runs/bridge-allocations-<date>   # what is current, before signing
 
 CLAIMS_DIR=runs/bridge-allocations-<date>/ethereum FORK_RPC_URL="$ETHEREUM_RPC" \
   forge test --match-contract Fork -vv

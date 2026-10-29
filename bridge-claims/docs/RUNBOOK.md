@@ -46,10 +46,16 @@ every chain. Before reading any chain it checks the claim run (`--claims-dir`):
 - every ready contract's funder is that Safe;
 - the ONE contract approves exactly the claimable ONE that stage 1 transfers.
 
+- every ready manifest agrees field by field with its `summary.json` entry, and its list and tree
+  with the manifest;
+- every file of the run's published index (`SHA256SUMS` in the public bucket, or
+  `--published-index`) hashes the same locally.
+
 It then reads each chain at one pinned block, checked again before anything is written, and stops
-unless the Safe is an unmodified Safe 1.3.0 owned by the configured roster (below) on every chain.
-The package `runs/<run>/release/` is published only whole. A failed build leaves no `release/`,
-and moves the earlier one to `superseded/` with `INVALIDATED.md`:
+unless the Safe is an unmodified Safe 1.3.0 owned by the roster (below) on every chain. The package
+`runs/<run>/release/` is published only whole and listed in the run record `PACKAGES.json` (see
+"Packages" in step 4). A failed build leaves no `release/`, and moves the earlier one to
+`superseded/` with `INVALIDATED.md`:
 
 ```sh
 CLAIMS_DIR=runs/<run>/<label> RELEASE_DIR=runs/<run>/release FORK_RPC_URL="$ETHEREUM_RPC" \
@@ -62,16 +68,29 @@ CLAIMS_DIR=runs/<run>/<label> RELEASE_DIR=runs/<run>/release FORK_RPC_URL="$ETHE
 python3 tools/approve_claims.py --claims-dir runs/<run> --labels <label> --rpc --replace
 ```
 
-First list the four custody Safe owners in the bridge config as `custody_requirements.owners`,
-taken from a source independent of the chain (the owners themselves), not from what the Safe
-reports. The tool never takes the spender from the manifest: it recomputes the CREATE2 address
-from the compiled bytecode (`forge build`) and the manifest's constructor arguments and stops on
-any difference. It then reads the chain at one block and publishes the package
-`runs/<run>/<label>/approval/` (`safe-approve.json`, `safe-revoke.json`, `approvals.json`,
-`APPROVALS.md`, `PACKAGE.sha256`) only if every check passes:
+The custody Safe, its four owners, and the threshold come from the committed
+`custody-roster.json`; a bridge config naming other owners stops the tools. Before the first
+signable package, each owner confirms that their own address is in that file, from their own
+device rather than from what the Safe reports, and the confirmations are kept with the run.
 
-- the funder is an unmodified Safe 1.3.0 (proxy code, singleton, fallback handler, no module, no
-  guard), owned by exactly the configured roster with the required threshold;
+Before reading any chain, the tool binds the run to its summary (`tools/claims_run.py`):
+
+- each contract's manifest agrees with its `summary.json` entry on label, chain, chain id, funder,
+  root, row count, list hash, address, and status;
+- `claims.csv` and `tree.txt` hash to what the manifest records;
+- `--labels` names only ready contracts, each once;
+- no manifest in the run lacks an entry;
+- every file of the run's published index (`SHA256SUMS` in the public bucket, or
+  `--published-index`) hashes the same locally.
+
+It never takes the spender from the manifest: it recomputes the CREATE2 address from the compiled
+bytecode (`forge build`) and the manifest's constructor arguments and stops on any difference. It
+then reads the chain at one block and publishes the package `runs/<run>/<label>/approval/`
+(`safe-approve.json`, `safe-revoke.json`, `approvals.json`, `APPROVALS.md`, `GENERATION`,
+`PACKAGE.sha256`) only if every check passes:
+
+- the funder is the roster's custody Safe, an unmodified Safe 1.3.0 (proxy code, singleton,
+  fallback handler, no module, no guard), owned by exactly the roster's owners with its threshold;
 - MultiSendCallOnly and the CREATE2 deployer have their official code;
 - the contract, if deployed, has exactly the expected code and immutables;
 - the Safe holds every asset's total;
@@ -85,6 +104,26 @@ The batch is built for the Safe's nonce at that block, which `APPROVALS.md` reco
 `--draft` writes the same files as `*.draft.*` into `approval-draft/`, titled not to be signed,
 without `--rpc` or despite failed checks; never load a draft into the Safe.
 
+### Packages
+
+A package is current only while the run record `runs/<run>/PACKAGES.json` lists it, with the
+SHA-256 of its `PACKAGE.sha256` and its `GENERATION`, and marks no operation pending. Every
+refresh, approval or release, and every quarantine takes one lock on the run directory, so they
+never overlap, whichever contracts they touch. A refresh first takes its targets out of the record
+and marks it pending; it lists the new packages only after all of them are in place. A refresh that
+fails, or a process killed between two renames, therefore leaves none of its packages listed, and a
+pending record makes nothing in the run current. Symlinks are refused from the run directory down.
+Before signing:
+
+```sh
+python3 tools/package.py verify runs/<run> <label>/approval   # or release
+```
+
+It must print `current` and exit 0. Compare the `PACKAGES.json` SHA-256 it prints with the one the
+builder sends with the package. Without the tool: `shasum -a 256 <label>/approval/PACKAGE.sha256`
+equals the record's `package_sha256`, `GENERATION` holds its `generation`, `pending` is null, and
+`shasum -a 256 -c PACKAGE.sha256` passes inside the package.
+
 Approval files that earlier versions wrote directly beside a manifest stop the tool until they are
 quarantined, a reviewed step of its own that keeps them, with their SHA-256, under
 `runs/<run>/quarantine/<time>/`:
@@ -93,10 +132,15 @@ quarantined, a reviewed step of its own that keeps them, with their SHA-256, und
 python3 tools/quarantine.py runs/<run> --reason "<why>" --dry-run   # then without --dry-run
 ```
 
+Quarantine holds the same lock and writes its plan, with every file's SHA-256, to
+`QUARANTINE.json` before moving anything. A failed move puts everything back. An interrupted
+quarantine leaves the record pending, so nothing in the run is current, until
+`tools/quarantine.py runs/<run> --recover` completes it.
+
 Then:
 
-1. In the Safe web app, open Transaction Builder and load `approval/safe-approve.json`. Check
-   `shasum -a 256 -c PACKAGE.sha256` in `approval/` first. It wraps the native
+1. In the Safe web app, open Transaction Builder and load `approval/safe-approve.json`, after
+   `tools/package.py verify` reports the package current. It wraps the native
    total (when the chain has native rows) and approves the contract for exactly each asset's total
    (a token with a nonzero allowance is approved for 0 first).
 2. Each signer compares the Safe transaction hash on the device with the one in `APPROVALS.md`,

@@ -11,8 +11,8 @@ under BC-H02 and has a new root and address.
 | BC-H01 | High | Fixed: both tools recompute the spender from the bytecode and check code hashes |
 | BC-H02 | High | Resolved: eight of the ten payees are validator keys (no issue); the other two are Harmony contracts and are now held, with a new Ethereum list |
 | BC-M01 | Medium | Fixed: the deployment is a plain call to the canonical deployer |
-| BC-M02 | Medium | Fixed in two rounds: the approval tool fails closed, and a failed refresh leaves nothing signable; the rejected files are quarantined. The team must add the owner roster |
-| BC-M03 | Medium | Fixed in two rounds: the release planner derives and verifies the recipient, binds it to the claim run's manifests, reads each chain at one pinned block, and publishes only whole packages |
+| BC-M02 | Medium | Fixed in three rounds: the approval tool fails closed; one lock per run covers every refresh and quarantine; a package is current only once the run record lists it; quarantine is all or none; the owner roster is committed |
+| BC-M03 | Medium | Fixed in three rounds: the release planner derives and verifies the recipient, reads each chain at one pinned block, and publishes only whole packages; both tools bind every manifest one to one to the summary and the published index before any chain read |
 
 ## Where the process stood
 
@@ -417,6 +417,74 @@ of the three changed contracts with the real tokens.
 The trees are unchanged from `bridge-allocations-20261028`. The second-pass report's Linea
 `claims.csv` hash (`…cc9f70312…`) is a typo for the value above, which the first report also gives.
 
+## Review of `5a8937e`
+
+The second-pass remediation review (commit `5a8937e`) confirmed the seal and rename fixes. It left
+BC-M02 and BC-M03 partly open and found the Python suite red. That commit carried the package rewrite
+before its tests and before the run-wide lock and BC-M03 binding were done. The 22 failures were
+listing assertions written before the lock file and `GENERATION` existed. Each counterexample is now
+closed. The named test reproduces it.
+
+### BC-M02: one lock and one record per run
+
+| Counterexample | Fix | Test |
+|---|---|---|
+| A one-label refresh locked `<run>/<label>`, an all-label refresh `<run>` | `package.staged` takes the run directory, resolved once. Every approval refresh, release refresh, and quarantine locks `<run>/.packages.lock`, whichever contracts it touches | `test_one_lock_covers_every_refresh_and_quarantine`: one label, all labels, release, quarantine, and the same run through a symlink |
+| No run-wide marker of a complete activation | The run record `PACKAGES.json` lists each current package with the SHA-256 of its `PACKAGE.sha256` and its `GENERATION`. A refresh first takes its targets out and marks the record pending; it lists the new packages only after all are in place. `tools/package.py verify` refuses anything else | `test_crash_between_renames_leaves_nothing_current`: a child process killed after the first rename |
+| A package `set_aside` could not move stayed at its path | It is no longer listed, so it is not current; the failure handler says so instead of claiming it was cleared | `test_a_package_that_cannot_be_moved_is_not_current` |
+| The record itself cannot be written | That write is the first change, so the refresh stops with the run unchanged | `test_a_refresh_that_cannot_write_the_record_changes_nothing` |
+| Quarantine took no lock and could stop part-way with no record | It holds the run lock and writes `QUARANTINE.json`, with every file's SHA-256, before moving anything. A failed move puts everything back. An interrupted one leaves the record pending, so nothing is current and refreshes refuse to run until `--recover` completes it. Moved packages are taken out of the record | `test_failed_quarantine_move_puts_everything_back`, `test_interrupted_quarantine_blocks_the_run_until_recovered`, `test_quarantine_unlists_the_packages_it_moves` |
+| A symlinked label directory was accepted | Every component from the run directory down to each target is checked, and `superseded/`, `quarantine/`, the record, and the lock too | `test_symlinks_from_the_run_down_are_refused` |
+| No owner roster in the reviewed checkout's config | The custody Safe, its four owners, and threshold 2 are committed in `custody-roster.json` (SHA-256 `7b958344e93d9b9286aa7d5b57859f8f41752d634a4c8a96c01fb8243eddd31e`). A config naming other owners stops both tools. The approval preflight also checks that the funder is the roster's Safe. Each owner still confirms their own address before the first signature (`RUNBOOK.md` §4) | `test_roster_is_the_committed_one`, and the `other_custody_safe` preflight case |
+
+A signer checks a package with `python3 tools/package.py verify runs/<run> <label>/approval`, or by
+hand (`RUNBOOK.md` §4), and compares the record's SHA-256 with the one the builder sends.
+
+### BC-M03: every manifest bound to the summary and the published index
+
+`tools/claims_run.py` binds the run before either tool reads a chain:
+
+- each `summary.json` entry and its manifest agree on label, chain, chain id, funder, root, row
+  count, list hash, address, and status;
+- each ready contract's `claims.csv` and `tree.txt` hash to the manifest's digests;
+- labels are unique plain names, and no manifest in the run lacks an entry;
+- explicit `--labels` must name ready entries, each once;
+- signable approvals and every release compare all files of the run's published `SHA256SUMS`
+  (fetched from the public bucket by default, or `--published-index`). `release-plan.json` records
+  the comparison.
+
+The planner also rejects a ready contract on a chain outside the custody plan, and writes only to
+`release/` or `release-<name>/` inside the run. `test_release_rejects_a_manifest_the_summary_does_not_commit`
+is the review's case: an unchanged summary, with a manifest whose root, chain id, row count, list
+hash, and address changed along with its `claims.csv`. It now fails before any chain read and names
+all five fields. `BindTest` covers each field, the list and tree digests, duplicate, path-like,
+unexpected, and missing entries, the label rules, and four index mismatches.
+
+### Test gate
+
+`tools/test_tools.py`: 57 tests pass (it was 42 run, 22 failed). Forge: 30 pass, and the two fork
+suites skip without fork inputs. `toolkit.tests.test_bridge_allocations`: 14 pass.
+
+### Canonical run rebuilt with this code
+
+`runs/bridge-allocations-20261029` matched all 22 files of the public index. Its packages were
+rebuilt at fresh pinned blocks, and the earlier ones, which predate `GENERATION`, moved to
+`superseded/`:
+
+| Package | `PACKAGE.sha256` SHA-256 | Safe transaction hash (nonce) |
+|---|---|---|
+| `bsc/approval` | `f31e1de55315317a8e08f23b631cab46b83308b74df8cd2464a535c595747d24` | `0x2e3ff92adb413103013702fe48e4fe2601faa3dd81013a55ebe8b591af206950` (1) |
+| `arbitrum/approval` | `81d2e357e47ccac64daf4682b952e6ce2289535ef4febc447c80c06dd2f4de32` | `0x27bd7ddffc70425b0f989daeb3bb3e7d4d30da7860ba0d7dc2f9ddef9b0268ea` (1) |
+| `base/approval` | `b0ae554d65a57ed968dd180676d08b3a48c9237a571ee73ccc12b944e1530aa8` | `0xf142bc2d2c1283c40dc3428f869ff2fd6b8b0036939361e07090e6f72d0f12c8` (1) |
+| `linea/approval` | `0ee1bdf6f5a81ea09c4acc20e83927261abd6595a2880e7b4a71fd90988c9f4e` | `0xc5038a7f1b94d377b498317c122058a5e6f75dca09b22fe5a22c27c104fdde99` (1) |
+| `release` (ONE stage 1) | `a05bd8a506c840de6b6d9dc027a42c5d1d9682fb2454b55ef39d793414cc53e9` | `0xcf8b0b50f1404013e94666c178d66426b54c654fcfa3bf277e3ed865b1018e78` (Reserve Safe, 61) |
+
+`PACKAGES.json` is at revision 6, SHA-256
+`5d67813b6c8ba409c71149fe7a01a9037236a84b9f6605173ae20d68fdb30fc2`, and `verify` reports all five
+packages current. The approve and revoke Safe transaction hashes equal the earlier packages': the
+same calls at the same nonces. Every chain check passed: 58, 22, 19, and 19, one more each than
+before, because the funder is now also checked against the roster's Safe.
+
 ## Remaining before signing
 
 1. Have the auditor re-verify the published artifacts against the hashes above.
@@ -426,7 +494,9 @@ The trees are unchanged from `bridge-allocations-20261028`. The second-pass repo
 3. Right before signing, refresh each chain's approval package (Ethereum once ONE stage 1 has
    executed):
    `tools/approve_claims.py --claims-dir runs/bridge-allocations-20261029 --labels <label> --rpc --replace`.
-   Sign from `<label>/approval/` after independently decoding every call and Safe hash.
-4. Decide who pays for the dust rows (BC-I09) before opening.
-5. Deploy from the same run, verify the source on each explorer, verify code and immutables on real
+   Sign from `<label>/approval/` only after `tools/package.py verify` reports it current, and after
+   independently decoding every call and Safe hash.
+4. Each custody Safe owner confirms their address in `custody-roster.json` before the first signature.
+5. Decide who pays for the dust rows (BC-I09) before opening.
+6. Deploy from the same run, verify the source on each explorer, verify code and immutables on real
    nodes, and open as in `RUNBOOK.md` §5 to §6.

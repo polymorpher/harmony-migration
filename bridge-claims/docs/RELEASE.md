@@ -121,17 +121,24 @@ python3 tools/release_plan.py --allocations-dir ../artifacts/<run>/allocations \
 
 The planner first checks that `runs/<run>` is the claim run these allocations fund:
 
-- it was built from them (summary, custody plan, and pools by SHA-256);
-- every ready contract's funder is the custody Safe;
+- every ready manifest agrees field by field with its `summary.json` entry, and its `claims.csv`
+  and `tree.txt` with the manifest (`tools/claims_run.py`);
+- every file of the run's published index (`SHA256SUMS` in the public bucket, or
+  `--published-index`) hashes the same locally;
+- it was built from these allocations (summary, custody plan, and pools by SHA-256);
+- every chain of the custody plan, and no other, has a ready contract, and each contract's funder
+  is the custody Safe of the committed roster (`custody-roster.json`);
 - the ONE contract approves exactly the stage-1 amount.
 
 It then reads every chain at one pinned block, which `RELEASE.md` and `release-plan.json` record,
 and checks that each block is unchanged before writing.
 
-The package is built in an empty staging directory and published only if all of this passes. An
-earlier `release/` moves to `runs/<run>/superseded/`, with `INVALIDATED.md` when the new build
-failed, so `release/` never holds files from an older or failed build. `PACKAGE.sha256` lists every
-file. `runs/<run>/release/` then holds, in the order to run them:
+The package is built in an empty staging directory and published only if all of this passes. It
+must be `release/` or `release-<name>/` in the run, and holds the run's package lock while it is
+built. An earlier `release/` moves to `runs/<run>/superseded/`, with `INVALIDATED.md` when the new
+build failed. The run record `PACKAGES.json` lists the package only once it is complete, so sign
+nothing from it unless `python3 tools/package.py verify runs/<run> release` reports it current (see
+the runbook, step 4). `runs/<run>/release/` then holds, in the order to run them:
 
 | Step | Directory | Who |
 |---|---|---|
