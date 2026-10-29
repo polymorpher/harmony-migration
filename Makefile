@@ -170,7 +170,7 @@ bridge-claims: check-python
 	cd bridge-claims && python3 tools/approve_claims.py \
 		--config ../$(BRIDGE_CONFIG) \
 		--claims-dir runs/$(BRIDGE_CLAIMS_RUN) \
-		$(if $(BRIDGE_CLAIMS_RPC),--rpc) \
+		$(if $(BRIDGE_CLAIMS_RPC),--rpc,--draft) \
 		--replace
 
 bridge-claims-release: check-python
