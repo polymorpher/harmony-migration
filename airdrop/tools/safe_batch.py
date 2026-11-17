@@ -1062,6 +1062,41 @@ def read_snapshot(path: Path, wanted: set[str]) -> tuple[dict[str, dict], bool]:
     return found, payment_amounts
 
 
+FULL_SNAPSHOT_COLUMNS = ("eth_address", "exchange", "migration_stage", "self_stake_atto", "delegated_atto")
+
+
+def read_full_snapshot(path: Path, wanted: set[str]) -> dict[str, dict]:
+    """harmony-airdrop-tracking's snapshot-20260911-full.csv: exchange, migration stage and stake of the wanted
+    (lower-case) addresses."""
+    if not path.is_file():
+        raise common.InputError(f"full snapshot not found: {path}")
+    found = {}
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.reader(handle)
+        header = [h.strip().lower() for h in next(reader, [])]
+        missing = [c for c in FULL_SNAPSHOT_COLUMNS if c not in header]
+        if missing:
+            hint = " (a Git LFS pointer? run `git lfs pull` in harmony-airdrop-tracking)" if len(header) < 3 else ""
+            raise common.InputError(f"{path}: no {', '.join(missing)} column{hint}")
+        index = {c: header.index(c) for c in FULL_SNAPSHOT_COLUMNS}
+        column = index["eth_address"]
+        for record in reader:
+            if len(record) > column and record[column].strip().lower() in wanted:
+                found[record[column].strip().lower()] = {c: record[i].strip() for c, i in index.items()}
+    return found
+
+
+def all_safe_records(args: argparse.Namespace, safe: str, api_key: str | None) -> list[dict]:
+    """Every transaction of the Safe, executed or not: from --tx-json when given, else the Transaction Service."""
+    if args.tx_json:
+        payload = json.loads(args.tx_json.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and "results" in payload:
+            payload = payload["results"]
+        return payload if isinstance(payload, list) else [payload]
+    base = (args.service_url or SAFE_TX_SERVICE.get(args.chain_id, "")).rstrip("/")
+    return service_pages(f"{base}/api/v1/safes/{safe}/multisig-transactions/?ordering=nonce&limit=100", api_key)
+
+
 def write_table(path: Path | None, fmt: str, fields: list[str], rows: list[dict], meta: dict | None = None) -> None:
     table = [{k: row.get(k, "") for k in fields} for row in rows]
     if fmt == "json":
@@ -1096,9 +1131,11 @@ def cmd_show(args: argparse.Namespace) -> None:
         if args.compare:
             rows, _ = common.read_rows(args.compare, None, None, args.amount_unit)
             expected = {r.address.lower(): r.amount for r in common.consolidate(rows, "input", False)}
-        records, info, source, notes = fetch_transactions(args, safe, nonces, args.api_key or env.get("SAFE_API_KEY"))
+        api_key = args.api_key or env.get("SAFE_API_KEY")
+        records, info, source, notes = fetch_transactions(args, safe, nonces, api_key)
         if not records:
             raise common.InputError("no matching transaction")
+        history = all_safe_records(args, safe, api_key)
     except (common.InputError, KeyError, ValueError) as exc:
         common.die(str(exc))
         return
@@ -1187,7 +1224,57 @@ def cmd_show(args: argparse.Namespace) -> None:
                 reasons.append("differs from list")
         row["check"] = "; ".join(reasons) or "ok"
 
-    details_fields = ["nonce", "position", *PAYMENT_COLUMNS, "amount", "amount_atto"]
+    # Paid before: by an executed Safe transaction outside the ones listed here (a repeat within them is reported
+    # above), or by another proposal still waiting in the queue.
+    reviewed = {t["safe_tx_hash"].lower() for t in transactions}
+    next_nonce = int(info["nonce"]) if info else None
+    paid_before, queued_elsewhere = defaultdict(list), defaultdict(list)
+    executed_read = transfers_read = 0
+    for p in read_proposals(history, args.chain_id, safe, token):
+        if p.safe_tx_hash in reviewed:
+            continue
+        if p.executed and p.successful:
+            executed_read += 1
+            transfers_read += len(p.transfers)
+            for address, amount in p.transfers:
+                paid_before[address].append((p.nonce, amount))
+        elif not p.executed and (next_nonce is None or p.nonce >= next_nonce):
+            for address, amount in p.transfers:
+                queued_elsewhere[address].append((p.nonce, amount))
+    repeats = queued_repeats = 0
+    for row in listing:
+        earlier = [(n, a) for n, a in paid_before.get(row["eth_address"], []) if n < row["nonce"]]
+        row["paid_before"] = "; ".join(f"nonce {n}: {common.format_one(a)}" for n, a in earlier)
+        repeats += bool(earlier)
+        queued_repeats += bool(queued_elsewhere.get(row["eth_address"]))
+        for n, a in earlier:
+            failures.append(f"nonce {row['nonce']}: {row['eth_address']} was already paid {common.format_one(a)} "
+                            f"tokens by executed nonce {n}")
+        for n, a in queued_elsewhere.get(row["eth_address"], []):
+            failures.append(f"nonce {row['nonce']}: {row['eth_address']} is also paid {common.format_one(a)} tokens by "
+                            f"queued nonce {n}")
+
+    stages, exchanges = defaultdict(int), 0
+    if args.full_snapshot:
+        try:
+            full = read_full_snapshot(args.full_snapshot, set(paid_in))
+        except common.InputError as exc:
+            common.die(str(exc))
+            return
+        for row in listing:
+            match = full.get(row["eth_address"])
+            row["snapshot_stage"] = "not in snapshot" if match is None else (match["migration_stage"] or "none")
+            row["snapshot_exchange"] = (match or {}).get("exchange", "")
+            stages[row["snapshot_stage"]] += 1
+            if row["snapshot_exchange"] or row["snapshot_stage"] == "exchange_manual":
+                exchanges += 1
+                failures.append(f"nonce {row['nonce']}: {row['eth_address']} is an exchange wallet in "
+                                f"{args.full_snapshot.name} ({row['snapshot_exchange'] or 'exchange_manual'}); "
+                                "exchanges are paid manually")
+
+    details_fields = ["nonce", "position", *PAYMENT_COLUMNS, "amount", "amount_atto", "paid_before"]
+    if args.full_snapshot:
+        details_fields += ["snapshot_stage", "snapshot_exchange"]
     if payment_snapshot:
         details_fields.append("snapshot_migration_balance")
     if expected is not None:
@@ -1240,6 +1327,13 @@ def cmd_show(args: argparse.Namespace) -> None:
         note(f"--compare        : {same} of {len(listing)} amounts equal {args.compare.name} exactly; "
              f"{len(unpaid)} of its {len(expected)} rows ({common.format_one(sum(expected[a] for a in unpaid))} tokens) "
              "are not paid by these transactions")
+    note(f"paid before      : {repeats} of {len(listing)} transfers go to an address an earlier executed Safe transaction "
+         f"paid (read {executed_read} executed transactions, {transfers_read} transfers); {queued_repeats} to an address "
+         "another queued transaction pays")
+    if args.full_snapshot:
+        note(f"--full-snapshot  : the {len(listing)} recipients in {args.full_snapshot.name}: "
+             + ", ".join(f"{count} {stage}" for stage, count in sorted(stages.items(), key=lambda kv: -kv[1]))
+             + f"; {exchanges} exchange wallet(s)")
     bad = sum(1 for r in listing if r["check"] != "ok")
     if checked and bad:
         failures.append(f"{bad} transfer(s) do not match (see the check column of the details file)")
@@ -1254,7 +1348,8 @@ def cmd_show(args: argparse.Namespace) -> None:
                 (" and a check column (ok, or why not)" if checked else "")
         note(f"details          : {details}")
         note(f"                   one row per transfer with its nonce and position, the exact amount in ONE and in the "
-             f"smallest unit{extra}")
+             "smallest unit, any earlier payment by an executed Safe transaction"
+             + (", the snapshot's migration stage and exchange" if args.full_snapshot else "") + extra)
     elif checked and bad:
         note("details          : pass --out or --details to write the per-transfer checks")
     for message in warnings:
@@ -1264,7 +1359,9 @@ def cmd_show(args: argparse.Namespace) -> None:
     if failures:
         common.die(f"{len(failures)} check(s) failed; do not sign until they are explained")
     note("OK: each Safe transaction hash above was recomputed from the call data listed; every call is a plain "
-         "transfer of the token. Before signing, compare the hashes with the Safe web app and your wallet screen.")
+         "transfer of the token; no recipient was paid by an earlier executed Safe transaction or is paid by another "
+         "queued one" + ("" if not args.full_snapshot else ", and none is an exchange wallet in the snapshot")
+         + ". Before signing, compare the hashes with the Safe web app and your wallet screen.")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2044,6 +2141,9 @@ def main(argv: list[str] | None = None) -> None:
                    help="harmony-airdrop-tracking's snapshot-20260911.csv: adds last_signed and last_inbound, and every "
                         "amount must equal its "
                         "migration_balance to the whole ONE (snapshot files without that column add the dates only)")
+    s.add_argument("--full-snapshot", type=Path,
+                   help="harmony-airdrop-tracking's snapshot-20260911-full.csv (Git LFS): fail on any recipient that is "
+                        "an exchange wallet there, and count the recipients by migration stage")
     s.add_argument("--out", type=Path,
                    help="write the five-column list (one1_address,eth_address,migration_balance,last_signed,last_inbound; "
                         "whole ONE, truncated) here instead of printing it, and the details, with exact amounts, next to "

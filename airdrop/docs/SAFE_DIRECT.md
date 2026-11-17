@@ -186,6 +186,14 @@ is exactly what that hash (and the owners' signatures) covers. It fails if any c
 transfer of `--token`, if a transfer is not delegated through an official MultiSendCallOnly, if the
 transaction pays a gas refund, or if an address is paid twice.
 
+It also reads every other transaction of the Safe, executed or queued, and fails if a recipient was
+already paid by an executed transaction or is paid by another proposal still in the queue. A
+failed execution does not count, and nor do stale proposals at nonces the Safe has already used.
+This is `crosscheck`'s second and third check, and it needs no files from us. With
+`--full-snapshot harmony-airdrop-tracking/snapshot-20260911-full.csv` (a Git LFS file), `show` also
+fails on any recipient that is an exchange wallet there, and counts the recipients by migration
+stage (`deferred` for confirmed wallets, `initial` for the initial distribution).
+
 It writes two files:
 
 - `queued.csv` has exactly the reviewers' five columns,
@@ -195,9 +203,10 @@ It writes two files:
   repositories means the whole entitlement, including self-stake and delegations that become
   validator-vault principal. The two dates come from `--snapshot`.
 - `queued-details.csv` (or `--details PATH`) adds the nonce, the position in the transaction, the
-  exact amount (in ONE and in the smallest unit), the snapshot's `migration_balance` and a `check`
-  column: `ok`, or why not (`differs from snapshot`, `not in snapshot`, `differs from list`,
-  `not in list`).
+  exact amount (in ONE and in the smallest unit), any earlier payment by an executed Safe
+  transaction (`paid_before`), with `--full-snapshot` the snapshot's `snapshot_stage` and
+  `snapshot_exchange`, the snapshot's `migration_balance` and a `check` column: `ok`, or why not
+  (`differs from snapshot`, `not in snapshot`, `differs from list`, `not in list`).
 
 `--snapshot` is `harmony-airdrop-tracking/snapshot-20260911.csv`: every address whose
 whole entitlement is at least 1 ONE, in the same five columns, with `migration_balance` (the wallet

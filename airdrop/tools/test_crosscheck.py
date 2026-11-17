@@ -230,5 +230,63 @@ class CrosscheckTests(Fixture):
         self.assertIn("its content hashes to", report)
 
 
+class ShowTests(Fixture):
+    """safe-batch show against the Safe's whole history, from a saved list of the service's records."""
+
+    def run_show(self, records: list[dict], nonce: str, full_snapshot: list[tuple[str, str, str]] | None = None):
+        path = self.dir / "transactions.json"
+        path.write_text(json.dumps(records))
+        full = None
+        if full_snapshot is not None:
+            full = write_csv(self.dir / "snapshot-full.csv", ["eth_address", "exchange", "migration_stage",
+                                                              "self_stake_atto", "delegated_atto"],
+                             [{"eth_address": a, "exchange": e, "migration_stage": s, "self_stake_atto": "0",
+                               "delegated_atto": "0"} for a, e, s in full_snapshot])
+        args = SimpleNamespace(env=self.dir / "none.env", safe=SAFE, token=TOKEN, chain_id=1, nonce=[nonce],
+                               safe_tx_hash=None, compare=None, amount_unit=None, snapshot=None, full_snapshot=full,
+                               out=self.dir / "queued.csv", details=None, format=None, service_url=None, api_key=None,
+                               tx_json=path)
+        stderr = io.StringIO()
+        code = 0
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+            try:
+                safe_batch.cmd_show(args)
+            except SystemExit as exc:
+                code = exc.code
+        with (self.dir / "queued-details.csv").open(newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        return code, stderr.getvalue(), rows
+
+    def test_first_payments_pass(self):
+        records = [record(0, [(CAROL, 5 * ONE)], True), record(1, [(ALICE, 2 * ONE), (BOB, 3 * ONE)], False)]
+        code, err, rows = self.run_show(records, "1", [(ALICE, "", "deferred"), (BOB, "", "deferred")])
+        self.assertEqual(code, 0, err)
+        self.assertIn("paid before      : 0 of 2 transfers go to an address an earlier executed Safe transaction paid "
+                      "(read 1 executed transactions, 1 transfers); 0 to an address another queued transaction pays", err)
+        self.assertIn("the 2 recipients in snapshot-full.csv: 2 deferred; 0 exchange wallet(s)", err)
+        self.assertEqual([r["paid_before"] for r in rows], ["", ""])
+
+    def test_a_wallet_paid_before_or_in_another_queued_transaction_fails(self):
+        records = [record(0, [(ALICE, 5 * ONE)], True), record(1, [(ALICE, 5 * ONE), (BOB, 3 * ONE)], False),
+                   record(2, [(BOB, 3 * ONE)], False)]
+        code, err, rows = self.run_show(records, "1")
+        self.assertEqual(code, 1)
+        self.assertIn(f"{ALICE} was already paid 5 tokens by executed nonce 0", err)
+        self.assertIn(f"{BOB} is also paid 3 tokens by queued nonce 2", err)
+        self.assertEqual(rows[0]["paid_before"], "nonce 0: 5")
+
+    def test_a_failed_execution_is_not_a_payment(self):
+        failed = record(0, [(ALICE, 5 * ONE)], True)
+        failed["isSuccessful"] = False
+        code, err, _ = self.run_show([failed, record(1, [(ALICE, 5 * ONE)], False)], "1")
+        self.assertEqual(code, 0, err)
+
+    def test_exchange_wallets_in_the_full_snapshot_fail(self):
+        records = [record(1, [(ALICE, 2 * ONE), (DAVE, ONE)], False)]
+        code, err, _ = self.run_show(records, "1", [(ALICE, "", "deferred"), (DAVE, "kucoin", "exchange_manual")])
+        self.assertEqual(code, 1)
+        self.assertIn(f"{DAVE} is an exchange wallet in snapshot-full.csv (kucoin); exchanges are paid manually", err)
+
+
 if __name__ == "__main__":
     unittest.main()
