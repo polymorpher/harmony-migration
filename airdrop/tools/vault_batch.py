@@ -1088,8 +1088,12 @@ def verify_chain(manifest: dict, artifact: Artifact, vaults: list[Vault], rpc: c
     deployed = [v for v in vaults if states[v.address.lower()]["deployed"]]
     for v in deployed:
         s = states[v.address.lower()]
-        good = s.get("code_ok") and s.get("asset_ok") and s.get("governor", "").lower() == v.governor.lower()
-        checks.ok(bool(good), f"vault {v.address} exists but its code, token or governor is not the planned one")
+        good = bool(s.get("code_ok") and s.get("asset_ok"))
+        checks.ok(good, f"vault {v.address} exists but its code or token is not the planned one")
+        # The address commits to the governor the vault was deployed with; only that governor can hand the role on.
+        if good and s.get("governor", "").lower() != v.governor.lower():
+            checks.warn(f"vault {v.address}: deployed with governor {v.governor}, who has handed the role on to "
+                        f"{s['governor']}")
         if good and s["fee"]:
             checks.warn(f"vault {v.address}: governor has set feeBps {s['fee']}")
     custody = rpc_batch(rpc, [call_item(token, common.encode_call("balanceOf(address)", v.address)) for v in deployed])

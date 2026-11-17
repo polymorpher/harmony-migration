@@ -128,9 +128,11 @@ Offline, it rebuilds every vault address, call, Transaction Builder file and has
 every funded one is not.
 
 With `--rpc-url` it checks the Safe, MultiSendCallOnly and the deployer's code. It reports which
-vaults already exist and checks their code, token and governor. It checks that the Safe holds
-enough ONE, and it lists governors and delegators that are contracts, plus how many governors have
-never sent an Ethereum transaction.
+vaults already exist and checks their code and token. A vault's address commits to the governor
+it was deployed with, so a different governor on-chain means that governor has since handed the
+role on with `transferGovernor`; this is a warning that names the new governor, not a failure. It
+checks that the Safe holds enough ONE, and it lists governors and delegators that are contracts,
+plus how many governors have never sent an Ethereum transaction.
 
 `--harmony-rpc` reads every validator's delegations from Harmony at the shard-0 cutoff block
 93,623,067 (its hash is checked first) and compares each deposit with that delegator's stake.
