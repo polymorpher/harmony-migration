@@ -55,9 +55,20 @@ class ShowTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
+        self.full_snapshot = None
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def write_full_snapshot(self, rows: list[tuple[str, int, int, str]]) -> None:
+        """(address, self stake, delegated, exchange) rows of a snapshot-20260911-full.csv."""
+        self.full_snapshot = self.dir / "snapshot-full.csv"
+        with self.full_snapshot.open("w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["one1_address", "eth_address", "self_stake_atto", "delegated_atto", "exchange", "migration_stage"])
+            for address, self_stake, delegated, exchange in rows:
+                writer.writerow([common.to_one1(address), address, self_stake, delegated, exchange,
+                                 "exchange_manual" if exchange else "deferred"])
 
     def run_show(self, records: list[dict], nonce: str | None, credits: dict[str, int] | None = None,
                  governor: str = VALIDATOR, ledger: bool = False):
@@ -70,7 +81,8 @@ class ShowTests(unittest.TestCase):
                                nonce=[nonce] if nonce else None, safe_tx_hash=None,
                                rpc_url="http://ethereum.invalid" if credits is not None else None, harmony_rpc=None,
                                compare=None, amount_unit=None, governors=None, governor=None,
-                               out=self.dir / "queued.csv", format=None, service_url=None, api_key=None, tx_json=path)
+                               out=self.dir / "queued.csv", format=None, service_url=None, api_key=None, tx_json=path,
+                               full_snapshot=self.full_snapshot)
         states = {VAULT.lower(): {"deployed": True, "code_ok": True, "asset_ok": True, "governor": governor, "fee": 0}}
         deployments = {VAULT.lower(): {"validator_address": VALIDATOR, "governor_address": VALIDATOR}} if ledger else {}
 
@@ -142,6 +154,30 @@ class ShowTests(unittest.TestCase):
         code, err, _ = self.run_show(records, "1", credits={}, governor=CAROL, ledger=True)
         self.assertEqual(code, 0, err)
         self.assertIn(f"deployed with governor {VALIDATOR}, who has handed the role on to {CAROL}", err)
+
+    def test_credits_beyond_the_stake_at_the_cutoff_fail(self):
+        records = [record(0, [deploy(), *fund([(ALICE, 5 * ONE)])], True),
+                   record(1, fund([(BOB, 3 * ONE), (CAROL, 4 * ONE)]), False)]
+        # ALICE's earlier credit counts towards her stake too, but she is not in the transaction reviewed
+        self.write_full_snapshot([(ALICE, 0, 5 * ONE, ""), (BOB, ONE, 2 * ONE, ""), (CAROL, 0, 10 * ONE, "")])
+        code, err, _ = self.run_show(records, "1", credits={})
+        self.assertEqual(code, 0, err)
+        self.assertIn("1 of 2 delegators would hold exactly their stake at the cutoff", err)
+        self.assertIn("1 less", err)
+        self.write_full_snapshot([(BOB, 0, 2 * ONE, ""), (CAROL, 0, 4 * ONE, "okx")])
+        code, err, _ = self.run_show(records, "1", credits={})
+        self.assertEqual(code, 1)
+        self.assertIn(f"{BOB.lower()} would hold 3 ONE of vault credits in total (0 from earlier executed Safe "
+                      "transactions), more than the 2 it staked at the cutoff", err)
+        self.assertIn(f"{CAROL.lower()} is an exchange wallet in snapshot-full.csv (okx)", err)
+
+    def test_earlier_credits_count_towards_the_stake(self):
+        records = [record(0, [deploy(), *fund([(ALICE, 5 * ONE)])], True), record(1, fund([(ALICE, 5 * ONE)]), False)]
+        self.write_full_snapshot([(ALICE, 0, 10 * ONE, "")])
+        code, err, _ = self.run_show(records, "1", credits={})
+        self.assertEqual(code, 1)  # a repeat of the earlier credit, though within the stake
+        self.assertIn("was already credited 5 ONE", err)
+        self.assertIn("1 of 1 delegators would hold exactly their stake", err)
 
     def test_a_failed_execution_is_not_a_delivery(self):
         failed = record(0, [deploy(), *fund([(ALICE, 5 * ONE)])], True)

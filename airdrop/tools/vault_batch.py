@@ -1289,18 +1289,9 @@ def executed_credits(args: argparse.Namespace, safe: str, api_key: str | None, a
                      token: str) -> tuple[dict[tuple[str, str], list[tuple[int, int]]], list[int], list[str]]:
     """Every vault deposit an executed, successful Safe transaction made: (vault, delegator) -> [(nonce, amount)],
     the nonces of those transactions, and notes."""
-    if args.tx_json:
-        payload = json.loads(args.tx_json.read_text(encoding="utf-8"))
-        if isinstance(payload, dict) and "results" in payload:
-            payload = payload["results"]
-        records = payload if isinstance(payload, list) else [payload]
-    else:
-        base = (args.service_url or sb.SAFE_TX_SERVICE.get(args.chain_id, "")).rstrip("/")
-        records = sb.service_pages(f"{base}/api/v1/safes/{safe}/multisig-transactions/?executed=true&ordering=nonce"
-                                   "&limit=100", api_key)
     credits: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
     nonces, notes = set(), []
-    for record in records:
+    for record in sb.all_safe_records(args, safe, api_key):
         if not record.get("isExecuted") or str(record.get("safe", "")).lower() != safe.lower():
             continue
         nonce = int(record["nonce"])
@@ -1472,6 +1463,40 @@ def cmd_show(args: argparse.Namespace) -> None:
                 failures.append(f"nonce {d['nonce']}: {d['delegator_address']} already holds {one_text(credit)} ONE in "
                                 f"vault {d['vault_address']}; this deposit adds to it")
 
+    # Against the independent snapshot: a delegator's credits in all vaults, earlier ones included, can never exceed
+    # what it staked at the cutoff.
+    stake_check = None
+    if args.full_snapshot:
+        try:
+            full = sb.read_full_snapshot(args.full_snapshot, {d["delegator_address"] for d in deposits})
+        except common.InputError as exc:
+            common.die(str(exc))
+            return
+        queued_total, earlier_total = defaultdict(int), defaultdict(int)
+        for d in deposits:
+            queued_total[d["delegator_address"]] += d["_amount"]
+        for (_, delegator), entries in history.items():
+            if delegator in queued_total:
+                earlier_total[delegator] += sum(a for n, a in entries if n not in reviewed)
+        stake_check = {"equal": 0, "below": 0, "above": 0}
+        for delegator, amount in sorted(queued_total.items()):
+            match = full.get(delegator)
+            if match is None:
+                failures.append(f"{delegator} receives deposits but is not in {args.full_snapshot.name}")
+                continue
+            if match["exchange"] or match["migration_stage"] == "exchange_manual":
+                failures.append(f"{delegator} is an exchange wallet in {args.full_snapshot.name} "
+                                f"({match['exchange'] or 'exchange_manual'}); an exchange's stake is delivered manually")
+            stake = int(match["self_stake_atto"] or 0) + int(match["delegated_atto"] or 0)
+            total = amount + earlier_total[delegator]
+            if total > stake:
+                stake_check["above"] += 1
+                failures.append(f"{delegator} would hold {one_text(total)} ONE of vault credits in total "
+                                f"({one_text(earlier_total[delegator])} from earlier executed Safe transactions), more "
+                                f"than the {one_text(stake)} it staked at the cutoff")
+            else:
+                stake_check["equal" if total == stake else "below"] += 1
+
     names, cutoff = {}, None
     if args.harmony_rpc:
         groups = defaultdict(list)
@@ -1560,6 +1585,10 @@ def cmd_show(args: argparse.Namespace) -> None:
              "delegator who already holds a credit there")
     elif pending:
         note("credits on-chain : not read; add --rpc-url to check that no delegator already holds a credit in its vault")
+    if stake_check is not None:
+        note(f"--full-snapshot  : with earlier credits, {stake_check['equal']} of {sum(stake_check.values())} delegators "
+             f"would hold exactly their stake at the cutoff in {args.full_snapshot.name}, {stake_check['below']} less "
+             f"(positions in vaults below the minimum, or not yet funded), {stake_check['above']} more")
     if cutoff is not None:
         same = sum(1 for d in deposits if cutoff.get((d["validator_address"], d["delegator_address"])) == d["_amount"])
         note(f"--harmony-rpc    : {same} of {len(deposits)} deposits equal the delegation on Harmony at block "
@@ -1570,7 +1599,11 @@ def cmd_show(args: argparse.Namespace) -> None:
         missing = [k for k in expected if k not in queued]
         note(f"--compare        : {same} of {len(deposits)} deposits equal {', '.join(p.name for p in args.compare)} exactly; {len(missing)} of "
              f"its {len(expected)} rows ({common.format_one(sum(expected[k] for k in missing))} ONE) are not in these transactions")
-    if not checked and deposits:
+    if not checked and deposits and stake_check is not None:
+        note("amounts          : each delegator's total is held to its stake at the cutoff (--full-snapshot), so an amount "
+             "moved to another delegator would show as more than its stake; each deposit's own amount needs "
+             "--harmony-rpc https://api.s0.t.hmny.io or --compare <deposit list>")
+    elif not checked and deposits:
         note("amounts          : not compared with anything. The checks above cannot see an amount moved between two "
              "delegators of one vault; add --harmony-rpc https://api.s0.t.hmny.io (Harmony's own record) or --compare "
              "<deposit list>")
@@ -2328,6 +2361,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--rpc-url", help="Ethereum RPC, to confirm vaults deployed earlier are genuine GovernorDelegators "
                                      "and that no delegator already holds a credit in its vault")
     s.add_argument("--harmony-rpc", help="check every deposit against Harmony's delegations at the cutoff block")
+    s.add_argument("--full-snapshot", type=Path,
+                   help="harmony-airdrop-tracking's snapshot-20260911-full.csv (Git LFS): fail when a delegator's vault "
+                        "credits, earlier ones included, would exceed its stake at the cutoff, or it is an exchange wallet")
     s.add_argument("--compare", type=Path, action="append",
                    help="deposit list the deposits must match exactly (validator, delegator, amount); repeatable")
     s.add_argument("--amount-unit", choices=["atto", "one"], help="unit of the --compare amount column, if its name does not say")

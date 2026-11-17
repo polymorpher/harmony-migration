@@ -200,6 +200,13 @@ It writes three files:
   delegator of a queued deposit already holds a credit in its vault on-chain, whoever deposited it.
   Each deposit's `credited_before` (and with `--rpc-url`, `credit_onchain_atto`) is in the details
   file.
+- **More than the stake:** with `--full-snapshot harmony-airdrop-tracking/snapshot-20260911-full.csv`
+  (a Git LFS file), a delegator's vault credits in all vaults, from earlier executed Safe
+  transactions plus these, would exceed its `self_stake_atto + delegated_atto` at the cutoff. A
+  delegator that is an exchange wallet there also fails. `show` reports how many delegators would
+  hold exactly their stake. An amount moved from one delegator to another shows up here too, as
+  more than the receiver's stake; this is the independent amount check while `--harmony-rpc` is
+  unavailable.
 
 With neither `--harmony-rpc` nor `--compare`, amounts are not compared with anything, and an amount
 moved between two delegators of one vault would go unnoticed; `show` says so. `--harmony-rpc` is
