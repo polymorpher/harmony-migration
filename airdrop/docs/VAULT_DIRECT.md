@@ -173,8 +173,9 @@ It writes three files:
   `--harmony-rpc` is used), the governor, the vault address, where it was deployed, the number of
   deposits and the total.
 - `queued-vaults-details.csv`: the nonce, call and position of every deposit, its amount in the
-  smallest unit, the governor, and, with `--harmony-rpc` or `--compare`, the amount on Harmony or
-  in the list and a `check` column.
+  smallest unit, the governor, any earlier credit by an executed Safe transaction
+  (`credited_before`), with `--rpc-url` the delegator's credit on-chain now, and, with
+  `--harmony-rpc` or `--compare`, the amount on Harmony or in the list and a `check` column.
 
 `show` fails, and says not to sign, if any of the following holds:
 
@@ -193,6 +194,12 @@ It writes three files:
   - a delegator is a vault, the Safe or the token.
 - **Amounts:** with `--harmony-rpc` or `--compare`, a deposit differs from Harmony's stake or from
   the list.
+- **Delivered before:** a deposit repeats a credit of the same delegator in the same vault by an
+  earlier executed Safe transaction. `show` reads every executed transaction of the Safe for this,
+  so it holds even after the delegator has withdrawn. With `--rpc-url` it also fails when a
+  delegator of a queued deposit already holds a credit in its vault on-chain, whoever deposited it.
+  Each deposit's `credited_before` (and with `--rpc-url`, `credit_onchain_atto`) is in the details
+  file.
 
 With neither `--harmony-rpc` nor `--compare`, amounts are not compared with anything, and an amount
 moved between two delegators of one vault would go unnoticed; `show` says so. `--harmony-rpc` is

@@ -1285,6 +1285,48 @@ def read_compare(paths: list[Path], unit: str | None) -> dict[tuple[str, str], i
     return out
 
 
+def executed_credits(args: argparse.Namespace, safe: str, api_key: str | None, artifact: Artifact,
+                     token: str) -> tuple[dict[tuple[str, str], list[tuple[int, int]]], list[int], list[str]]:
+    """Every vault deposit an executed, successful Safe transaction made: (vault, delegator) -> [(nonce, amount)],
+    the nonces of those transactions, and notes."""
+    if args.tx_json:
+        payload = json.loads(args.tx_json.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and "results" in payload:
+            payload = payload["results"]
+        records = payload if isinstance(payload, list) else [payload]
+    else:
+        base = (args.service_url or sb.SAFE_TX_SERVICE.get(args.chain_id, "")).rstrip("/")
+        records = sb.service_pages(f"{base}/api/v1/safes/{safe}/multisig-transactions/?executed=true&ordering=nonce"
+                                   "&limit=100", api_key)
+    credits: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+    nonces, notes = set(), []
+    for record in records:
+        if not record.get("isExecuted") or str(record.get("safe", "")).lower() != safe.lower():
+            continue
+        nonce = int(record["nonce"])
+        if not record.get("isSuccessful"):
+            notes.append(f"executed nonce {nonce} failed on-chain; its deposits are not counted as delivered")
+            continue
+        try:
+            tx = sb.service_safe_tx(record)
+        except (KeyError, ValueError, common.InputError) as exc:
+            raise common.InputError(f"executed nonce {nonce}: cannot read the transaction: {exc}") from None
+        for _, vault, delegator, amount in decode_vault_tx(tx, artifact, token).deposits:
+            credits[(vault.lower(), delegator.lower())].append((nonce, amount))
+            nonces.add(nonce)
+    return credits, sorted(nonces), notes
+
+
+def nonce_ranges(nonces: list[int]) -> str:
+    spans: list[list[int]] = []
+    for n in sorted(nonces):
+        if spans and n == spans[-1][1] + 1:
+            spans[-1][1] = n
+        else:
+            spans.append([n, n])
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in spans)
+
+
 def cmd_show(args: argparse.Namespace) -> None:
     note = lambda *parts: print(*parts, file=sys.stderr)  # noqa: E731
     try:
@@ -1299,15 +1341,17 @@ def cmd_show(args: argparse.Namespace) -> None:
             raise common.InputError("pass --nonce or --safe-tx-hash, not both")
         expected = read_compare(args.compare, args.amount_unit) if args.compare else None
         governor_for, governor_source, overrides, _ = governor_policy(args)
-        records, info, source, notes = sb.fetch_transactions(args, safe, nonces, args.api_key or env.get("SAFE_API_KEY"))
+        api_key = args.api_key or env.get("SAFE_API_KEY")
+        records, info, source, notes = sb.fetch_transactions(args, safe, nonces, api_key)
         if not records:
             raise common.InputError("no matching transaction")
+        history, history_nonces, history_notes = executed_credits(args, safe, api_key, artifact, token)
         rpc_url = args.rpc_url or (env.get("RPC_URL") if env.get("CHAIN_ID") == str(args.chain_id) else None)
     except (common.InputError, KeyError, ValueError, RuntimeError) as exc:
         common.die(str(exc))
         return
 
-    failures, warnings = [], list(notes)
+    failures, warnings = [], list(notes) + history_notes
     domain = common.hex0x(sb.domain_hash(args.chain_id, safe))
     vaults: dict[str, dict] = {}  # vault -> {validator, governor, deployed_nonce, source}
     deposits, transactions = [], []
@@ -1353,8 +1397,10 @@ def cmd_show(args: argparse.Namespace) -> None:
         except RuntimeError as exc:
             common.die(str(exc))
             return
-        # a vault's validator is not stored on-chain; recover it from the address rule and the governor policy
-        candidates = set(overrides) | {k[0] for k in (expected or {})}
+        # a vault's validator is not stored on-chain; recover it from the address rule and the governor policy, trying
+        # the validators of the deposit list and of the deployment ledger (vault/deployments-*.csv) as candidates
+        ledger = earlier_deployments(LEDGER_DIR, args.chain_id) if args.chain_id == 1 else {}
+        candidates = set(overrides) | {k[0] for k in (expected or {})} | {r["validator_address"].lower() for r in ledger.values()}
         known = {vault_address(artifact, token, c, governor_for(c)).lower(): common.to_checksum(c) for c in candidates}
         for v in unknown:
             s = states[v]
@@ -1365,6 +1411,9 @@ def cmd_show(args: argparse.Namespace) -> None:
                 if validator and vault_address(artifact, token, validator, governor_for(validator)).lower() != v:
                     failures.append(f"vault {v} of validator {validator} was deployed with governor {s['governor']}, "
                                     f"not the expected {governor_for(validator)}")
+                elif validator and s["governor"].lower() != governor_for(validator).lower():
+                    warnings.append(f"vault {v} of validator {validator}: deployed with governor {governor_for(validator)}, "
+                                    f"who has handed the role on to {s['governor']}")
                 vaults[v] = {"validator": validator or "", "governor": s["governor"], "nonce": None, "source": "on-chain"}
                 if not validator:
                     failures.append(f"vault {v} is a genuine GovernorDelegator, but it is not the vault of any validator "
@@ -1390,6 +1439,38 @@ def cmd_show(args: argparse.Namespace) -> None:
         d.update({"validator_address": validator, "validator_one1": common.to_one1(validator) if validator else "",
                   "delegator_one1": common.to_one1(d["delegator_address"]), "amount": one_text(d["_amount"]),
                   "amount_atto": str(d["_amount"]), "governor_address": (v.get("governor") or "").lower()})
+
+    # Delivered before: a credit by an executed Safe transaction outside the ones listed here (a repeat within them
+    # is reported above), and, for vaults already on-chain, any credit the delegator holds now.
+    reviewed = {t["nonce"] for t in transactions}
+    executed = {t["nonce"] for t in transactions if t["executed"]}
+    repeats = 0
+    for d in deposits:
+        earlier = [(n, a) for n, a in history.get((d["vault_address"], d["delegator_address"]), [])
+                   if n < d["nonce"] and n not in reviewed]
+        d["credited_before"] = "; ".join(f"nonce {n}: {one_text(a)} ONE" for n, a in earlier)
+        repeats += bool(earlier)
+        for n, a in earlier:
+            failures.append(f"nonce {d['nonce']}: {d['delegator_address']} was already credited {one_text(a)} ONE in "
+                            f"vault {d['vault_address']} by executed nonce {n}")
+    live = {v for v, meta in vaults.items() if meta["source"] == "on-chain" or meta["nonce"] in executed}
+    pending = [d for d in deposits if d["nonce"] not in executed and d["vault_address"] in live]
+    holding = None
+    if rpc_url and pending:
+        try:
+            held = rpc_batch(common.Rpc(rpc_url), [call_item(d["vault_address"], common.encode_call(
+                "balanceOf(address)", d["delegator_address"])) for d in pending])
+        except RuntimeError as exc:
+            common.die(str(exc))
+            return
+        holding = 0
+        for d, c in zip(pending, held):
+            credit = common.decode_word(c)
+            d["credit_onchain_atto"] = str(credit)
+            if credit:
+                holding += 1
+                failures.append(f"nonce {d['nonce']}: {d['delegator_address']} already holds {one_text(credit)} ONE in "
+                                f"vault {d['vault_address']}; this deposit adds to it")
 
     names, cutoff = {}, None
     if args.harmony_rpc:
@@ -1431,7 +1512,9 @@ def cmd_show(args: argparse.Namespace) -> None:
                            "vault_address": v, "deployed": meta["source"] if meta["nonce"] is None else f"nonce {meta['nonce']}",
                            "deposits": len(rows), "total": one_text(sum(d["_amount"] for d in rows))})
 
-    detail_fields = ["nonce", "call", "position", *DEPOSIT_COLUMNS, "amount_atto", "governor_address"]
+    detail_fields = ["nonce", "call", "position", *DEPOSIT_COLUMNS, "amount_atto", "governor_address", "credited_before"]
+    if holding is not None:
+        detail_fields.append("credit_onchain_atto")
     if cutoff is not None:
         detail_fields.append("harmony_cutoff_atto")
     if expected is not None:
@@ -1468,6 +1551,15 @@ def cmd_show(args: argparse.Namespace) -> None:
          f"transactions); {len(funded_vaults)} receive deposits")
     note(f"deposits         : {len(deposits)} to {len({d['delegator_address'] for d in deposits})} delegators, "
          f"total {common.format_one(total)} ONE")
+    earlier_nonces = [n for n in history_nonces if n not in reviewed]
+    note(f"delivered before : {repeats} of {len(deposits)} deposits repeat a credit of an earlier executed Safe "
+         f"transaction (read {len(earlier_nonces)} that credited vaults"
+         + (f": nonces {nonce_ranges(earlier_nonces)})" if earlier_nonces else ")"))
+    if holding is not None:
+        note(f"credits on-chain : {holding} of the {len(pending)} queued deposits into vaults already on-chain go to a "
+             "delegator who already holds a credit there")
+    elif pending:
+        note("credits on-chain : not read; add --rpc-url to check that no delegator already holds a credit in its vault")
     if cutoff is not None:
         same = sum(1 for d in deposits if cutoff.get((d["validator_address"], d["delegator_address"])) == d["_amount"])
         note(f"--harmony-rpc    : {same} of {len(deposits)} deposits equal the delegation on Harmony at block "
@@ -1498,7 +1590,8 @@ def cmd_show(args: argparse.Namespace) -> None:
              + ", governor, vault address, where it was deployed, number of deposits and total ONE")
         note(f"                   {details_file}")
         note("                   one row per deposit with its nonce, call and position, the amount in the smallest "
-             f"unit, the governor{extra}")
+             "unit, the governor, any credit an earlier executed Safe transaction made"
+             + (", the delegator's credit on-chain now" if holding is not None else "") + extra)
     for m in warnings:
         note(f"warning: {m}")
     for m in failures:
@@ -1506,8 +1599,9 @@ def cmd_show(args: argparse.Namespace) -> None:
     if failures:
         common.die(f"{len(failures)} check(s) failed; do not sign until they are explained")
     note("OK: each Safe transaction hash above was recomputed from the call data listed; every call deploys the audited "
-         "vault, approves a vault's exact total, or deposits into a genuine vault. Before signing, compare the hashes "
-         "with the Safe web app and your wallet screen.")
+         "vault, approves a vault's exact total, or deposits into a genuine vault; no deposit repeats a credit of an "
+         "earlier executed Safe transaction" + ("" if holding is None else " or goes to a delegator already holding one")
+         + ". Before signing, compare the hashes with the Safe web app and your wallet screen.")
 
 
 def cmd_hash(args: argparse.Namespace) -> None:
@@ -2231,7 +2325,8 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--chain-id", type=int, default=1)
     s.add_argument("--nonce", action="append", help="only these nonces, e.g. 40 or 40-55 (repeatable); default: the queue")
     s.add_argument("--safe-tx-hash", action="append", help="only this Safe transaction (repeatable)")
-    s.add_argument("--rpc-url", help="Ethereum RPC, to confirm vaults deployed earlier are genuine GovernorDelegators")
+    s.add_argument("--rpc-url", help="Ethereum RPC, to confirm vaults deployed earlier are genuine GovernorDelegators "
+                                     "and that no delegator already holds a credit in its vault")
     s.add_argument("--harmony-rpc", help="check every deposit against Harmony's delegations at the cutoff block")
     s.add_argument("--compare", type=Path, action="append",
                    help="deposit list the deposits must match exactly (validator, delegator, amount); repeatable")
